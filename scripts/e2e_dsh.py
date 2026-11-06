@@ -61,7 +61,7 @@ def main() -> int:
     )
     os.environ.update({k: env[k] for k in ("RKA_MEMORY_DIR", "RKA_MEMORY_CONFIG")})
     sys.path.insert(0, str(REPO))
-    from rka_memory.domain import Actor, Event, Kind, RecordKind, RecordSpec, Scope, State
+    from rka_memory.domain import Actor, Event, Kind, RecordKind, RecordSpec, Scope, State, Step
     from rka_memory.service import Memory
 
     mem = Memory.open()
@@ -78,8 +78,24 @@ def main() -> int:
             seed.append(Event.new(Kind.RECORD_PROPOSED, Actor.MODEL, sid, spec.to_json(), ts=ts))
         seed.append(Event.new(Kind.EVIDENCE_LINKED, Actor.MODEL, sid, {"record_id": "r_e2e", "event_id": ok.id, "polarity": "support"}, ts=ts))
         seed.append(Event.new(Kind.SESSION_END, Actor.RUNNER, sid, {}, ts=ts))
+    proc = RecordSpec(
+        "r_proc", RecordKind.PROCEDURE, "Sync dependencies with uv before running tests", Scope.exact(state),
+        steps=(Step("Bash", "uv sync"), Step("Bash", "uv run pytest")), acceptance_check="uv run pytest",
+    )
+    seed.append(Event.new(Kind.RECORD_PROPOSED, Actor.MODEL, "seed-1", proc.to_json(), ts=t.isoformat()))
+    seed.append(Event.new(Kind.USER_CONFIRM, Actor.USER, "cli", {"record_id": "r_proc"}, ts=t.isoformat()))
     mem.append(*seed)
     mem.gate()
+    follow = []
+    for sid in ("seed-3", "seed-4"):
+        follow.append(Event.new(Kind.SESSION_START, Actor.RUNNER, sid, {"state": state.to_json()}))
+        for cmd in ("uv sync", "uv run pytest"):
+            follow.append(Event.new(Kind.TOOL_CALL, Actor.MODEL, sid, {"tool": "Bash", "input": cmd}))
+        follow.append(Event.new(Kind.TEST_RESULT, Actor.TOOL, sid, {"passed": True, "command": "uv run pytest"}))
+        follow.append(Event.new(Kind.SESSION_END, Actor.RUNNER, sid, {}))
+    mem.append(*follow)
+    mem.gate()
+    assert mem.world().records["r_proc"].rung.value == "L3", mem.world().records["r_proc"].rung
 
     overlay = tmp / "overlay.yml"
     overlay.write_text(
@@ -140,6 +156,9 @@ def main() -> int:
         print(f"{'PASS' if ok else 'FAIL'}  {name}" + (f"  ({detail})" if not ok and detail != "" else ""))
 
     check("first dsh task exited 0", first.returncode == 0, first.stderr[-500:])
+    for line in first.stderr.splitlines():
+        if "rka-memory" in line:
+            print(f"      dsh stderr: {line[:300]}")
     real = [s for s in world.sessions.values() if s.started is not None and not s.id.startswith("seed")]
     check("dsh sessions recorded with harness dsh", bool(real) and all(s.started.payload.get("harness") == "dsh" for s in real), [s.id for s in real])
     s1 = real[0] if real else None
@@ -161,6 +180,10 @@ def main() -> int:
     systems = [m for b in tool_requests for m in b.get("messages", []) if m.get("role") in ("system", "developer")]
     check("the model's system prompt contained the packet",
           bool(systems) and all("r_e2e" in json.dumps(m) for m in systems[:1]), [json.dumps(m)[:200] for m in systems[:1]])
+    offered = [json.dumps(b) for b in tool_requests]
+    check("dsh offered the session's L3 skill to the model", bool(offered) and "rka-r-proc" in offered[0], "skill not in request")
+    skill_deliveries = [d for d in world.deliveries if d.channel == "skills" and "r_proc" in d.record_ids]
+    check("skill offer logged as a delivery", len(skill_deliveries) >= 1, world.deliveries)
     rejects = [e for e in world.events.values() if e.kind is Kind.USER_REJECT]
     check("typed `rkm reject` became a user_reject by the user", len(rejects) == 1 and rejects[0].actor is Actor.USER, rejects)
     leaked = [b for b in bodies[sent_before_reject:] if "rkm reject" in json.dumps(b)]

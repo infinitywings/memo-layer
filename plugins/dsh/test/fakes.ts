@@ -83,6 +83,16 @@ export function fakeHost(config: Partial<Config>) {
 interface FakeSession { id: string; header: { id: string; cwd: string; parentSession?: string; origin?: 'subagent' } }
 export type FakeAgent = ReturnType<typeof fakeAgent>
 
+/** Like a Cordis context: a service read as a property throws unless injected; `get` reads it optionally. */
+function fakeAgentContext(services: Record<string, unknown>) {
+  return new Proxy({ get: (name: string) => services[name] }, {
+    get(target, prop) {
+      if (prop === 'get') return target.get
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
+}
+
 export function fakeAgent(id: string, cwd: string, withSkills = true, parentSession?: string) {
   const skills: Array<Record<string, unknown>> = []
   const lineage = parentSession === undefined ? {} : { parentSession, origin: 'subagent' as const }
@@ -90,16 +100,14 @@ export function fakeAgent(id: string, cwd: string, withSkills = true, parentSess
     id,
     session: { id, header: { id, cwd, ...lineage } } satisfies FakeSession,
     model: { current: () => ({ provider: 'deepseek', model: 'deepseek-v4' }) },
-    ctx: withSkills
-      ? {
-          skills: {
-            register(skill: Record<string, unknown>) {
-              skills.push(skill)
-              return () => void skills.splice(skills.indexOf(skill), 1)
-            },
-          },
-        }
-      : {},
+    ctx: fakeAgentContext(withSkills ? {
+      skills: {
+        register(skill: Record<string, unknown>) {
+          skills.push(skill)
+          return () => void skills.splice(skills.indexOf(skill), 1)
+        },
+      },
+    } : {}),
     skills,
   }
 }

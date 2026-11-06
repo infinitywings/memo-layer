@@ -294,7 +294,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   }
 
   async function reloadSkills(agent: Agent, state: SessionState): Promise<void> {
-    const registry = agent.ctx?.skills
+    // Cordis refuses `agent.ctx.skills` without declaring the service in
+    // `inject`; `get` reads it optionally, so compositions without skills still load.
+    const registry = agent.ctx?.get('skills')
     if (registry === undefined) {
       warn('this dsh composition has no skills service, so rka-memory skills are not registered')
       return

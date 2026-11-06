@@ -45,6 +45,10 @@ claude mcp add -s user rka-memory -- rka-memory mcp
 
 The miner calls `claude -p`, so the `claude` CLI must be logged in.
 
+### DeepSeek Harness (dsh)
+
+rka-memory also runs inside dsh (0.2.2-rc.1 or later, Node 24.9 or later) through the plugin in [plugins/dsh](plugins/dsh/README.md). It records the same ledger events, keeps the packet in the system prompt for the whole session, and registers only the L3 skills valid for the session's state, so dsh enforces skill scope that Claude Code cannot. Load it with a `--patch` overlay as the plugin README shows.
+
 ## Daily use
 
 Work as usual. To give the memory a verdict, type one of these as your whole prompt in Claude Code. The hook records it as your verdict and does not send it to the model:
@@ -100,6 +104,16 @@ uv run python scripts/e2e_claude_hooks.py
 
 ```bash
 uv run python scripts/e2e_mcp.py
+```
+
+The dsh plugin's own tests, and an end-to-end run inside real dsh against a scripted mock model (needs dsh installed and Node 24):
+
+```bash
+node --test 'plugins/dsh/test/*.test.ts'
+```
+
+```bash
+DSH_BIN=/path/to/node_modules/.bin/dsh NODE24_BIN=/path/to/node-v24/bin uv run python scripts/e2e_dsh.py
 ```
 
 MIT license.

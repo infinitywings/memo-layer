@@ -10,7 +10,7 @@ The plugin starts the `rka-memory` CLI once per event and speaks the Claude Code
 
 ## Load the plugin
 
-The plugin runs as TypeScript source. dsh loads `.ts` plugin files directly, and Node 23.6 or later runs the tests without a build step.
+The plugin runs as TypeScript source, and dsh loads the `.ts` file directly. dsh itself needs Node 24.9 or later; the plugin's tests run on Node 23.6 or later without a build step. Verified against dsh 0.2.2-rc.1 with `scripts/e2e_dsh.py`, which drives a real headless dsh session through a scripted mock model.
 
 1. Install rka-memory so that dsh can start it. From this repository, run `uv sync`. The CLI is then at `.venv/bin/rka-memory`.
 2. Write a dsh overlay file, for example `rka-memory.yml`. Use absolute paths:
@@ -48,7 +48,7 @@ The plugin runs as TypeScript source. dsh loads `.ts` plugin files directly, and
 
 The plugin sends the calls for one session one at a time, in dsh order, so the ledger order matches the session. A call that has to wait also waits for the calls queued before it.
 
-Messages that other plugins inject (working directory, hook context, skill invocations) are not user prompts. The plugin does not send them to rka-memory.
+Messages that other plugins inject (working directory, hook context, skill invocations) are not user prompts. The plugin does not send them to rka-memory. Neither are a subagent's prompts: dsh marks them `source.kind` `user`, but the parent model wrote them, so the plugin skips `UserPromptSubmit` for every session whose header has a `parentSession` or `origin: 'subagent'`. Otherwise model text would land in the ledger as a user message, or the model could type its own `rkm confirm`.
 
 The packet is one system-prompt section named `rka-memory` with order 9000. dsh evaluates sections on every step, so the packet stays in the prompt for the whole session. The first prompt can add a second part to the packet.
 
