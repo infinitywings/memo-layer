@@ -205,6 +205,11 @@ function toolOutcome(tool: string, args: unknown, result: Readonly<ToolExecution
   }
 }
 
+function isSubagent(agent: Agent): boolean {
+  const header = agent.session.header
+  return header.parentSession !== undefined || header.origin === 'subagent'
+}
+
 function usageReport(usage: Usage): Record<string, unknown> {
   return {
     tokens_total: usage.total,
@@ -330,13 +335,21 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.on('agent/created', async ({ agent, source }) => {
     await guard('SessionStart', async () => {
       const state = sessionOf(agent.id)
-      const reply = await hook(agent, 'SessionStart', { source, model: agent.model.current()?.model })
+      const reply = await hook(agent, 'SessionStart', {
+        source,
+        model: agent.model.current()?.model,
+        parent_session: agent.session.header.parentSession,
+      })
       state.packet = reply.kind === 'context' ? reply.text : ''
       await reloadSkills(agent, state)
     })
   })
 
   ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
+    // A subagent's prompt is written by its parent model even though dsh marks
+    // it source.kind 'user'. Forwarding it would record model text as a user
+    // message, or let the model type its own `rkm confirm`.
+    if (isSubagent(agent)) return next()
     const typed = messages.filter((message: UserMessage) => message.source.kind === 'user')
     if (typed.length === 0) return next()
     const rejected = await guard('UserPromptSubmit', async () => {

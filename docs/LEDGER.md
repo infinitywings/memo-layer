@@ -15,7 +15,7 @@ The local spool is `~/.rka-memory/ledger.jsonl`. `rka-memory sync` copies it int
 
 | kind | actor | payload | grounding polarity |
 |---|---|---|---|
-| session_start | runner | `state` (State JSON), `source`, `cwd`, `transcript_path`, `model` | none |
+| session_start | runner | `state` (State JSON), `source`, `cwd`, `transcript_path`, `model`, `harness` (`claude_code` or `dsh`), `parent_session` (set for dsh subagents) | none |
 | user_msg | user | `text` (truncated), `sha`, `prompt_id` | support or counter |
 | tool_call | model | `tool`, `input` (one-line summary: Bash command, file path, skill name), `tool_use_id` | none |
 | tool_result | tool, env | `tool`, `tool_use_id`, `ok`, `summary` (truncated) | support or counter |

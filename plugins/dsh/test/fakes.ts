@@ -80,14 +80,15 @@ export function fakeHost(config: Partial<Config>) {
   }
 }
 
-interface FakeSession { id: string; header: { id: string; cwd: string } }
+interface FakeSession { id: string; header: { id: string; cwd: string; parentSession?: string; origin?: 'subagent' } }
 export type FakeAgent = ReturnType<typeof fakeAgent>
 
-export function fakeAgent(id: string, cwd: string, withSkills = true) {
+export function fakeAgent(id: string, cwd: string, withSkills = true, parentSession?: string) {
   const skills: Array<Record<string, unknown>> = []
+  const lineage = parentSession === undefined ? {} : { parentSession, origin: 'subagent' as const }
   return {
     id,
-    session: { id, header: { id, cwd } } satisfies FakeSession,
+    session: { id, header: { id, cwd, ...lineage } } satisfies FakeSession,
     model: { current: () => ({ provider: 'deepseek', model: 'deepseek-v4' }) },
     ctx: withSkills
       ? {

@@ -360,6 +360,7 @@ def session_start_event(payload: Mapping[str, Any], state: State, model: str | N
             "transcript_path": payload.get("transcript_path"),
             "model": model,
             "harness": payload.get("harness") or "claude_code",
+            "parent_session": payload.get("parent_session"),
         },
         state_hash=state.hash(),
         id=derived_id("ev", "session_start", sid),
