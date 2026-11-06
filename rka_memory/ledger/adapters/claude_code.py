@@ -315,7 +315,11 @@ def tool_events(
             state_hash,
         ),
     ]
-    if use.tool == "Bash":
+    # Claude Code always sends a transcript and routes failed commands to
+    # PostToolUseFailure. A caller without a transcript (dsh's hooks-claude-code
+    # bridge sends ''; it has no failure event) cannot tell us whether a
+    # command failed, so its Bash calls record no outcome at all.
+    if use.tool == "Bash" and payload.get("transcript_path"):
         code = _exit_code(use)
         if code is not None:
             outcome = {"command": _clip(use.command, cfg), "tool_use_id": use.tool_use_id}

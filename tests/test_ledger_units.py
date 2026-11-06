@@ -43,7 +43,7 @@ def test_classify_task_by_keywords():
 
 def test_bash_exit_codes_come_from_the_payload_and_unknown_outcomes_ground_nothing():
     c = cfg()
-    common = {"session_id": "s", "tool_name": "Bash", "tool_use_id": "t1"}
+    common = {"session_id": "s", "transcript_path": "/t/s.jsonl", "tool_name": "Bash", "tool_use_id": "t1"}
     explicit = adapter.tool_events(
         {**common, "tool_input": {"command": "make build"}, "tool_response": {"stdout": "", "stderr": "boom", "exitCode": 3}},
         c,
@@ -161,7 +161,7 @@ def test_only_plain_runner_invocations_count_as_tests():
 
 def test_a_passing_test_result_needs_the_runner_summary_to_show_tests_ran():
     c = cfg()
-    base = {"session_id": "a", "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "pytest"}}
+    base = {"session_id": "a", "transcript_path": "/t/a.jsonl", "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "pytest"}}
     ran = adapter.tool_events({**base, "tool_use_id": "t1", "tool_response": {"stdout": "== 3 passed in 0.1s =="}}, c, failed=False)
     empty = adapter.tool_events({**base, "tool_use_id": "t2", "tool_response": {"stdout": "no tests ran"}}, c, failed=False)
     assert [e.kind.value for e in ran] == ["tool_call", "tool_result", "exit_code", "test_result"]
@@ -174,3 +174,11 @@ def test_only_the_closing_summary_of_a_run_that_ran_tests_counts():
     assert not adapter.tests_ran("ok  \texample.com/pkg\t0.012s [no tests to run]")
     assert not adapter.tests_ran("?   \texample.com/pkg\t[no test files]")
     assert not adapter.tests_ran("3 passed\n" + "\n".join(f"line {i}" for i in range(6)) + "\nno tests ran")
+
+
+def test_a_caller_without_a_transcript_records_no_command_outcomes():
+    bridged = {
+        "session_id": "a", "transcript_path": "", "hook_event_name": "PostToolUse", "tool_name": "Bash",
+        "tool_use_id": "t1", "tool_input": {"command": "pytest"}, "tool_response": "1 failed, 2 passed",
+    }
+    assert [e.kind.value for e in adapter.tool_events(bridged, cfg(), failed=False)] == ["tool_call", "tool_result"]
