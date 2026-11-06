@@ -153,8 +153,9 @@ def test_only_plain_runner_invocations_count_as_tests():
         "pytest -qp myplugin", "go test -list .", "go test -c", "go test -exec=true ./...",
         "pytest /tmp/fake_test.py", "pytest ../elsewhere", "pytest @args.txt", "pytest -q=x",
         "npm test --workspace=evil", "pytest --tb",
+        "make test PYTEST=true", "make test other-target", "go test example.com/other/pkg", "npm test -- evil.js",
     ]
-    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 27
+    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 31
 
 
 def test_a_passing_test_result_needs_the_runner_summary_to_show_tests_ran():

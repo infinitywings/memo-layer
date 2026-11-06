@@ -154,6 +154,23 @@ def tests_ran(output: str) -> bool:
     return NO_TESTS.search(tail) is None and TESTS_RAN.search(tail) is not None
 
 
+# Runners whose positional arguments select tests. For the others (make and the
+# package-script runners) a positional is a target or a variable override
+# such as `make test PYTEST=true`, so none is allowed.
+PATH_SELECTING_RUNNERS = frozenset({"pytest", "cargo", "go", "vitest", "jest"})
+
+
+def _allowed_positional(arg: str, runner: str) -> bool:
+    if runner not in PATH_SELECTING_RUNNERS or "=" in arg:
+        return False
+    if runner == "go":
+        return arg in (".", "./...") or arg.startswith("./")
+    # Stay a relative path inside the project: `/tmp/fake_test.py`, `../x` or a
+    # pytest `@argsfile` could run other code.
+    parts = Path(arg).parts
+    return not arg.startswith(("@", "~")) and not Path(arg).is_absolute() and ".." not in parts and "://" not in arg
+
+
 def _allowed_test_arg(arg: str, runner: str) -> bool:
     flags, value_flags = TEST_RUNNER_ARGS.get(runner, NO_ARGS)
     if arg == "--":
@@ -161,10 +178,7 @@ def _allowed_test_arg(arg: str, runner: str) -> bool:
     if arg.startswith("-"):
         name, has_value, _ = arg.partition("=")
         return name in value_flags if has_value else arg in flags
-    # A positional argument must stay a relative path inside the project:
-    # `/tmp/fake_test.py`, `../x` or a pytest `@argsfile` could run other code.
-    parts = Path(arg).parts
-    return not arg.startswith(("@", "~")) and not Path(arg).is_absolute() and ".." not in parts and "://" not in arg
+    return _allowed_positional(arg, runner)
 
 
 def is_test_command(command: str, cfg: Config) -> bool:
