@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
+from rka_memory.domain import clock_now
 from pathlib import Path
 
 
@@ -50,7 +50,7 @@ def cmd_metrics(args) -> int:
     from rka_memory.audit import metrics
 
     mem = _memory()
-    report = metrics.compute(mem.world(), mem.cfg, datetime.now(UTC))
+    report = metrics.compute(mem.world(), mem.cfg, clock_now())
     if args.write:
         path = metrics.write_daily(report, mem.cfg)
         print(f"wrote {path}", file=sys.stderr)
@@ -91,7 +91,7 @@ def cmd_packet(args) -> int:
     from rka_memory.packet import builder
 
     world = mem.world()
-    arm = args.arm or builder.arm_for(datetime.now().date(), mem.cfg)
+    arm = args.arm or builder.arm_for(clock_now().astimezone().date(), mem.cfg)
     pkt = builder.build(world, mem.cfg, st, arm=arm, channel="preview")
     print(pkt.render() or f"(empty packet; arm={arm}, state={st.to_json()})")
     return 0

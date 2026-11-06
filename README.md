@@ -102,6 +102,8 @@ Other commands are `gate`, `mine <session-id>`, `export-skills`, `metrics --writ
 
 Defaults live in [rka_memory/default.yaml](rka_memory/default.yaml). Put overrides in `~/.rka-memory/config.yaml`. You can tune the promotion threshold `k`, the signal weights, the packet budget, the A/B arms, the task classes, and the retirement window. Set `RKA_MEMORY_CONTEXT` (for example `work` or `personal`) to scope records by user context.
 
+For workloads and containers: `miner.backend: openai_compat` with `miner.base_url` and `miner.api_key_env` mines through any OpenAI-compatible endpoint; `hooks.background: inline` mines and syncs before SessionEnd returns instead of in a detached process; `RKA_MEMORY_CLOCK_FILE` (an ISO instant that time runs on from) or `RKA_MEMORY_NOW` simulates time, so a stream can cover weeks.
+
 ## Development
 
 The compose stack runs the whole test suite in containers: unit and plugin tests, Core sync against the stack's own RKA Core, the real-dsh plugin check and the agent-forgery check. It needs Docker and your RKA Core source (`RKA_CORE_SRC`, default `/Volumes/FuSpace/Projects/rka-projects/rka`). The plan for the full environment is [docs/DEV_ENV_PLAN.md](docs/DEV_ENV_PLAN.md).

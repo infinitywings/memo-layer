@@ -9,7 +9,7 @@ from typing import Any
 
 from rka_memory import config as config_mod
 from rka_memory.config import Config
-from rka_memory.domain import Actor, Event, Kind, State
+from rka_memory.domain import Actor, Event, Kind, State, clock_now
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.packet import builder
 from rka_memory.validity.engine import ENGINE_SESSION, assess, counted, evaluate
@@ -37,7 +37,7 @@ class Memory:
 
     def gate(self, *, session_id: str = ENGINE_SESSION, now: datetime | None = None) -> list[Event]:
         """Run the validity engine once over the whole ledger and persist its moves."""
-        now = now or datetime.now(UTC)
+        now = now or clock_now()
         with self.ledger.exclusive():
             started = time.monotonic()
             world = self.world()
@@ -70,7 +70,7 @@ class Memory:
         world: World | None = None,
     ) -> builder.Packet:
         """Build a packet for `state` and log exactly which records were delivered."""
-        now = now or datetime.now(UTC)
+        now = now or clock_now()
         world = world or self.world()
         if channel == "hints":
             packet = builder.hints(world, self.cfg, state, exclude=exclude)

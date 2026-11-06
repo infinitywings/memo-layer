@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import time
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from enum import StrEnum
 from typing import Any, Callable, Mapping
 
@@ -104,8 +106,34 @@ GROUNDING: dict[Kind, Callable[[Mapping[str, Any]], frozenset[Polarity]]] = {
 }
 
 
+def clock_now() -> datetime:
+    """The current time, or a simulated one for workload runs.
+
+    RKA_MEMORY_NOW pins a fixed instant. RKA_MEMORY_CLOCK_FILE names a file
+    holding an ISO instant; time then runs on from it at real speed since the
+    file was last written, so a workload can jump days between sessions while
+    events inside a session keep their order.
+    """
+    fixed = os.environ.get("RKA_MEMORY_NOW")
+    if fixed:
+        return _aware(datetime.fromisoformat(fixed))
+    path = os.environ.get("RKA_MEMORY_CLOCK_FILE")
+    if path:
+        try:
+            base = _aware(datetime.fromisoformat(Path(path).read_text().strip()))
+            elapsed = max(0.0, time.time() - os.stat(path).st_mtime)
+            return base + timedelta(seconds=elapsed)
+        except (OSError, ValueError):
+            pass
+    return datetime.now(UTC)
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 def now_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="microseconds")
+    return clock_now().isoformat(timespec="microseconds")
 
 
 def parse_ts(ts: str) -> datetime:

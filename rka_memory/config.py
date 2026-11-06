@@ -51,6 +51,9 @@ class Config:
     miner_backend: str
     miner_model: str
     miner_timeout_seconds: int
+    miner_base_url: str
+    miner_api_key_env: str | None
+    hooks_background: str
     skills_dir: Path
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
@@ -69,6 +72,13 @@ def _merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
 
 
 ARMS = frozenset({"gated", "none", "ungated"})
+BACKGROUND = frozenset({"spawn", "inline", "off"})
+
+
+def _choice(value: Any, allowed: frozenset[str], key: str) -> str:
+    if value not in allowed:
+        raise ValueError(f"{key} must be one of {sorted(allowed)}, got {value!r}")
+    return value
 
 
 def _number(value: Any) -> float:
@@ -123,6 +133,9 @@ def from_dict(raw: dict[str, Any]) -> Config:
         miner_backend=raw["miner"]["backend"],
         miner_model=raw["miner"]["model"],
         miner_timeout_seconds=int(raw["miner"].get("timeout_seconds", 240)),
+        miner_base_url=os.environ.get("RKA_MEMORY_MINER_BASE_URL", raw["miner"].get("base_url", "")),
+        miner_api_key_env=raw["miner"].get("api_key_env"),
+        hooks_background=_choice(raw.get("hooks", {}).get("background", "spawn"), BACKGROUND, "hooks.background"),
         skills_dir=Path(raw["skills"]["dir"]).expanduser(),
         raw=raw,
     )

@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+import httpx
+
 from rka_memory.config import Config
 
 
@@ -94,12 +96,44 @@ def claude_cli(cfg: Config) -> Backend:
     return run
 
 
+def openai_compat(cfg: Config, transport: httpx.BaseTransport | None = None) -> Backend:
+    """Any OpenAI-compatible chat endpoint: the stack's mock model in tests,
+    DeepSeek or another provider in live runs."""
+    if not cfg.miner_base_url:
+        raise ValueError("miner.backend openai_compat needs miner.base_url")
+    url = cfg.miner_base_url.rstrip("/") + "/chat/completions"
+
+    def run(prompt: str) -> Completion:
+        key = os.environ.get(cfg.miner_api_key_env) if cfg.miner_api_key_env else None
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        body = {"model": cfg.miner_model, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+        started = time.monotonic()
+        try:
+            with httpx.Client(transport=transport, timeout=cfg.miner_timeout_seconds) as client:
+                resp = client.post(url, json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise BackendError(f"miner endpoint unreachable: {exc}") from exc
+        if resp.status_code != 200:
+            raise BackendError(f"miner endpoint answered HTTP {resp.status_code}: {resp.text[:300]}")
+        try:
+            doc = resp.json()
+            text = doc["choices"][0]["message"].get("content") or ""
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise BackendError(f"miner endpoint returned an unexpected body: {resp.text[:300]}") from exc
+        usage = doc.get("usage") or {}
+        tokens = int(usage.get("total_tokens") or int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0))
+        return Completion(text=text, tokens=tokens, seconds=round(time.monotonic() - started, 3))
+
+    return run
+
+
 def none(prompt: str) -> Completion:
     return Completion(text="", tokens=0, seconds=0.0)
 
 
 BACKENDS: dict[str, Callable[[Config], Backend]] = {
     "claude_cli": claude_cli,
+    "openai_compat": openai_compat,
     "none": lambda cfg: none,
 }
 

@@ -45,9 +45,14 @@ signals:
   payload_max_chars: 2000
 
 miner:
-  backend: claude_cli         # claude_cli | none
-  model: haiku
+  backend: claude_cli         # claude_cli | openai_compat | none
+  model: haiku                # for openai_compat: the endpoint's model id
   timeout_seconds: 240
+  base_url: ""                # openai_compat: e.g. https://api.deepseek.com/v1 (env RKA_MEMORY_MINER_BASE_URL)
+  api_key_env: null           # openai_compat: name of the env var holding the key
+
+hooks:
+  background: spawn           # spawn: mine and sync in a detached process; inline: before SessionEnd returns; off
 
 skills:
   dir: ~/.claude/skills

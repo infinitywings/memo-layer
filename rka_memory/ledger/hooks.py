@@ -6,6 +6,8 @@ A hook must never break Claude Code, so `main` swallows every exception into
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -19,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from rka_memory.domain import Kind, State, parse_ts
+from rka_memory.domain import Kind, State, clock_now, parse_ts
 from rka_memory.ledger import signals
 from rka_memory.ledger import state as state_mod
 from rka_memory.ledger.adapters import claude_code as adapter
@@ -111,7 +113,7 @@ def _spawn_catchup(memory: Memory, world: World, session_id: str) -> None:
     """Mine earlier sessions that missed it, once they have been quiet for a
     miner timeout: a session still running, or still being mined by its own
     SessionEnd, must not be mined twice."""
-    quiet_since = datetime.now(UTC) - timedelta(seconds=memory.cfg.miner_timeout_seconds)
+    quiet_since = clock_now() - timedelta(seconds=memory.cfg.miner_timeout_seconds)
     due = [
         s
         for s in world.sessions.values()
@@ -141,7 +143,8 @@ def on_session_start(memory: Memory, payload: Mapping[str, Any]) -> Output:
     _remember_state(memory, sid, state)
     memory.gate(session_id=sid)
     packet = memory.deliver(sid, state, channel="session_start")
-    _spawn_catchup(memory, world, sid)
+    if memory.cfg.hooks_background == "spawn":
+        _spawn_catchup(memory, world, sid)
     text = packet.render()
     if text:
         text += f"\n(rka-memory session id: {sid}; pass it as session_id to memory_* tools.)"
@@ -259,12 +262,26 @@ def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
         adapter.read_transcript(payload.get("transcript_path"))
     )
     memory.append(*_late_writes(memory, sid), adapter.session_end_event(payload, usage))
-    commands = [_cli("mine", sid)]
-    if memory.cfg.sync_on_session_end and memory.cfg.core_project_id:
-        commands.append(_cli("sync"))
-    spawn(commands, memory.cfg.ledger_dir / "background.log")
     shutil.rmtree(_pending(memory, sid), ignore_errors=True)
+    sync = memory.cfg.sync_on_session_end and bool(memory.cfg.core_project_id)
+    if memory.cfg.hooks_background == "spawn":
+        commands = [_cli("mine", sid)] + ([_cli("sync")] if sync else [])
+        spawn(commands, memory.cfg.ledger_dir / "background.log")
+    elif memory.cfg.hooks_background == "inline":
+        _mine_inline(memory, sid, sync)
     return None
+
+
+def _mine_inline(memory: Memory, session_id: str, sync: bool) -> None:
+    """Mine (which gates and exports) and sync before the hook returns, so a
+    workload's ledger order follows its stream exactly."""
+    from rka_memory.ledger import core
+    from rka_memory.miner import miner
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        miner.mine_session(memory, session_id)
+        if sync:
+            core.sync(memory)
 
 
 HANDLERS: dict[str, Callable[[Memory, Mapping[str, Any]], Output]] = {
