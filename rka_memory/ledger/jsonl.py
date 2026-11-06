@@ -16,6 +16,7 @@ from rka_memory.domain import Event
 class JsonlLedger:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.skipped = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def append(self, events: Iterable[Event]) -> list[Event]:
@@ -37,12 +38,20 @@ class JsonlLedger:
         return list(self.iter_from(0))
 
     def iter_from(self, line_no: int) -> Iterator[Event]:
+        """Events from `line_no` on. A line that does not parse is skipped:
+        a host and a container appending at once (file locks may not cross the
+        Docker VM) can interleave one line, and one torn event must not make
+        the whole ledger unreadable."""
         if not self.path.exists():
             return
         with open(self.path, encoding="utf-8") as fh:
             for i, line in enumerate(fh):
-                if i >= line_no and line.strip():
+                if i < line_no or not line.strip():
+                    continue
+                try:
                     yield Event.from_json(json.loads(line))
+                except (ValueError, KeyError):
+                    self.skipped += 1
 
     def line_count(self) -> int:
         if not self.path.exists():

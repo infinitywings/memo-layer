@@ -47,7 +47,21 @@ The miner calls `claude -p`, so the `claude` CLI must be logged in.
 
 ### DeepSeek Harness (dsh)
 
-rka-memory also runs inside dsh (0.2.2-rc.1 or later, Node 24.9 or later) through the plugin in [plugins/dsh](plugins/dsh/README.md). It records the same ledger events, keeps the packet in the system prompt for the whole session, and registers only the L3 skills valid for the session's state, so dsh enforces skill scope that Claude Code cannot. Load it with a `--patch` overlay as the plugin README shows.
+rka-memory also runs inside dsh (0.2.2-rc.1 or later) through the plugin in [plugins/dsh](plugins/dsh/README.md). It records the same ledger events, keeps the packet in the system prompt for the whole session, and registers only the L3 skills valid for the session's state, so dsh enforces skill scope that Claude Code cannot.
+
+dsh needs Node 24.9 or later. The Docker image provides it, with dsh, the plugin and rka-memory preinstalled. Build it once from this repository:
+
+```bash
+docker build -f docker/dsh/Dockerfile -t rka-memory-dsh .
+```
+
+Then run dsh from any project directory with `scripts/dsh-docker` (pass your model key, for example `DEEPSEEK_API_KEY`, in the environment):
+
+```bash
+/Volumes/FuSpace/Projects/memo-layer/scripts/dsh-docker tui
+```
+
+The wrapper mounts the project's git root at the same absolute path, so dsh sessions and Claude Code sessions share record scopes. It also mounts `~/.rka-memory`, so both feed one ledger, and points sync at `host.docker.internal:9712`. The agent's shell commands run inside the container. The image has no `claude` CLI, so the miner cannot run there. A dsh session is mined at the next Claude Code session start on the host, which catches up unmined sessions. On a Linux host the container writes as root into the mounted directories; Docker Desktop on macOS maps writes to your user.
 
 ## Daily use
 
@@ -113,7 +127,7 @@ node --test 'plugins/dsh/test/*.test.ts'
 ```
 
 ```bash
-DSH_BIN=/path/to/node_modules/.bin/dsh NODE24_BIN=/path/to/node-v24/bin uv run python scripts/e2e_dsh.py
+docker run --rm --entrypoint sh rka-memory-dsh -c 'DSH_BIN=$(command -v dsh) NODE24_BIN=$(dirname $(command -v node)) uv run --no-dev python scripts/e2e_dsh.py'
 ```
 
 MIT license.

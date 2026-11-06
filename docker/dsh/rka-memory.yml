@@ -1,0 +1,5 @@
+- insert:
+    - id: rka-memory
+      name: /opt/rka-memory/plugins/dsh/src/index.ts
+      config:
+        command: [/opt/rka-memory/.venv/bin/rka-memory]

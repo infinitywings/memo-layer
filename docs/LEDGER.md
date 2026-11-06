@@ -11,6 +11,8 @@ The ledger is an append-only list of events. Everything else (sessions, records,
 
 The local spool is `~/.rka-memory/ledger.jsonl`. `rka-memory sync` copies it into an RKA Core project as journal entries (`type=log`, tags `rka-memory`, `rkm-kind:<kind>`, `rkm-session:<sid>` and `rkm-seq:<ledger position>`, `request_id` = event id, so re-sending is idempotent). Core orders notes by a one-second `created_at`, so `rka-memory pull` restores ledger order from `rkm-seq`.
 
+The Docker setup for dsh (`docker/dsh`, `scripts/dsh-docker`) mounts the same spool into the container. File locks may not cross the Docker VM, so if the host and the container append at the same moment one line can tear; the reader skips a line that does not parse instead of failing.
+
 ## Kinds and payloads
 
 | kind | actor | payload | grounding polarity |

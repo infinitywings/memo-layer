@@ -97,7 +97,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
         raise ValueError(f"packet.arms must be a non-empty subset of {sorted(ARMS)}")
     return Config(
         ledger_dir=Path(os.environ.get("RKA_MEMORY_DIR", raw["ledger"]["dir"])).expanduser(),
-        core_url=raw["core"]["url"].rstrip("/"),
+        core_url=os.environ.get("RKA_MEMORY_CORE_URL", raw["core"]["url"]).rstrip("/"),
         core_project_id=raw["core"].get("project_id"),
         sync_on_session_end=bool(raw["core"].get("sync_on_session_end", True)),
         gate=GateConfig(
