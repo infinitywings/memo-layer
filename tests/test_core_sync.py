@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -93,7 +94,8 @@ def test_sync_is_idempotent_and_pull_restores_ledger_order(core_url, tmp_path, m
     with pytest.raises(core.CoreError, match="run `rka-memory init` first"):
         core.sync(memory)
 
-    project = core.init_project(memory, name="rka-memory test ledger")
+    # The stack's Core keeps its projects across runs and rejects a reused name.
+    project = core.init_project(memory, name=f"rka-memory test ledger {uuid.uuid4().hex[:8]}")
     assert yaml.safe_load(config_path.read_text()) == {"core": {"url": core_url, "project_id": project["id"]}}
     memory = Memory.open()
 
