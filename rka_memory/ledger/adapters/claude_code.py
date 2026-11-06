@@ -111,14 +111,17 @@ def command_argv(command: str) -> list[str] | None:
     return argv or None
 
 
-NO_RUN_FLAGS = frozenset(
+# Arguments a test command may carry after its runner and still count:
+# positional paths or selectors, `--`, and these flags (any `=value` form).
+# Everything else (listing, plugin, config or rootdir overrides) disqualifies.
+ALLOWED_TEST_FLAGS = frozenset(
     {
-        "--version", "-V", "--help", "-h", "--collect-only", "--co", "--no-run", "--list", "--list-tests",
-        "--listTests", "--dry-run", "--setup-plan", "--setup-only", "--fixtures", "--markers",
-        "-o", "-c", "-p", "--override-ini", "--rootdir", "--confcutdir", "--noconftest",
+        "-q", "-qq", "-v", "-vv", "-vvv", "-x", "-s", "-l", "-ra", "-rA",
+        "--quiet", "--verbose", "--exitfirst", "--tb", "--maxfail", "--lf", "--last-failed", "--ff",
+        "--failed-first", "--durations", "--color", "--no-header", "--all", "--workspace", "--release",
+        "-race", "-count", "-timeout", "--run", "--ci",
     }
 )
-NO_RUN_PREFIXES = ("--collect", "--list", "--override", "--version", "--help")
 TESTS_RAN = re.compile(
     r"\b[1-9]\d* (?:passed|tests? passed)\b"
     r"|test result: ok\. [1-9]\d* passed"
@@ -142,27 +145,23 @@ def tests_ran(output: str) -> bool:
     return NO_TESTS.search(tail) is None and TESTS_RAN.search(tail) is not None
 
 
-def _disqualifying(arg: str) -> bool:
-    """A listing or override flag in any spelling: `--rootdir=x`, `-pplugin`."""
-    if arg.startswith("--"):
-        name = arg.split("=", 1)[0]
-        return name in NO_RUN_FLAGS or name.startswith(NO_RUN_PREFIXES)
-    if arg.startswith("-") and len(arg) >= 2:
-        return arg[:2] in NO_RUN_FLAGS
-    return False
+def _allowed_test_arg(arg: str) -> bool:
+    if not arg.startswith("-") or arg == "--":
+        return True
+    return arg.split("=", 1)[0] in ALLOWED_TEST_FLAGS
 
 
 def is_test_command(command: str, cfg: Config) -> bool:
     """A test result is strong grounding, so only a plain invocation of a
-    configured runner counts; `echo pytest`, `pytest; true` or
-    `pytest --collect-only` do not."""
+    configured runner with allowlisted arguments counts; `echo pytest`,
+    `pytest; true`, `pytest --collect-only` or `go test -list .` do not."""
     argv = command_argv(command)
-    if argv is None or any(_disqualifying(a) for a in argv):
+    if argv is None:
         return False
     for configured in cfg.test_commands:
         want = command_argv(configured)
         if want and argv[: len(want)] == want:
-            return True
+            return all(_allowed_test_arg(a) for a in argv[len(want) :])
     return False
 
 

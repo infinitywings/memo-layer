@@ -140,15 +140,19 @@ def test_similarity_ignores_case_punctuation_and_rkm_commands():
 
 def test_only_plain_runner_invocations_count_as_tests():
     c = cfg()
-    plain = ["pytest", "uv run pytest -q tests/", "npm test", "python -m pytest -x", "cargo test --all"]
-    assert [adapter.is_test_command(cmd, c) for cmd in plain] == [True] * 5
+    plain = [
+        "pytest", "uv run pytest -q tests/", "npm test", "python -m pytest -x", "cargo test --all",
+        "go test -v ./...", "pytest --tb=short tests/test_app.py", "npm test -- --run",
+    ]
+    assert [adapter.is_test_command(cmd, c) for cmd in plain] == [True] * 8
     forged = [
         "echo pytest", "pytest; true", "pytest || true", "pytest | tee out", "cd x && pytest", "pytest > log",
         "true # pytest", "PATH=/tmp/x pytest", "pytest --collect-only", "uv run pytest --version",
         "pytest -p myplugin", "pytest -o addopts=--co", "pytest --collect-only-ish",
         "pytest -pmyplugin", "pytest -oaddopts=--co", "pytest --rootdir=/tmp/x", "pytest --confcutdir=/",
+        "pytest -qp myplugin", "go test -list .", "go test -c", "go test -exec=true ./...",
     ]
-    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 17
+    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 21
 
 
 def test_a_passing_test_result_needs_the_runner_summary_to_show_tests_ran():
