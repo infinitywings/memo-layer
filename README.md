@@ -14,7 +14,7 @@ The spec is [docs/SPEC.md](docs/SPEC.md). The event schema is [docs/LEDGER.md](d
 2. **Miner (C2).** When a session ends, an LLM pass proposes candidate records (facts, preferences, procedures, constraints) that cite event ids. Code drops citations of model-authored events, and a candidate with none left is filed at L0D and never shown. Duplicates merge into the existing record as new evidence.
 3. **Validity engine (C3).** A deterministic job moves records up and down the ladder: L0D, L1 (grounded), L2 (validated), L3 (skill), L4 (retired). Every move is a `rung_change` event with cause ids, so replaying the ledger reproduces every rung.
 4. **Packet (C4).** At session start, the hook injects the L2 and L3 records valid for the current state, cut to a token budget, and logs which ids it delivered. L1 records are available as unvalidated hints over MCP.
-5. **Skills (C5).** A procedure at L2 is written to `~/.claude/skills/rka-<id>/SKILL.md` with auto-loading off. At L3 it auto-loads. If its acceptance check fails afterwards, it retires and the file is removed.
+5. **Skills (C5).** A procedure at L2 is written as `rka-<id>/SKILL.md` with auto-loading off: into `<project>/.claude/skills` when its scope pins a project, else into `~/.claude/skills`. At L3 it auto-loads, but only when Claude Code can enforce the rest of its scope. If its acceptance check fails afterwards, it retires and the file is removed.
 6. **Metrics (C6).** `rka-memory metrics` computes misapplication rate, regression count, rediscovery tokens (with and without a packet, alternating days), and validation cost from the ledger alone.
 
 ## Install
