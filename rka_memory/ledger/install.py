@@ -63,36 +63,69 @@ def merge(settings: dict[str, Any], command: str, *, uninstall: bool = False) ->
 
 def settings_path_rule(path: Path, home: Path) -> str:
     """A path in Claude Code's settings syntax: `~/` under home, `//` for absolute."""
-    path = path.expanduser().resolve()
     try:
-        return "~/" + path.relative_to(home.resolve()).as_posix()
+        return "~/" + path.relative_to(home).as_posix()
     except ValueError:
         return "/" + path.as_posix()
 
 
-def harden(settings: dict[str, Any], ledger_dir: Path, home: Path, *, undo: bool = False) -> tuple[dict[str, Any], list[str]]:
+def path_rules(path: Path, home: Path) -> list[str]:
+    """Rules for the path as written and as resolved, so a symlink anywhere on
+    it (or under home) cannot leave one spelling of it writable."""
+    literal = path.expanduser().absolute()
+    resolved = literal.resolve()
+    forms = [settings_path_rule(literal, home.absolute()), settings_path_rule(resolved, home.resolve())]
+    return list(dict.fromkeys(forms))
+
+
+def protected_rules(ledger_dir: Path, home: Path, extra_files: tuple[Path, ...] = ()) -> tuple[list[str], list[str]]:
+    """(Edit deny rules, sandbox denyWrite paths) for the ledger directory and
+    any rka-memory file that lives outside it, such as a relocated config."""
+    edit, write = [], []
+    for rule in path_rules(ledger_dir, home):
+        edit.append(f"Edit({rule}/**)")
+        write.append(rule)
+    ledger = ledger_dir.expanduser().resolve()
+    for f in extra_files:
+        if ledger in f.expanduser().resolve().parents:
+            continue
+        for rule in path_rules(f, home):
+            edit.append(f"Edit({rule})")
+            write.append(rule)
+    return list(dict.fromkeys(edit)), list(dict.fromkeys(write))
+
+
+def harden(
+    settings: dict[str, Any],
+    ledger_dir: Path,
+    home: Path,
+    *,
+    undo: bool = False,
+    extra_files: tuple[Path, ...] = (),
+) -> tuple[dict[str, Any], list[str]]:
     """Keep the agent from writing the ledger, which hooks alone cannot do.
 
     The ledger's actor field is only trustworthy if the recorder is its only
-    writer. Claude Code's Write and Edit tools are stopped by a deny rule; shell
+    writer. Claude Code's Write and Edit tools are stopped by deny rules; shell
     commands only by the OS-level bash sandbox, with its escape hatch
     (`dangerouslyDisableSandbox`) closed and a missing sandbox made fatal rather
     than silently skipped. Hooks run outside the sandbox, so they still record.
+    Claude Code itself already guards its settings files, user and project, from
+    both the Write tool and sandboxed shells (scripts/host_hardening_check.py).
     """
-    rule = settings_path_rule(ledger_dir, home)
-    edit_rule = f"Edit({rule}/**)"
+    edit_rules, write_rules = protected_rules(ledger_dir, home, extra_files)
     out = json.loads(json.dumps(settings))
     perms = out.setdefault("permissions", {})
-    deny = [r for r in perms.get("deny", []) if r != edit_rule]
+    deny = [r for r in perms.get("deny", []) if r not in edit_rules]
     sandbox = out.setdefault("sandbox", {})
     fs = sandbox.setdefault("filesystem", {})
-    deny_write = [r for r in fs.get("denyWrite", []) if r != rule]
+    deny_write = [r for r in fs.get("denyWrite", []) if r not in write_rules]
     notes: list[str] = []
     if undo:
         notes.append("sandbox.enabled, allowUnsandboxedCommands and failIfUnavailable were left as they are")
     else:
-        deny.append(edit_rule)
-        deny_write.append(rule)
+        deny.extend(edit_rules)
+        deny_write.extend(write_rules)
         sandbox["enabled"] = True
         sandbox["allowUnsandboxedCommands"] = False
         sandbox["failIfUnavailable"] = True
@@ -123,12 +156,13 @@ def install_hooks(
     *,
     harden_ledger: Path | None = None,
     home: Path | None = None,
+    extra_files: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     before = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     after = merge(before, command, uninstall=uninstall)
     notes: list[str] = []
     if harden_ledger is not None:
-        after, notes = harden(after, harden_ledger, home or Path.home(), undo=uninstall)
+        after, notes = harden(after, harden_ledger, home or Path.home(), undo=uninstall, extra_files=extra_files)
     backup = settings_path.with_name(settings_path.name + BACKUP_SUFFIX)
     changed = after != before
     if changed:

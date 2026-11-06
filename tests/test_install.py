@@ -83,3 +83,23 @@ def test_harden_denies_the_agent_the_ledger_and_undo_removes_only_ours(tmp_path)
     assert "filesystem" not in undone["sandbox"]
     outside, _ = harden({}, tmp_path / "elsewhere", home)
     assert outside["permissions"]["deny"] == [f"Edit(/{(tmp_path / 'elsewhere').resolve().as_posix()}/**)"]
+
+
+def test_harden_covers_symlinked_ledgers_and_a_config_outside_the_ledger(tmp_path):
+    from rka_memory.ledger.install import harden
+
+    home = tmp_path / "home"
+    real = tmp_path / "disk" / "rka"
+    real.mkdir(parents=True)
+    home.mkdir()
+    (home / ".rka-memory").symlink_to(real)
+    config = tmp_path / "etc" / "rkm.yaml"
+    inside = home / ".rka-memory" / "config.yaml"
+    hard, _ = harden({}, home / ".rka-memory", home, extra_files=(config, inside))
+    disk, etc = "/" + real.resolve().as_posix(), "/" + config.resolve().as_posix()
+    assert hard["permissions"]["deny"] == [
+        "Edit(~/.rka-memory/**)", f"Edit({disk}/**)", f"Edit({etc})",
+    ]
+    assert hard["sandbox"]["filesystem"]["denyWrite"] == ["~/.rka-memory", disk, etc]
+    undone, _ = harden(hard, home / ".rka-memory", home, undo=True, extra_files=(config, inside))
+    assert "permissions" not in undone and "filesystem" not in undone["sandbox"]

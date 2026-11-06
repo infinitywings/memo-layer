@@ -143,12 +143,14 @@ def cmd_install_hooks(args) -> int:
     from rka_memory.ledger import install
 
     target = Path(args.settings).expanduser()
-    ledger = None
+    ledger, extra = None, ()
     if args.harden:
         from rka_memory import config as config_mod
 
-        ledger = config_mod.load().ledger_dir
-    result = install.install_hooks(target, command=args.command_path, uninstall=args.uninstall, harden_ledger=ledger)
+        ledger, extra = config_mod.load().ledger_dir, (config_mod.user_config_path(),)
+    result = install.install_hooks(
+        target, command=args.command_path, uninstall=args.uninstall, harden_ledger=ledger, extra_files=extra
+    )
     _print(result)
     if not args.harden and not args.uninstall:
         print(
