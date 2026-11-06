@@ -34,8 +34,8 @@ class PacketItem:
     def line(self) -> str:
         tag = "unvalidated hint" if self.unvalidated else f"{self.rung} {self.kind}"
         return (
-            f"- [{self.record_id} | {tag}] {flatten(self.content)} "
-            f"(scope: {self.scope}; grounding {self.grounding:.2f} across {self.sessions} sessions)"
+            f"- [{flatten(self.record_id)} | {tag}] {flatten(self.content)} "
+            f"(scope: {flatten(self.scope)}; grounding {self.grounding:.2f} across {self.sessions} sessions)"
         )
 
     def to_json(self) -> dict:
