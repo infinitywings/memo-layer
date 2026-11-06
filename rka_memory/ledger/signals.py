@@ -86,29 +86,12 @@ def _last_write_session(world: World, session_id: str, project: str | None) -> S
     return max(candidates, key=lambda s: world.position[s.started.id], default=None)
 
 
-GIT_TREE_COMMANDS = frozenset(
-    {"checkout", "restore", "reset", "stash", "apply", "revert", "switch", "pull", "merge", "rebase", "cherry-pick", "am", "clean"}
-)
-
-
-def agent_may_have_touched(world: World, path: Path, after_event_id: str, project: str | None) -> bool:
-    """True when an agent shell command in this project, after the write, named
-    the file or rewrote the git working tree. Then a change on disk may be
-    the agent's own, and crediting it to the user would forge a user signal."""
-    for ev in world.events.values():
-        if ev.kind is not Kind.TOOL_CALL or not world.before(after_event_id, ev.id):
-            continue
-        if str(ev.payload.get("tool", "")).lower() != "bash" or world.state_of(ev).project != project:
-            continue
-        text = str(ev.payload.get("input", ""))
-        words = set(re.findall(r"[A-Za-z][A-Za-z-]*", text))
-        if path.name in text or ("git" in words and words & GIT_TREE_COMMANDS):
-            return True
-    return False
-
-
 def detect_file_changes(world: World, session_id: str, state: State, cfg: Config) -> list[Event]:
     """Compare files the previous session in this project wrote with their content now.
+
+    The last FILE_WRITE per path includes changes the agent's own shell
+    commands made (the hooks re-hash written files after every Bash call), so
+    a difference from it happened outside the agent's tool calls.
 
     Unchanged since the agent's write is silent adoption, which grounds
     nothing. Back to the content before the session touched it is an undo;
@@ -128,8 +111,6 @@ def detect_file_changes(world: World, session_id: str, state: State, cfg: Config
         path = Path(path_str)
         current = file_hash(path)
         if current == last.payload.get("post_hash"):
-            continue
-        if agent_may_have_touched(world, path, last.id, state.project):
             continue
         base = {"path": path_str, "write_event_id": last.id, "write_session_id": prior.id}
         reverted = {first.payload.get("pre_hash"), last.payload.get("pre_hash")} - {"unknown", None}

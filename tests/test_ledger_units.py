@@ -140,21 +140,19 @@ def test_similarity_ignores_case_punctuation_and_rkm_commands():
 
 def test_only_plain_runner_invocations_count_as_tests():
     c = cfg()
-    plain = ["pytest", "uv run pytest -q tests/", "FOO=1 uv run pytest", "npm test", "python -m pytest -x", "cargo test --all"]
-    assert [adapter.is_test_command(cmd, c) for cmd in plain] == [True] * 6
-    forged = ["echo pytest", "pytest; true", "pytest || true", "pytest | tee out", "cd x && pytest", "pytest > log", "true # pytest"]
-    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 7
-
-
-def test_a_file_the_agent_reverted_itself_is_not_a_user_undo(tmp_path, memory):
-    c = memory.cfg
-    f = tmp_path / "hello.txt"
-    f.write_text("hi\n")
-    events = [
-        start("a", tmp_path),
-        write_event("a", f, "absent", signals.snapshot(f, c)),
-        Event.new(Kind.TOOL_CALL, Actor.MODEL, "a", {"tool": "Bash", "input": "git checkout -- ."}),
+    plain = ["pytest", "uv run pytest -q tests/", "npm test", "python -m pytest -x", "cargo test --all"]
+    assert [adapter.is_test_command(cmd, c) for cmd in plain] == [True] * 5
+    forged = [
+        "echo pytest", "pytest; true", "pytest || true", "pytest | tee out", "cd x && pytest", "pytest > log",
+        "true # pytest", "PATH=/tmp/x pytest", "pytest --collect-only", "uv run pytest --version",
     ]
-    f.unlink()
-    changes = signals.detect_file_changes(project(events), "b", State(project=str(tmp_path)), c)
-    assert changes == []
+    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 10
+
+
+def test_a_passing_test_result_needs_the_runner_summary_to_show_tests_ran():
+    c = cfg()
+    base = {"session_id": "a", "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "pytest"}}
+    ran = adapter.tool_events({**base, "tool_use_id": "t1", "tool_response": {"stdout": "== 3 passed in 0.1s =="}}, c, failed=False)
+    empty = adapter.tool_events({**base, "tool_use_id": "t2", "tool_response": {"stdout": "no tests ran"}}, c, failed=False)
+    assert [e.kind.value for e in ran] == ["tool_call", "tool_result", "exit_code", "test_result"]
+    assert [e.kind.value for e in empty] == ["tool_call", "tool_result", "exit_code"]

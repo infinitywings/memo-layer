@@ -91,16 +91,17 @@ ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
 
 
 def command_argv(command: str) -> list[str] | None:
-    """The argv of a plain command with env assignments and runner prefixes
-    stripped, or None for anything compound, piped or redirected."""
+    """The argv of a plain command with runner prefixes stripped, or None for
+    anything compound, piped, redirected or prefixed with env assignments
+    (`PATH=/tmp/x pytest` could run any binary)."""
     if SHELL_META.search(command):
         return None
     try:
         argv = shlex.split(command)
     except ValueError:
         return None
-    while argv and ENV_ASSIGNMENT.fullmatch(argv[0]):
-        argv = argv[1:]
+    if argv and ENV_ASSIGNMENT.fullmatch(argv[0]):
+        return None
     stripped = True
     while stripped:
         stripped = False
@@ -110,11 +111,33 @@ def command_argv(command: str) -> list[str] | None:
     return argv or None
 
 
+NO_RUN_FLAGS = frozenset(
+    {
+        "--version", "-V", "--help", "-h", "--collect-only", "--co", "--no-run", "--list", "--list-tests",
+        "--listTests", "--dry-run", "--setup-plan", "--setup-only", "--fixtures", "--markers",
+    }
+)
+TESTS_RAN = re.compile(
+    r"\b[1-9]\d* (?:passed|tests? passed)\b"
+    r"|test result: ok\. [1-9]\d* passed"
+    r"|^ok\s+\S+"
+    r"|Tests:.*\b[1-9]\d* passed"
+    r"|\b[1-9]\d* (?:tests?|specs?|examples?) (?:completed|passed|run)\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def tests_ran(output: str) -> bool:
+    """The runner's own summary shows at least one test ran and passed."""
+    return TESTS_RAN.search(output) is not None
+
+
 def is_test_command(command: str, cfg: Config) -> bool:
     """A test result is strong grounding, so only a plain invocation of a
-    configured runner counts; `echo pytest` or `pytest; true` do not."""
+    configured runner counts; `echo pytest`, `pytest; true` or
+    `pytest --collect-only` do not."""
     argv = command_argv(command)
-    if argv is None:
+    if argv is None or NO_RUN_FLAGS.intersection(argv):
         return False
     for configured in cfg.test_commands:
         want = command_argv(configured)
@@ -175,6 +198,26 @@ def _exit_code(use: ToolUse) -> int | None:
     return 0
 
 
+def shell_write_event(
+    payload: Mapping[str, Any], path: str, pre_hash: str, post_hash: str, state_hash: str = ""
+) -> Event:
+    """A file the agent wrote earlier changed during one of its shell commands."""
+    use = ToolUse.parse(payload, failed=payload.get("hook_event_name") == "PostToolUseFailure")
+    return Event.new(
+        Kind.FILE_WRITE,
+        Actor.TOOL,
+        use.session_id,
+        {"tool": use.tool, "tool_use_id": use.tool_use_id, "path": path, "pre_hash": pre_hash, "post_hash": post_hash},
+        state_hash=state_hash,
+        id=derived_id("ev", "shell-write", use.session_id, use.tool_use_id, path),
+    )
+
+
+def _raw_output(use: ToolUse) -> str:
+    resp = _mapping(use.response)
+    return "\n".join(str(resp.get(k) or "") for k in ("stdout", "stderr")) if resp else str(use.response or "")
+
+
 def tool_events(
     payload: Mapping[str, Any],
     cfg: Config,
@@ -214,7 +257,7 @@ def tool_events(
         if code is not None:
             outcome = {"command": _clip(use.command, cfg), "tool_use_id": use.tool_use_id}
             events.append(use.event(Kind.EXIT_CODE, Actor.TOOL, {**outcome, "code": code}, state_hash))
-            if is_test_command(use.command, cfg):
+            if is_test_command(use.command, cfg) and (code != 0 or tests_ran(_raw_output(use))):
                 events.append(use.event(Kind.TEST_RESULT, Actor.TOOL, {**outcome, "passed": code == 0}, state_hash))
     path = written_path(use.tool, use.tool_input, payload.get("cwd"))
     if path and not failed and post_hash is not None:

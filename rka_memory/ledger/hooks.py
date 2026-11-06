@@ -198,21 +198,41 @@ def on_pre_tool_use(memory: Memory, payload: Mapping[str, Any]) -> Output:
     return None
 
 
+def _tracked_file(memory: Memory, session_id: str) -> Path:
+    return _pending(memory, session_id) / "_tracked.json"
+
+
 def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Output:
     use = adapter.ToolUse.parse(payload, failed=failed)
     stash = _pending(memory, use.session_id) / f"{_safe(use.tool_use_id)}.json" if use.tool_use_id else None
     pre = _read_json(stash) if stash else None
     path = adapter.written_path(use.tool, use.tool_input, payload.get("cwd"))
-    memory.append(
-        *adapter.tool_events(
-            payload,
-            memory.cfg,
-            failed=failed,
-            state_hash=_state_hash(memory, use.session_id),
-            pre_hash=pre.get("pre_hash", "unknown") if isinstance(pre, dict) else "unknown",
-            post_hash=signals.snapshot(path, memory.cfg) if path and not failed else None,
-        )
+    state_hash = _state_hash(memory, use.session_id)
+    post_hash = signals.snapshot(path, memory.cfg) if path and not failed else None
+    events = adapter.tool_events(
+        payload,
+        memory.cfg,
+        failed=failed,
+        state_hash=state_hash,
+        pre_hash=pre.get("pre_hash", "unknown") if isinstance(pre, dict) else "unknown",
+        post_hash=post_hash,
     )
+    tracked_path = _tracked_file(memory, use.session_id)
+    tracked = _read_json(tracked_path)
+    tracked = tracked if isinstance(tracked, dict) else {}
+    if use.tool == "Bash":
+        # Re-hash what the agent wrote so far: a change made by its own shell
+        # command is the agent's, and must not later be credited to the user.
+        for written, last_hash in sorted(tracked.items()):
+            now = signals.snapshot(written, memory.cfg)
+            if now != last_hash:
+                events.append(adapter.shell_write_event(payload, written, last_hash, now, state_hash))
+                tracked[written] = now
+    if path and post_hash is not None:
+        tracked[path] = post_hash
+    memory.append(*events)
+    if tracked:
+        _write_json(tracked_path, tracked)
     if stash:
         stash.unlink(missing_ok=True)
     return None

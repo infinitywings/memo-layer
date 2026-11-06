@@ -330,3 +330,29 @@ def test_malformed_payloads_return_zero_and_are_logged(memory, capsys):
     assert "ValueError: hook payload has no session_id" in log
     assert "ValueError: hook payload is not a JSON object" in log
     assert memory.ledger.read() == []
+
+
+def test_changes_made_by_the_agents_own_shell_commands_are_never_credited_to_the_user(
+    memory, proj, tmp_path, spawned, capsys
+):
+    a = base("sess-a", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    reverted, formatted, user_owned = proj / "reverted.py", proj / "formatted.py", proj / "user.py"
+    for i, f in enumerate((reverted, formatted, user_owned)):
+        write = {"tool_name": "Write", "tool_input": {"file_path": str(f), "content": "x=1\n"}, "tool_use_id": f"w{i}"}
+        fire(capsys, "PreToolUse", {**a, **write})
+        f.write_text("x=1\n")
+        fire(capsys, "PostToolUse", {**a, **write, "tool_response": {"filePath": str(f)}})
+    reverted.unlink()
+    formatted.write_text("x = 1\n")
+    fire(capsys, "PostToolUse", {**a, "tool_name": "Bash", "tool_input": {"command": "make tidy"}, "tool_use_id": "b1", "tool_response": {"stdout": ""}})
+    fire(capsys, "SessionEnd", {**a, "reason": "other"})
+
+    user_owned.write_text("x = 1  # user\n")
+    fire(capsys, "SessionStart", {**base("sess-b", proj, tmp_path), "source": "startup"})
+
+    events = memory.ledger.read()
+    shell_writes = [e.payload["path"] for e in events if e.kind is Kind.FILE_WRITE and e.payload["tool"] == "Bash"]
+    assert shell_writes == [str(formatted), str(reverted)]
+    user_signals = [(e.kind.value, e.payload["path"]) for e in events if e.kind in (Kind.USER_EDIT, Kind.USER_UNDO)]
+    assert user_signals == [("user_edit", str(user_owned))]
