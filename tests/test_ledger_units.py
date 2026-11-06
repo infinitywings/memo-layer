@@ -146,8 +146,9 @@ def test_only_plain_runner_invocations_count_as_tests():
         "echo pytest", "pytest; true", "pytest || true", "pytest | tee out", "cd x && pytest", "pytest > log",
         "true # pytest", "PATH=/tmp/x pytest", "pytest --collect-only", "uv run pytest --version",
         "pytest -p myplugin", "pytest -o addopts=--co", "pytest --collect-only-ish",
+        "pytest -pmyplugin", "pytest -oaddopts=--co", "pytest --rootdir=/tmp/x", "pytest --confcutdir=/",
     ]
-    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 13
+    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 17
 
 
 def test_a_passing_test_result_needs_the_runner_summary_to_show_tests_ran():

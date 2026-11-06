@@ -142,12 +142,22 @@ def tests_ran(output: str) -> bool:
     return NO_TESTS.search(tail) is None and TESTS_RAN.search(tail) is not None
 
 
+def _disqualifying(arg: str) -> bool:
+    """A listing or override flag in any spelling: `--rootdir=x`, `-pplugin`."""
+    if arg.startswith("--"):
+        name = arg.split("=", 1)[0]
+        return name in NO_RUN_FLAGS or name.startswith(NO_RUN_PREFIXES)
+    if arg.startswith("-") and len(arg) >= 2:
+        return arg[:2] in NO_RUN_FLAGS
+    return False
+
+
 def is_test_command(command: str, cfg: Config) -> bool:
     """A test result is strong grounding, so only a plain invocation of a
     configured runner counts; `echo pytest`, `pytest; true` or
     `pytest --collect-only` do not."""
     argv = command_argv(command)
-    if argv is None or NO_RUN_FLAGS.intersection(argv) or any(a.startswith(NO_RUN_PREFIXES) for a in argv):
+    if argv is None or any(_disqualifying(a) for a in argv):
         return False
     for configured in cfg.test_commands:
         want = command_argv(configured)
