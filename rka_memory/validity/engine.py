@@ -29,7 +29,14 @@ from rka_memory.domain import (
 )
 from rka_memory.skills.gate import sessions_following, skill_failure
 from rka_memory.validity import propagate
-from rka_memory.validity.scope import Grounding, applicable, choose_narrowing, inside, is_targeted
+from rka_memory.validity.scope import (
+    TARGETED_KINDS,
+    Grounding,
+    applicable,
+    choose_narrowing,
+    inside,
+    is_targeted,
+)
 from rka_memory.world import RecordState, World
 
 ENGINE_SESSION = "engine"
@@ -47,13 +54,20 @@ class Assessment:
 def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> list[Grounding]:
     """Links whose cited event can ground: not model-authored, a grounding
     kind, a polarity that event can carry, and already in the ledger when the
-    link was made."""
+    link was made. A user verdict counts only for the record it names, and a
+    model-made link only cites events from the session it was made in, so the
+    miner cannot carry outcomes or verdicts across to unrelated claims."""
     out = []
     for link in rec.links:
         if link.polarity is not polarity:
             continue
         ev = world.events.get(link.event_id)
         if ev is None or ev.actor is Actor.MODEL:
+            continue
+        if ev.kind in TARGETED_KINDS and not is_targeted(ev, rec.id):
+            continue
+        made_by = world.events.get(link.via)
+        if made_by is not None and made_by.actor is Actor.MODEL and made_by.session_id != ev.session_id:
             continue
         allowed = GROUNDING.get(ev.kind)
         if allowed is None or polarity not in allowed(ev.payload):

@@ -308,3 +308,39 @@ def test_l1_with_evidence_only_from_a_retired_dependency_retires():
     world = lg.gate()
     assert rung(world, "r_proc") == "L4"
     assert moves(world, "r_dep")[-1][1:] == ("L4", "evidence only from a retired dependency")
+
+
+def test_a_confirm_for_one_record_cannot_be_linked_to_promote_another():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_a")
+    lg.propose("s1", "r_b")
+    ok = lg.confirm("s1", "r_a")
+    lg.link("r_b", ok)
+    world = lg.gate()
+    assert rung(world, "r_a") == "L2"
+    assert rung(world, "r_b") == "L0D"
+
+
+def test_model_links_cannot_cite_events_from_another_session():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    old = lg.test("s1", True)
+    lg.start("s2", **UV)
+    lg.propose("s2", "r_a")
+    lg.events.append(
+        Event.new(Kind.EVIDENCE_LINKED, Actor.MODEL, "s2", {"record_id": "r_a", "event_id": old.id, "polarity": "support"}, id="ev_x")
+    )
+    assert rung(lg.gate(), "r_a") == "L0D"
+
+
+def test_model_judgments_cannot_move_sessions_between_scopes():
+    lg = Ledger()
+    lg.start("s1", **{**UV, "task_class": None})
+    lg._ev(Kind.JUDGMENT, Actor.RUNNER, "s1", {"target": "session", "field": "task_class", "value": "coding"})
+    lg._ev(Kind.JUDGMENT, Actor.MODEL, "s1", {"target": "session", "field": "task_class", "value": "ops"})
+    lg._ev(Kind.JUDGMENT, Actor.MODEL, "s1", {"target": "session", "field": "project", "value": "/p/other"})
+    lg._ev(Kind.JUDGMENT, Actor.MODEL, "s1", {"target": "session", "session_id": "s9", "field": "user_context", "value": "x"})
+    world = project(lg.events)
+    assert world.sessions["s1"].state == State(**{**UV, "task_class": "coding"})
+    assert "s9" not in world.sessions

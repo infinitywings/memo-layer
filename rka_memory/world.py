@@ -14,6 +14,8 @@ from typing import Iterable
 
 from rka_memory.domain import (
     DELIVERABLE,
+    FUZZY_FIELDS,
+    Actor,
     TRANSITIONS,
     Event,
     Kind,
@@ -151,12 +153,20 @@ def _session_end(world: World, ev: Event) -> None:
 
 
 def _judgment(world: World, ev: Event) -> None:
+    """Judgments only touch fuzzy fields of their own session. A model judgment
+    may fill an unknown value but never overwrite one, so model text cannot
+    move a session (and the evidence in it) into another scope."""
     p = ev.payload
+    name = p.get("field")
+    if name not in FUZZY_FIELDS:
+        return
     if p.get("target") == "session":
-        target = world.session(p.get("session_id", ev.session_id))
-        target.state = target.state.with_field(p["field"], p["value"])
+        sess = world.session(ev.session_id)
+        if ev.actor is Actor.MODEL and sess.state.get(name) is not None:
+            return
+        sess.state = sess.state.with_field(name, p["value"])
     elif p.get("target") == "record":
-        world.judgments[(p["record_id"], p["field"], p["value"])] = bool(p["applies"])
+        world.judgments[(p["record_id"], name, p["value"])] = bool(p["applies"])
 
 
 def _record_proposed(world: World, ev: Event) -> None:

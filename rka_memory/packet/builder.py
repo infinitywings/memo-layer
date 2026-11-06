@@ -11,6 +11,15 @@ from rka_memory.validity.engine import assess, valid
 from rka_memory.world import RecordState, World
 
 
+MAX_CONTENT_CHARS = 400
+
+
+def flatten(text: str) -> str:
+    """One line, capped: record text cannot open its own sections in the packet."""
+    line = " ".join(text.split()).lstrip("#>-* ")
+    return line if len(line) <= MAX_CONTENT_CHARS else line[: MAX_CONTENT_CHARS - 1] + "…"
+
+
 @dataclass(frozen=True)
 class PacketItem:
     record_id: str
@@ -25,7 +34,7 @@ class PacketItem:
     def line(self) -> str:
         tag = "unvalidated hint" if self.unvalidated else f"{self.rung} {self.kind}"
         return (
-            f"- [{self.record_id} | {tag}] {self.content} "
+            f"- [{self.record_id} | {tag}] {flatten(self.content)} "
             f"(scope: {self.scope}; grounding {self.grounding:.2f} across {self.sessions} sessions)"
         )
 
