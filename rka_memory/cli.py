@@ -161,8 +161,17 @@ def cmd_install_hooks(args) -> int:
             )
             return 2
         launcher = Path(args.command_path).expanduser()
-        files = (launcher,) if launcher.is_absolute() else ()
-        dirs = (env,)
+        if not launcher.is_absolute():
+            import shutil
+
+            found = shutil.which(args.command_path)
+            if found is None:
+                print(f"--harden needs an absolute --command-path; cannot resolve {args.command_path!r}", file=sys.stderr)
+                return 2
+            launcher = Path(found)
+        args.command_path = str(launcher)
+        files = (launcher,)
+        dirs = install.interpreter_dirs()
     result = install.install_hooks(
         target, command=args.command_path, uninstall=args.uninstall, harden_ledger=ledger, extra_files=files, extra_dirs=dirs
     )

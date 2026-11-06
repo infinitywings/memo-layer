@@ -191,6 +191,17 @@ def install_hooks(
     }
 
 
+def interpreter_dirs() -> tuple[Path, ...]:
+    """Every directory the running interpreter loads code from: the tool
+    environment and the base Python it was created from (uv-managed Pythons
+    live in a user-writable directory too)."""
+    import sys
+
+    roots = [sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix]
+    roots.append(str(Path(sys.executable).resolve().parent.parent))
+    return tuple(dict.fromkeys(Path(r).resolve() for r in roots))
+
+
 def installed_code() -> tuple[Path, bool]:
     """(the environment the running rka-memory comes from, whether its code
     lives inside that environment). An editable install runs source from a
