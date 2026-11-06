@@ -147,6 +147,35 @@ def cmd_install_hooks(args) -> int:
     return 0
 
 
+def cmd_skills(args) -> int:
+    """L3 skills valid for a session, for harness plugins that load skills
+    themselves. With --session the offer is logged as a delivery."""
+    from rka_memory.domain import Actor, Event, Kind
+    from rka_memory.ledger import state as state_mod
+    from rka_memory.skills.export import session_skills
+
+    mem = _memory()
+    world = mem.world()
+    sess = world.sessions.get(args.session) if args.session else None
+    if sess is not None and sess.started is not None:
+        st = sess.state
+    else:
+        st = state_mod.detect(Path(args.cwd).resolve(), mem.cfg)
+    skills = session_skills(world, mem.cfg, st)
+    if sess is not None and sess.started is not None and skills:
+        mem.append(
+            Event.new(
+                Kind.PACKET_DELIVERED,
+                Actor.RUNNER,
+                args.session,
+                {"record_ids": [s["record_id"] for s in skills], "arm": "gated", "channel": "skills"},
+                state_hash=st.hash(),
+            )
+        )
+    _print(skills)
+    return 0
+
+
 def cmd_mcp(args) -> int:
     from rka_memory.mcp import server
 
@@ -214,6 +243,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--command-path", default="rka-memory", help="how hooks should invoke rka-memory")
     s.add_argument("--uninstall", action="store_true")
     s.set_defaults(fn=cmd_install_hooks)
+
+    s = sub.add_parser("skills", help="L3 skills valid for a session (for harness plugins)")
+    s.add_argument("--session", default=None)
+    s.add_argument("--cwd", default=".")
+    s.set_defaults(fn=cmd_skills)
 
     sub.add_parser("mcp", help="run the MCP server (stdio)").set_defaults(fn=cmd_mcp)
     return p

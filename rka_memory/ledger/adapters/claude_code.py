@@ -234,6 +234,18 @@ class ToolUse:
         return Event.new(kind, actor, self.session_id, payload, state_hash=state_hash, id=ev_id)
 
 
+def _outcome_known(payload: Mapping[str, Any], use: ToolUse) -> bool:
+    """Claude Code always sends a transcript and routes failed commands to
+    PostToolUseFailure. A caller without a transcript must state the exit code
+    itself (the rka-memory dsh plugin does). dsh's generic hooks-claude-code
+    bridge sends neither and has no failure event, so its Bash calls record no
+    outcome at all."""
+    if payload.get("transcript_path") or use.error is not None:
+        return True
+    resp = _mapping(use.response)
+    return any(isinstance(resp.get(name), int) for name in EXIT_CODE_FIELDS)
+
+
 def _exit_code(use: ToolUse) -> int | None:
     """The command's exit status, or None when it is not known."""
     if use.interrupted or use.backgrounded:
@@ -315,11 +327,7 @@ def tool_events(
             state_hash,
         ),
     ]
-    # Claude Code always sends a transcript and routes failed commands to
-    # PostToolUseFailure. A caller without a transcript (dsh's hooks-claude-code
-    # bridge sends ''; it has no failure event) cannot tell us whether a
-    # command failed, so its Bash calls record no outcome at all.
-    if use.tool == "Bash" and payload.get("transcript_path"):
+    if use.tool == "Bash" and _outcome_known(payload, use):
         code = _exit_code(use)
         if code is not None:
             outcome = {"command": _clip(use.command, cfg), "tool_use_id": use.tool_use_id}
@@ -351,6 +359,7 @@ def session_start_event(payload: Mapping[str, Any], state: State, model: str | N
             "cwd": payload.get("cwd"),
             "transcript_path": payload.get("transcript_path"),
             "model": model,
+            "harness": payload.get("harness") or "claude_code",
         },
         state_hash=state.hash(),
         id=derived_id("ev", "session_start", sid),
@@ -463,6 +472,18 @@ def transcript_model(records: Iterable[Mapping[str, Any]]) -> str | None:
         if isinstance(model, str) and model and model != "<synthetic>":
             return model
     return None
+
+
+def reported_usage(payload: Mapping[str, Any]) -> TranscriptUsage | None:
+    """Token usage a harness without transcripts reports in the payload."""
+    usage = payload.get("usage")
+    if not isinstance(usage, Mapping) or not isinstance(usage.get("tokens_total"), int):
+        return None
+    return TranscriptUsage(
+        int(usage["tokens_total"]),
+        int(usage.get("tokens_before_first_write") or 0),
+        bool(usage.get("first_write_seen")),
+    )
 
 
 def session_end_event(payload: Mapping[str, Any], usage: TranscriptUsage) -> Event:

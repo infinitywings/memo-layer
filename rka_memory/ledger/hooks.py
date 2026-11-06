@@ -253,7 +253,9 @@ def _late_writes(memory: Memory, session_id: str) -> list:
 
 def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
     sid = adapter.session_id(payload)
-    usage = adapter.transcript_usage(adapter.read_transcript(payload.get("transcript_path")))
+    usage = adapter.reported_usage(payload) or adapter.transcript_usage(
+        adapter.read_transcript(payload.get("transcript_path"))
+    )
     memory.append(*_late_writes(memory, sid), adapter.session_end_event(payload, usage))
     commands = [_cli("mine", sid)]
     if memory.cfg.sync_on_session_end and memory.cfg.core_project_id:

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from rka_memory.config import Config
-from rka_memory.domain import SCOPE_FIELDS, RecordKind, Rung
+from rka_memory.domain import SCOPE_FIELDS, RecordKind, Rung, State
 from rka_memory.packet.builder import flatten
 from rka_memory.skills.gate import skill_name
 from rka_memory.validity.engine import assess
@@ -161,6 +161,28 @@ def render(rec: RecordState, world: World, cfg: Config, placement: Placement) ->
     body.append(f"If this skill is wrong, the user can type `rkm reject {rec.id} <reason>`.")
     frontmatter = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=10_000)
     return f"---\n{frontmatter}---\n\n" + "\n".join(body) + "\n"
+
+
+def session_skills(world: World, cfg: Config, state: State) -> list[dict[str, str]]:
+    """L3 skills valid for one session's state, for a harness whose own skill
+    provider is asked per session and so enforces the full scope itself."""
+    from rka_memory.validity.engine import valid
+
+    out = []
+    for rec in sorted(exportable(world), key=lambda r: r.id):
+        if rec.rung is not Rung.L3 or not valid(rec, state, world, cfg):
+            continue
+        text = render(rec, world, cfg, Placement(cfg.skills_dir, None, ()))
+        _, front, body = text.split("---\n", 2)
+        out.append(
+            {
+                "record_id": rec.id,
+                "name": skill_name(rec.id),
+                "description": yaml.safe_load(front)["description"],
+                "body": body.lstrip("\n"),
+            }
+        )
+    return out
 
 
 def _write(path: Path, text: str) -> None:
