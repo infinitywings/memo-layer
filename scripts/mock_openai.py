@@ -7,11 +7,13 @@ plain text. Every request body is appended to the log file as one JSON line,
 so a test can read exactly what the harness sent the model.
 
 Usage: python scripts/mock_openai.py <port> <request-log.jsonl> <project-dir>
+MOCK_WRITE_PATH and MOCK_BASH_COMMAND override the scripted write target and command.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,10 +28,13 @@ def script(body: dict) -> dict:
         return {"content": "rka-memory dsh test"}
     done = sum(1 for m in body.get("messages", []) if m.get("role") == "tool")
     if done == 0:
-        args = {"file_path": f"{PROJECT}/hello.py", "content": "print('hello')\n"}
+        args = {"file_path": os.environ.get("MOCK_WRITE_PATH", f"{PROJECT}/hello.py"), "content": "print('hello')\n"}
         return {"tool": ("write", args)}
     if done == 1:
-        return {"tool": ("bash", {"description": "list files", "command": "ls"})}
+        args = {"description": "run a command", "command": os.environ.get("MOCK_BASH_COMMAND", "ls")}
+        if os.environ.get("MOCK_BASH_ESCALATE"):
+            args.update(sandbox_permissions=os.environ["MOCK_BASH_ESCALATE"], justification="test escalation")
+        return {"tool": ("bash", args)}
     return {"content": "Done."}
 
 

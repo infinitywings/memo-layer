@@ -3,16 +3,23 @@
 # in the current directory:  scripts/dsh-docker tui  |  scripts/dsh-docker headless "task"
 # The git root is mounted at the same absolute path, so records are scoped to
 # the same project path as Claude Code sessions, and ~/.rka-memory is shared.
+# The ledger must stay out of the agent's reach: dsh's tool sandbox (the
+# default workspace-write mode) denies writes outside the project, and the
+# plugin, which runs outside that sandbox, is the only writer. Never approve
+# a sandbox escalation that touches /rka-memory. config.yaml is mounted
+# read-only, so not even an escalated command can change the gate.
 set -euo pipefail
 image="${RKA_DSH_IMAGE:-rka-memory-dsh}"
 ledger="${RKA_MEMORY_DIR:-$HOME/.rka-memory}"
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 mkdir -p "$ledger"
+touch "$ledger/config.yaml"
 tty=()
 if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
 exec docker run --rm "${tty[@]}" \
   -v "$root:$root" -w "$PWD" \
   -v "$ledger:/rka-memory" \
+  -v "$ledger/config.yaml:/rka-memory/config.yaml:ro" \
   -v rka-memory-dsh-home:/dsh-home \
   --add-host host.docker.internal:host-gateway \
   -e RKA_MEMORY_CORE_URL="${RKA_MEMORY_CORE_URL:-http://host.docker.internal:9712}" \

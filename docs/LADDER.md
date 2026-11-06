@@ -57,6 +57,13 @@ An event counts toward a record when it is inside the record's scope. User verdi
 - **Where a skill is written enforces its scope.** Claude Code loads skills by description and ignores scope, so a skill pinned to projects is written to each `<project>/.claude/skills` (with a `.gitignore` so it stays out of the repository), and only a skill with no project constraint goes to `~/.claude/skills`. An L3 skill auto-loads only when every remaining scope field is enforced too: `model_id`, `task_class` and `user_context` must be open, and a toolchain constraint must match the project's current toolchain. Otherwise the SKILL.md stays user-invocable, and the scope-checked packet delivers the record when it applies.
 - **Storage.** Hooks append to a local JSONL spool. `rka-memory sync` copies it into an RKA Core project as journal entries, keyed by event id so re-sending is idempotent. Core is the durable store. The engine reads the spool, so a tool call never waits on the network.
 
+## Trust boundary: who can write the ledger
+
+Every guarantee above assumes the adapter alone writes the ledger, so the actor field means what it says. An agent that can append JSON lines to the ledger file can forge any event, user verdicts included. The boundary therefore has to be the operating system, not the code:
+
+- **dsh in Docker (`scripts/dsh-docker`): enforced.** The plugin runs in the dsh host process; the agent's `bash`, `write` and `edit` run in dsh's tool sandbox, which in the default `workspace-write` mode (and in `read-only`) denies writes outside the project. `scripts/sandbox_check.sh` has the mock model try a `write` into `/rka-memory`, a bash append to the ledger, and an escalated retry under both approval policies; no line reaches the ledger. In an interactive session an escalation request asks you; approving one that touches `/rka-memory` would open the boundary. `config.yaml` is mounted read-only, so not even an escalated command can change the gate.
+- **Claude Code on the host: not enforced by default.** Claude Code's Bash and Write tools run as you and can append to `~/.rka-memory/ledger.jsonl`. Until Claude Code's own sandbox or permission rules deny writes to that directory, a prompt-injected agent can forge ledger events there.
+
 ## Known gaps
 
 - Within one session, the miner can still cite an unrelated passing test as support for an injected claim. Two such sessions inside scope would promote the claim. This is the laundering problem from the threat model. Closing it needs runner-made links (for example, tying test results to records whose steps ran), which this prototype does not have.
