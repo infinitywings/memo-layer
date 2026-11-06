@@ -163,12 +163,13 @@ PATH_SELECTING_RUNNERS = frozenset({"pytest", "cargo", "go", "vitest", "jest"})
 def _allowed_positional(arg: str, runner: str) -> bool:
     if runner not in PATH_SELECTING_RUNNERS or "=" in arg:
         return False
-    if runner == "go":
-        return arg in (".", "./...") or arg.startswith("./")
     # Stay a relative path inside the project: `/tmp/fake_test.py`, `../x` or a
     # pytest `@argsfile` could run other code.
     parts = Path(arg).parts
-    return not arg.startswith(("@", "~")) and not Path(arg).is_absolute() and ".." not in parts and "://" not in arg
+    inside = not arg.startswith(("@", "~")) and not Path(arg).is_absolute() and ".." not in parts and "://" not in arg
+    if runner == "go":
+        return inside and (arg in (".", "./...") or arg.startswith("./"))
+    return inside
 
 
 def _allowed_test_arg(arg: str, runner: str) -> bool:
