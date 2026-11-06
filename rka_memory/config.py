@@ -23,6 +23,7 @@ def user_config_path() -> Path:
 class GateConfig:
     k: float = 2.0
     min_sessions: int = 2
+    weak_only_min_sessions: int = 3
     skill_min_sessions: int = 2
     retire_after_days: float = 60
     confirm_overrides: bool = True
@@ -102,6 +103,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
         gate=GateConfig(
             k=float(gate_raw.get("k", 2.0)),
             min_sessions=int(gate_raw.get("min_sessions", 2)),
+            weak_only_min_sessions=int(gate_raw.get("weak_only_min_sessions", 3)),
             skill_min_sessions=int(gate_raw.get("skill_min_sessions", 2)),
             retire_after_days=float(gate_raw.get("retire_after_days", 60)),
             confirm_overrides=bool(gate_raw.get("confirm_overrides", True)),

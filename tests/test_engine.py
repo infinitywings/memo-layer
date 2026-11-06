@@ -60,7 +60,7 @@ def test_failing_outcome_cannot_be_cited_as_support():
     assert rung(lg.gate(), "r_a") == "L0D"
 
 
-def test_weak_signals_count_one_third():
+def test_weak_signals_count_one_third_and_need_three_sessions():
     lg = Ledger()
     lg.start("s1", **UV)
     msgs = [lg.user_msg("s1", f"use uv {i}") for i in range(3)]
@@ -68,11 +68,25 @@ def test_weak_signals_count_one_third():
     for m in msgs:
         lg.link("r_a", m)
     lg.start("s2", **UV)
-    two = [lg.user_msg("s2", f"uv again {i}") for i in range(2)]
-    for m in two:
+    for m in [lg.user_msg("s2", f"uv again {i}") for i in range(3)]:
         lg.link("r_a", m)
     assert rung(lg.gate(), "r_a") == "L1"
-    lg.link("r_a", lg.user_msg("s2", "uv, really"))
+    lg.start("s3", **UV)
+    lg.link("r_a", lg.user_msg("s3", "uv, really"))
+    assert rung(lg.gate(), "r_a") == "L2"
+
+
+def test_one_strong_signal_lifts_the_weak_only_session_requirement():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    msg = lg.user_msg("s1", "use uv")
+    lg.propose("s1", "r_a")
+    lg.link("r_a", msg)
+    lg.start("s2", **UV)
+    lg.link("r_a", lg.test("s2", True))
+    lg.link("r_a", lg.user_msg("s2", "uv please"))
+    assert rung(lg.gate(), "r_a") == "L1"
+    lg.link("r_a", lg.user_msg("s2", "uv, I said"))
     assert rung(lg.gate(), "r_a") == "L2"
 
 

@@ -11,6 +11,7 @@ core:
 gate:
   k: 2.0                      # weighted grounding needed for L1 -> L2
   min_sessions: 2             # distinct sessions among that grounding
+  weak_only_min_sessions: 3   # ...when no event of weight >= 1 is among it
   skill_min_sessions: 2       # later sessions that followed a procedure for L2 -> L3
   retire_after_days: 60       # untouched L1 records retire to L4
   confirm_overrides: true     # a user confirm promotes straight to L2

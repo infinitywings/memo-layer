@@ -101,10 +101,14 @@ def assess(rec: RecordState, world: World, cfg: Config, scope: Scope | None = No
 
 
 def meets_l2(support: list[Grounding], cfg: Config) -> bool:
-    return (
-        sum(g.weight for g in support) >= cfg.gate.k - 1e-9
-        and len({g.session_id for g in support}) >= cfg.gate.min_sessions
-    )
+    """Weighted grounding of at least k across enough distinct sessions. Weak-only
+    grounding (no event of weight >= 1) needs more sessions: weak signals are
+    evidence, not labels."""
+    sessions = len({g.session_id for g in support})
+    needed = cfg.gate.min_sessions
+    if not any(g.weight >= 1 for g in support):
+        needed = max(needed, cfg.gate.weak_only_min_sessions)
+    return sum(g.weight for g in support) >= cfg.gate.k - 1e-9 and sessions >= needed
 
 
 def sufficient_for_l2(support: list[Grounding], cfg: Config) -> bool:
