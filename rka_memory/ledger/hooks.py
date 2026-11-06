@@ -34,7 +34,9 @@ Output = dict[str, Any] | None
 
 
 def _cli(*args: str) -> list[str]:
-    return [sys.executable, "-m", "rka_memory.cli", *args]
+    # -I: hooks run in the project directory, and plain `-m` would import a
+    # `rka_memory/` package planted there instead of the installed one.
+    return [sys.executable, "-I", "-m", "rka_memory.cli", *args]
 
 
 def spawn(commands: list[list[str]], log_path: Path) -> None:

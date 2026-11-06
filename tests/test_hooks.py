@@ -178,7 +178,7 @@ def test_week1_session_replays_from_ledger_and_next_session_sees_edit_and_undo(
         "tokens_before_first_write": 15,
         "first_write_seen": True,
     }
-    assert spawned == [[[sys.executable, "-m", "rka_memory.cli", "mine", "sess-a"]]]
+    assert spawned == [[[sys.executable, "-I", "-m", "rka_memory.cli", "mine", "sess-a"]]]
 
     new_file.write_text("x = 1\ny = 2\n")
     old_file.write_text("a = 1\n")
@@ -219,13 +219,13 @@ def test_catchup_mines_quiet_unmined_sessions_but_not_the_current_one(memory, pr
     user_config(miner={"timeout_seconds": 0})
     fire(capsys, "SessionStart", {**base("old", proj, tmp_path), "source": "startup"})
     fire(capsys, "SessionStart", {**base("now", proj, tmp_path), "source": "startup"})
-    assert spawned == [[[sys.executable, "-m", "rka_memory.cli", "mine", "old"]]]
+    assert spawned == [[[sys.executable, "-I", "-m", "rka_memory.cli", "mine", "old"]]]
 
 
 def test_session_end_also_syncs_when_a_core_project_is_configured(memory, proj, tmp_path, spawned, capsys, user_config):
     user_config(core={"project_id": "prj_x"})
     fire(capsys, "SessionEnd", {**base("s", proj, tmp_path), "reason": "logout"})
-    cli = [sys.executable, "-m", "rka_memory.cli"]
+    cli = [sys.executable, "-I", "-m", "rka_memory.cli"]
     assert spawned == [[[*cli, "mine", "s"], [*cli, "sync"]]]
     end = [e for e in memory.ledger.read() if e.kind is Kind.SESSION_END]
     assert [dict(e.payload) for e in end] == [
@@ -372,3 +372,14 @@ def test_a_change_after_the_agents_last_tool_call_is_still_the_agents(memory, pr
     events = memory.ledger.read()
     assert [e.payload["tool"] for e in events if e.kind is Kind.FILE_WRITE] == ["Write", "session_end"]
     assert [e for e in events if e.kind in (Kind.USER_EDIT, Kind.USER_UNDO)] == []
+
+
+def test_background_commands_never_import_from_the_project_directory(tmp_path):
+    planted = tmp_path / "rka_memory"
+    planted.mkdir()
+    (planted / "__init__.py").write_text("raise SystemExit('planted package imported')\n")
+    (planted / "cli.py").write_text("raise SystemExit('planted package imported')\n")
+    cmd = hooks._cli("--help")
+    out = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "planted" not in out.stdout + out.stderr
