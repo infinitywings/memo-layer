@@ -153,9 +153,11 @@ def _session_end(world: World, ev: Event) -> None:
 
 
 def _judgment(world: World, ev: Event) -> None:
-    """Judgments only touch fuzzy fields of their own session. A model judgment
-    may fill an unknown value but never overwrite one, so model text cannot
-    move a session (and the evidence in it) into another scope."""
+    """Judgments only touch fuzzy fields. A session judgment changes only its
+    own session, and a model one may fill an unknown value but never overwrite
+    one, so model text cannot move a session (and the evidence in it) into
+    another scope. Record-applicability judgments are accepted only from the
+    runner, which logs whichever judge it asked."""
     p = ev.payload
     name = p.get("field")
     if name not in FUZZY_FIELDS:
@@ -165,7 +167,7 @@ def _judgment(world: World, ev: Event) -> None:
         if ev.actor is Actor.MODEL and sess.state.get(name) is not None:
             return
         sess.state = sess.state.with_field(name, p["value"])
-    elif p.get("target") == "record":
+    elif p.get("target") == "record" and ev.actor is Actor.RUNNER and p.get("record_id") in world.records:
         world.judgments[(p["record_id"], name, p["value"])] = bool(p["applies"])
 
 

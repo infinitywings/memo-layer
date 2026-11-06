@@ -344,3 +344,12 @@ def test_model_judgments_cannot_move_sessions_between_scopes():
     world = project(lg.events)
     assert world.sessions["s1"].state == State(**{**UV, "task_class": "coding"})
     assert "s9" not in world.sessions
+
+
+def test_only_the_runner_can_log_record_applicability_judgments():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_a")
+    lg._ev(Kind.JUDGMENT, Actor.MODEL, "s1", {"target": "record", "record_id": "r_a", "field": "task_class", "value": "ops", "applies": True})
+    lg._ev(Kind.JUDGMENT, Actor.RUNNER, "s1", {"target": "record", "record_id": "r_a", "field": "task_class", "value": "data", "applies": True})
+    assert project(lg.events).judgments == {("r_a", "task_class", "data"): True}
