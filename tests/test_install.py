@@ -58,3 +58,28 @@ def test_install_creates_a_missing_settings_file_without_a_backup(tmp_path):
     assert hooks["SessionEnd"] == [{"hooks": [{"type": "command", "command": "/opt/bin/rka-memory hook SessionEnd"}]}]
     install_hooks(settings, command="/opt/bin/rka-memory", uninstall=True)
     assert json.loads(settings.read_text()) == {}
+
+
+def test_harden_denies_the_agent_the_ledger_and_undo_removes_only_ours(tmp_path):
+    from rka_memory.ledger.install import harden
+
+    home = tmp_path / "home"
+    ledger = home / ".rka-memory"
+    ledger.mkdir(parents=True)
+    mine = {"permissions": {"deny": ["Read(./.env)"]}, "sandbox": {"excludedCommands": ["docker"]}}
+    hard, notes = harden(mine, ledger, home)
+    assert hard["permissions"]["deny"] == ["Read(./.env)", "Edit(~/.rka-memory/**)"]
+    assert hard["sandbox"] == {
+        "excludedCommands": ["docker"],
+        "filesystem": {"denyWrite": ["~/.rka-memory"]},
+        "enabled": True,
+        "allowUnsandboxedCommands": False,
+        "failIfUnavailable": True,
+    }
+    assert notes == ["sandbox.excludedCommands ['docker'] run outside the sandbox and could still write the ledger"]
+    assert harden(hard, ledger, home)[0] == hard
+    undone, _ = harden(hard, ledger, home, undo=True)
+    assert undone["permissions"] == {"deny": ["Read(./.env)"]}
+    assert "filesystem" not in undone["sandbox"]
+    outside, _ = harden({}, tmp_path / "elsewhere", home)
+    assert outside["permissions"]["deny"] == [f"Edit(/{(tmp_path / 'elsewhere').resolve().as_posix()}/**)"]

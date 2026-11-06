@@ -143,7 +143,18 @@ def cmd_install_hooks(args) -> int:
     from rka_memory.ledger import install
 
     target = Path(args.settings).expanduser()
-    _print(install.install_hooks(target, command=args.command_path, uninstall=args.uninstall))
+    ledger = None
+    if args.harden:
+        from rka_memory import config as config_mod
+
+        ledger = config_mod.load().ledger_dir
+    result = install.install_hooks(target, command=args.command_path, uninstall=args.uninstall, harden_ledger=ledger)
+    _print(result)
+    if not args.harden and not args.uninstall:
+        print(
+            "warning: without --harden the agent's Bash and Write tools can append to the ledger and forge events",
+            file=sys.stderr,
+        )
     return 0
 
 
@@ -242,6 +253,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--settings", default="~/.claude/settings.json")
     s.add_argument("--command-path", default="rka-memory", help="how hooks should invoke rka-memory")
     s.add_argument("--uninstall", action="store_true")
+    s.add_argument(
+        "--harden",
+        action="store_true",
+        help="also deny the agent write access to the ledger (permission rule + OS bash sandbox)",
+    )
     s.set_defaults(fn=cmd_install_hooks)
 
     s = sub.add_parser("skills", help="L3 skills valid for a session (for harness plugins)")

@@ -31,10 +31,10 @@ Create the RKA Core project that stores the ledger. The command writes its id in
 rka-memory init
 ```
 
-Add the hooks to your Claude Code user settings. The command backs up the file first and leaves your other hooks alone:
+Add the hooks to your Claude Code user settings. The command backs up the file first and leaves your other hooks alone. `--harden` also keeps the agent from writing the ledger: an `Edit` deny rule for `~/.rka-memory` plus Claude Code's OS-level bash sandbox with that directory denied and the unsandboxed escape hatch off. Without it, a prompt-injected agent can forge ledger events, including your verdicts (see the trust boundary in [docs/LADDER.md](docs/LADDER.md)). The sandbox applies to every Claude Code session, including its network isolation, so commands that reach the network may ask first.
 
 ```bash
-rka-memory install-hooks --settings ~/.claude/settings.json
+rka-memory install-hooks --settings ~/.claude/settings.json --harden
 ```
 
 Register the MCP server:
@@ -118,6 +118,12 @@ uv run python scripts/e2e_claude_hooks.py
 
 ```bash
 uv run python scripts/e2e_mcp.py
+```
+
+Whether an agent in real Claude Code can forge ledger events, without and with `--harden` (throwaway HOME, scripted Anthropic mock, no login needed):
+
+```bash
+uv run python scripts/host_hardening_check.py --harden
 ```
 
 The dsh plugin's own tests, and an end-to-end run inside real dsh against a scripted mock model (needs dsh installed and Node 24):

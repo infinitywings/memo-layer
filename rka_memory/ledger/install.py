@@ -61,9 +61,74 @@ def merge(settings: dict[str, Any], command: str, *, uninstall: bool = False) ->
     return out
 
 
-def install_hooks(settings_path: Path, command: str = "rka-memory", uninstall: bool = False) -> dict[str, Any]:
+def settings_path_rule(path: Path, home: Path) -> str:
+    """A path in Claude Code's settings syntax: `~/` under home, `//` for absolute."""
+    path = path.expanduser().resolve()
+    try:
+        return "~/" + path.relative_to(home.resolve()).as_posix()
+    except ValueError:
+        return "/" + path.as_posix()
+
+
+def harden(settings: dict[str, Any], ledger_dir: Path, home: Path, *, undo: bool = False) -> tuple[dict[str, Any], list[str]]:
+    """Keep the agent from writing the ledger, which hooks alone cannot do.
+
+    The ledger's actor field is only trustworthy if the recorder is its only
+    writer. Claude Code's Write and Edit tools are stopped by a deny rule; shell
+    commands only by the OS-level bash sandbox, with its escape hatch
+    (`dangerouslyDisableSandbox`) closed and a missing sandbox made fatal rather
+    than silently skipped. Hooks run outside the sandbox, so they still record.
+    """
+    rule = settings_path_rule(ledger_dir, home)
+    edit_rule = f"Edit({rule}/**)"
+    out = json.loads(json.dumps(settings))
+    perms = out.setdefault("permissions", {})
+    deny = [r for r in perms.get("deny", []) if r != edit_rule]
+    sandbox = out.setdefault("sandbox", {})
+    fs = sandbox.setdefault("filesystem", {})
+    deny_write = [r for r in fs.get("denyWrite", []) if r != rule]
+    notes: list[str] = []
+    if undo:
+        notes.append("sandbox.enabled, allowUnsandboxedCommands and failIfUnavailable were left as they are")
+    else:
+        deny.append(edit_rule)
+        deny_write.append(rule)
+        sandbox["enabled"] = True
+        sandbox["allowUnsandboxedCommands"] = False
+        sandbox["failIfUnavailable"] = True
+        if sandbox.get("excludedCommands"):
+            notes.append(
+                f"sandbox.excludedCommands {sandbox['excludedCommands']} run outside the sandbox and could still write the ledger"
+            )
+        if fs.get("disabled"):
+            notes.append("sandbox.filesystem.disabled is true, so shell commands can still write the ledger")
+    perms["deny"] = deny
+    fs["denyWrite"] = deny_write
+    for container, key in ((perms, "deny"), (fs, "denyWrite")):
+        if not container[key]:
+            del container[key]
+    if not fs:
+        del sandbox["filesystem"]
+    if not sandbox:
+        del out["sandbox"]
+    if not perms:
+        del out["permissions"]
+    return out, notes
+
+
+def install_hooks(
+    settings_path: Path,
+    command: str = "rka-memory",
+    uninstall: bool = False,
+    *,
+    harden_ledger: Path | None = None,
+    home: Path | None = None,
+) -> dict[str, Any]:
     before = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     after = merge(before, command, uninstall=uninstall)
+    notes: list[str] = []
+    if harden_ledger is not None:
+        after, notes = harden(after, harden_ledger, home or Path.home(), undo=uninstall)
     backup = settings_path.with_name(settings_path.name + BACKUP_SUFFIX)
     changed = after != before
     if changed:
@@ -80,4 +145,6 @@ def install_hooks(settings_path: Path, command: str = "rka-memory", uninstall: b
         "changed": changed,
         "action": "uninstall" if uninstall else "install",
         "events": [] if uninstall else list(HOOK_EVENTS),
+        "hardened": harden_ledger is not None and not uninstall,
+        "notes": notes,
     }
