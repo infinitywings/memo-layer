@@ -57,6 +57,23 @@ services:
         uv run --no-dev python scripts/e2e_dsh.py
         && sh scripts/sandbox_check.sh
 
+  # T2 and T3: the scenario streams in workload/scenarios, each through real
+  # dsh, the plugin, the miner over HTTP and the engine (docs/WORKLOAD.md).
+  # Every stream starts its own scripted model on localhost, so nothing else
+  # in the stack is needed. init reaps orphaned hook processes, which the
+  # runner waits for after each dsh task.
+  workload:
+    build:
+      context: .
+      dockerfile: docker/dsh/Dockerfile
+    image: rka-memory-dsh
+    profiles: [workload]
+    init: true
+    entrypoint: ["rka-memory", "workload", "run"]
+    command: ["/opt/rka-memory/workload/scenarios", "--out", "/runs/workload"]
+    volumes:
+      - runs:/runs
+
 volumes:
   core-data:
   runs:

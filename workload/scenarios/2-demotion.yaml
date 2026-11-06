@@ -1,0 +1,66 @@
+name: demotion
+description: >-
+  An L2 record delivered in a session whose written file the user then
+  undoes drops to L1 once the miner links the undo as counter-evidence. The
+  undo is detected when the next session starts, so the link comes from that
+  session's miner. Separately, a typed `rkm reject` demotes another L2
+  record at once.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &docstrings
+          content: Give every new calc.py function a one-line docstring
+          kind: preference
+          evidence: [{kind: test_result, passed: true}]
+        - &tests
+          content: Run the test suite with pytest -q before finishing
+          kind: preference
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: Give every new calc.py function a one-line docstring, rung: L1}
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*docstrings, *tests]
+    user:
+      - reject: {record: Run the test suite with pytest -q before finishing, reason: we run the suite through tox now}
+    expect:
+      - {record: Give every new calc.py function a one-line docstring, rung: L2}
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+
+  - at: +2d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    \"\"\"Return -a.\"\"\"\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - restore: calc.py
+    expect:
+      - {record: Give every new calc.py function a one-line docstring, delivered: true}
+      - {record: Give every new calc.py function a one-line docstring, rung: L2}
+      - {record: Run the test suite with pytest -q before finishing, delivered: false}
+
+  - at: +3d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      counter_links:
+        - record: Give every new calc.py function a one-line docstring
+          event: {kind: user_undo}
+          reason: the user undid the change written while following it
+    expect:
+      - {record: Give every new calc.py function a one-line docstring, rung: L1}

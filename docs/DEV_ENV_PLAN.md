@@ -1,6 +1,6 @@
 # Plan: a Docker Compose environment for developing and testing rka-memory
 
-Status: proposal for review (2026-11-06). Nothing below is built yet except the pieces marked "exists".
+Status: proposal for review (2026-11-06). M1 to M3 are built; M3 drives dsh headless rather than through ACP (see [WORKLOAD.md](WORKLOAD.md)). Elsewhere, "exists" marks what was built before this plan.
 
 ## Goal
 
@@ -26,7 +26,7 @@ flowchart LR
     core[core<br/>RKA Core 3.0.1]
     llm[mock-llm<br/>scripted model]
     dsh[dsh<br/>interactive agent + plugin]
-    wl[workload<br/>task streams via ACP]
+    wl[workload<br/>task streams via headless dsh]
     mem[memory<br/>gate, metrics, sync]
     dev[dev<br/>toolbox, tests]
   end
@@ -45,7 +45,7 @@ flowchart LR
 | `core` | built from your RKA Core source (`RKA_CORE_SRC`, default `/Volumes/FuSpace/Projects/rka-projects/rka`) | the stack's own Core; embeddings off in test runs | `127.0.0.1:9722` | `core-data` |
 | `mock-llm` | small Python image | scripted OpenAI-compatible model for the agent and the miner; logs every request | none | `runs` |
 | `dsh` | `rka-memory-dsh` (exists) | dsh `web` profile for you to watch and drive sessions by hand; plugin loaded | dsh web's port, on `127.0.0.1` (to be read from the `web` profile) | `ledger`, `dsh-home`, `workspaces` |
-| `workload` | `rka-memory-dsh` plus the runner | runs task streams: drives dsh through ACP, plays the user, advances a simulated clock, mines and gates after each session | none | `ledger`, `workspaces`, `runs` |
+| `workload` | `rka-memory-dsh` plus the runner | runs task streams: drives headless dsh (ACP later), plays the user, advances a simulated clock, mines and gates after each session | none | `ledger`, `workspaces`, `runs` |
 | `memory` | `rka-memory` | periodic gate, daily metrics, sync to `core` | none | `ledger`, `runs` |
 | `dev` | toolbox: Python 3.12, uv, Node 24, git | develop and test rka-memory; repository bind-mounted at `/src` | none | repository, `uv-cache` |
 
@@ -102,7 +102,7 @@ Each run writes a manifest (image digests, config, model ids, seed), the ledger 
 | T3 security | `workload` | forgery attempts by the agent inside the stack |
 | T4 live | `workload` | real-model streams; metrics, no assertions |
 
-`make test` runs T0 to T3 under the `test` and `workload` profiles. T0 and T1 then also run where the host sandbox blocks them today (local ports, the Docker socket).
+`make test` runs T0, T1 and the forgery check under the `test` profile. `make scenarios` runs T2 and T3 under the `workload` profile. T0 and T1 then also run where the host sandbox blocks them today (local ports, the Docker socket).
 
 ## Milestones
 
@@ -110,7 +110,7 @@ Each run writes a manifest (image digests, config, model ids, seed), the ledger 
 |---|---|---|
 | M1 | compose file, `core` from source, `dev` toolbox, `mock-llm`, `make test` for T0 and T1 | `make test` passes in containers |
 | M2 | simulated clock, `openai_compat` miner, inline background mode | unit tests; the miner runs against `mock-llm` |
-| M3 | workload runner, ACP driver, task and stream format, the eight scenario suites, T3 | all scenarios pass on the mock model |
+| M3 | workload runner, headless dsh driver (ACP later), task and stream format, the eight scenario suites, T3 | all scenarios pass on the mock model |
 | M4 | `interactive` and live profiles with a real model | one live stream with a metrics report |
 
 ## Decisions needed

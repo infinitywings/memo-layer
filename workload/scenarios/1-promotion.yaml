@@ -1,0 +1,54 @@
+name: promotion
+description: >-
+  Passing tests in two sessions promote a candidate to L2; the second
+  session's duplicate merges into the first record. A candidate cited only
+  by user messages (weight 1/3 each) is weak-only and needs three sessions.
+  gate.k is 2/3 here so that after two sessions the weak-only record has
+  enough weight and only the session count holds it back.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  gate: {k: 0.6666}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &tests
+          content: Run the test suite with pytest -q before finishing
+          kind: preference
+          evidence: [{kind: test_result, passed: true}]
+        - &oneliners
+          content: Keep every calc.py function to a single return statement
+          kind: preference
+          evidence: [{kind: user_msg}]
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+      - {record: Keep every calc.py function to a single return statement, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*tests, *oneliners]
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+      - {record: Keep every calc.py function to a single return statement, rung: L1}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*oneliners]
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, delivered: true}
+      - {record: Run the test suite with pytest -q before finishing, in_prompt: true}
+      - {record: Keep every calc.py function to a single return statement, delivered: false}
+      - {record: Keep every calc.py function to a single return statement, rung: L2}

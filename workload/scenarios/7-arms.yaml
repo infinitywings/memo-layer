@@ -1,0 +1,68 @@
+name: arms
+description: >-
+  With packet arms [gated, none], the arm follows the simulated calendar day:
+  2027-01-05 and 2027-01-07 are gated days, 2027-01-06 and 2027-01-08 are
+  none days. Packets are empty on none days even when a validated record
+  applies. Every session reads before it writes, so `rka-memory metrics`
+  reports rediscovery tokens (before the first write) for both arms.
+start: 2027-01-05T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated, none]}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - bash: cat calc.py
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &tests
+          content: Run the test suite with pytest -q before finishing
+          kind: preference
+          broaden: [task_class]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {arm: gated}
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - bash: cat calc.py
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*tests]
+    expect:
+      - {arm: none}
+      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - bash: cat calc.py
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {arm: gated}
+      - {packet_empty: false}
+      - {record: Run the test suite with pytest -q before finishing, delivered: true}
+      - {record: Run the test suite with pytest -q before finishing, in_prompt: true}
+
+  - at: +3d
+    prompt: Add a negate function to calc.py
+    agent:
+      - bash: cat calc.py
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {arm: none}
+      - {packet_empty: true}
+      - {record: Run the test suite with pytest -q before finishing, in_prompt: false}
+      - metrics:
+          rediscovery_tokens.gated.count: 2
+          rediscovery_tokens.none.count: 2
+          rediscovery_tokens.gated.mean: 150
+          rediscovery_tokens.none.mean: 150

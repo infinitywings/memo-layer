@@ -18,12 +18,17 @@ ENV UV_PYTHON=3.12 \
     UV_PYTHON_INSTALL_DIR=/opt/uv-python \
     UV_PROJECT_ENVIRONMENT=/opt/rka-memory/.venv
 
+# The workload's scripted agent runs `pytest -q` against fixture code inside
+# dsh's sandbox. The tool lives outside /root, which dsh-docker mounts as tmpfs.
+RUN UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install pytest==9.2.0
+
 WORKDIR /opt/rka-memory
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY rka_memory ./rka_memory
 COPY plugins/dsh ./plugins/dsh
 COPY scripts ./scripts
 COPY docker/dsh ./docker/dsh
+COPY workload ./workload
 RUN uv sync --frozen --no-dev && chmod +x docker/dsh/entrypoint.sh
 
 ENV PATH=/opt/rka-memory/.venv/bin:$PATH \

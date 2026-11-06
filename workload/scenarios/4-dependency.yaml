@@ -1,0 +1,69 @@
+name: dependency
+description: >-
+  B depends on A and is grounded only in sessions where A was delivered.
+  Rejecting A demotes it, so evidence from those sessions stops counting for
+  B, and B drops exactly one rung, from L2 to L1.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &a
+          content: calc.py functions take two numbers and return a number
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: calc.py functions take two numbers and return a number, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*a]
+    expect:
+      - {record: calc.py functions take two numbers and return a number, rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &b
+          content: A new two-argument calc.py function needs no extra test file
+          kind: fact
+          depends_on: [calc.py functions take two numbers and return a number]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: calc.py functions take two numbers and return a number, delivered: true}
+      - {record: A new two-argument calc.py function needs no extra test file, rung: L1}
+
+  - at: +3d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*b]
+    expect:
+      - {record: calc.py functions take two numbers and return a number, delivered: true}
+      - {record: A new two-argument calc.py function needs no extra test file, rung: L2}
+
+  - at: +4d
+    prompt: Add a maximum function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def maximum(a, b):\n    return max(a, b)\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - reject: {record: calc.py functions take two numbers and return a number, reason: negate takes one number}
+    expect:
+      - {record: calc.py functions take two numbers and return a number, rung: L1}
+      - {record: A new two-argument calc.py function needs no extra test file, rung: L1}
