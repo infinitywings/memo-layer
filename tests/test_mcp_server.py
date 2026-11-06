@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from ledger_builder import Ledger
-from rka_memory.domain import Actor, FieldConstraint, Kind, Scope, State
+from rka_memory.domain import Actor, Event, FieldConstraint, Kind, Scope, State
 from rka_memory.mcp import server
 
 UV = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
@@ -23,6 +23,7 @@ def gated(memory):
     ok3 = lg.test("s2", True)
     lg.propose("s2", "r_hint", content="Ruff may be configured")
     lg.link("r_hint", ok3)
+    lg.start("s9", **UV)
     memory.append(*lg.events)
     memory.gate(now=lg.clock)
     return memory
@@ -113,3 +114,11 @@ def test_server_registers_exactly_the_six_memory_tools():
         "memory_reject",
         "memory_state",
     ]
+
+
+def test_a_session_id_the_model_names_counts_only_while_that_session_runs(gated):
+    server.packet(gated, state=UV, session_id="s9")
+    gated.append(Event.new(Kind.SESSION_END, Actor.RUNNER, "s9", {}))
+    server.packet(gated, state=UV, session_id="s9")
+    server.packet(gated, state=UV, session_id="made-up")
+    assert [d.event.session_id for d in gated.world().deliveries[-3:]] == ["s9", "mcp", "mcp"]

@@ -375,7 +375,9 @@ def test_claude_cli_backend_runs_claude_with_prompt_on_stdin_and_hooks_disabled(
     completion = backends.claude_cli(memory.cfg)("PROMPT TEXT")
 
     assert completion.tokens == 18482
-    assert (tmp_path / "argv").read_text().splitlines() == ["-p", "--model", "haiku", "--output-format", "json"]
+    assert (tmp_path / "argv").read_text().splitlines() == [
+        "-p", "--model", "haiku", "--output-format", "json", "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+    ]
     assert (tmp_path / "env").read_text() == "1"
     assert (tmp_path / "stdin").read_text() == "PROMPT TEXT"
 

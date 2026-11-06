@@ -27,6 +27,16 @@ def detect_cwd(memory: Memory) -> State:
     return detect(Path.cwd(), memory.cfg)
 
 
+def bound_session(memory: Memory, session_id: str | None) -> str:
+    """The model names the session, so accept only one that is running now;
+    anything else is logged under the shared MCP session."""
+    if session_id:
+        sess = memory.world().sessions.get(session_id)
+        if sess is not None and sess.started is not None and sess.ended is None:
+            return session_id
+    return MCP_SESSION
+
+
 def _state(memory: Memory, state: dict[str, Any] | None, detect: Detector) -> State:
     return State.from_json(state) if state is not None else detect(memory)
 
@@ -40,7 +50,7 @@ def packet(
     detect: Detector = detect_cwd,
 ) -> dict[str, Any]:
     pkt = memory.deliver(
-        session_id or MCP_SESSION, _state(memory, state, detect), channel="mcp", budget_tokens=budget_tokens
+        bound_session(memory, session_id), _state(memory, state, detect), channel="mcp", budget_tokens=budget_tokens
     )
     return {
         "records": [i.to_json() for i in pkt.items],
@@ -58,7 +68,7 @@ def hints(
     *,
     detect: Detector = detect_cwd,
 ) -> dict[str, Any]:
-    pkt = memory.deliver(session_id or MCP_SESSION, _state(memory, state, detect), channel="hints")
+    pkt = memory.deliver(bound_session(memory, session_id), _state(memory, state, detect), channel="hints")
     return {
         "records": [{**i.to_json(), "tag": "unvalidated"} for i in pkt.items],
         "omitted_count": pkt.omitted_count,

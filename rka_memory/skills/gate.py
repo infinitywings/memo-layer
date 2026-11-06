@@ -10,7 +10,7 @@ own, so a model-proposed command cannot run unattended.
 
 from __future__ import annotations
 
-from rka_memory.domain import GROUNDING, SUPPORT_ONLY, Event, Kind, Step
+from rka_memory.domain import GROUNDING, SUPPORT_ONLY, Actor, Event, Kind, Step
 from rka_memory.world import RecordState, Session, World
 
 OUTCOME_KINDS = (Kind.EXIT_CODE, Kind.TEST_RESULT)
@@ -70,6 +70,25 @@ def sessions_following(rec: RecordState, world: World) -> list[tuple[Session, Ev
         if fin is not None and outcome_ok(fin):
             found.append((sess, fin))
     return found
+
+
+def check_passed(sessions: list[Session], check: str) -> Event | None:
+    """A tool-observed run of exactly `check` that succeeded in one of `sessions`.
+
+    The check is proposed by the miner, so it reaches an auto-loading skill
+    only after the agent has really run it and it passed.
+    """
+    want = normalize_command(check)
+    for sess in sessions:
+        for ev in sess.events:
+            if (
+                ev.kind in OUTCOME_KINDS
+                and ev.actor is Actor.TOOL
+                and normalize_command(str(ev.payload.get("command", ""))) == want
+                and outcome_ok(ev)
+            ):
+                return ev
+    return None
 
 
 def _used_skill(sess: Session, rec: RecordState) -> int | None:

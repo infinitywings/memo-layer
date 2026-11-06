@@ -18,6 +18,7 @@ import yaml
 
 from rka_memory.config import Config
 from rka_memory.domain import SCOPE_FIELDS, RecordKind, Rung
+from rka_memory.packet.builder import flatten
 from rka_memory.skills.gate import skill_name
 from rka_memory.validity.engine import assess
 from rka_memory.world import RecordState, World
@@ -61,6 +62,11 @@ def version(rec: RecordState, world: World) -> int:
     return n
 
 
+def _code(text: str) -> str:
+    """Model-proposed text rendered as inline code: one line, no backticks."""
+    return flatten(text).replace("`", "'")
+
+
 def _description(content: str) -> str:
     line = " ".join(content.split())
     return line if len(line) <= DESCRIPTION_MAX else line[: DESCRIPTION_MAX - 3] + "..."
@@ -84,13 +90,16 @@ def render(rec: RecordState, world: World, cfg: Config) -> str:
         "evidence": [g.event.id for g in assess(rec, world, cfg).support],
         "acceptance_check": check,
     }
-    body = [f"# {name}", "", rec.spec.content, "", f"Applies when: {rec.scope.describe()}."]
+    body = [f"# {name}", "", flatten(rec.spec.content), "", f"Applies when: {flatten(rec.scope.describe())}."]
     if rec.spec.steps:
         body += ["", "## Steps", ""]
-        body += [f"{i}. Tool `{s.tool}`, with input containing `{s.match}`." for i, s in enumerate(rec.spec.steps, 1)]
+        body += [
+            f"{i}. Tool `{_code(s.tool)}`, with input containing `{_code(s.match)}`."
+            for i, s in enumerate(rec.spec.steps, 1)
+        ]
     body.append("")
-    if check:
-        body += [f"Before finishing, run `{check}`; rka-memory records the result.", ""]
+    if rec.rung is Rung.L3 and rec.acceptance_check:
+        body += [f"Before finishing, run `{_code(rec.acceptance_check)}`; rka-memory records the result.", ""]
     body.append(f"If this skill is wrong, the user can type `rkm reject {rec.id} <reason>`.")
     frontmatter = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=10_000)
     return f"---\n{frontmatter}---\n\n" + "\n".join(body) + "\n"

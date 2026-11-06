@@ -27,7 +27,7 @@ from rka_memory.domain import (
     derived_id,
     parse_ts,
 )
-from rka_memory.skills.gate import sessions_following, skill_failure
+from rka_memory.skills.gate import check_passed, sessions_following, skill_failure
 from rka_memory.validity import propagate
 from rka_memory.validity.scope import (
     TARGETED_KINDS,
@@ -126,7 +126,9 @@ def _keeps(rung: Rung, cfg: Config):
 
 def _last_touched(rec: RecordState, world: World) -> datetime:
     stamps = [rec.proposed.ts] + [world.events[link.via].ts for link in rec.links if link.via in world.events]
-    stamps += [d.event.ts for d in world.deliveries if rec.id in d.record_ids]
+    # Hints and MCP calls are model-driven; letting them count would let the
+    # agent keep an unvalidated record alive just by asking for it.
+    stamps += [d.event.ts for d in world.deliveries if rec.id in d.record_ids and d.channel not in ("hints", "mcp")]
     return max(parse_ts(ts) for ts in stamps)
 
 
@@ -194,11 +196,12 @@ def step(rec: RecordState, world: World, cfg: Config, now: datetime) -> Event | 
             return _rung(rec, Rung.L1, fresh, "dependency invalidated", now)
         if rec.spec.kind is RecordKind.PROCEDURE and rec.spec.steps and rec.spec.acceptance_check:
             follows = sessions_following(rec, world)
-            if len(follows) >= cfg.gate.skill_min_sessions:
+            observed = check_passed([s for s, _ in follows], rec.spec.acceptance_check)
+            if len(follows) >= cfg.gate.skill_min_sessions and observed is not None:
                 return _rung(
                     rec,
                     Rung.L3,
-                    [fin.id for _, fin in follows],
+                    [fin.id for _, fin in follows] + [observed.id],
                     f"procedure followed and succeeded in {len(follows)} later sessions",
                     now,
                     acceptance_check=rec.spec.acceptance_check,

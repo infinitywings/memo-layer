@@ -367,3 +367,23 @@ def test_only_the_runner_can_log_record_applicability_judgments():
     lg._ev(Kind.JUDGMENT, Actor.MODEL, "s1", {"target": "record", "record_id": "r_a", "field": "task_class", "value": "ops", "applies": True})
     lg._ev(Kind.JUDGMENT, Actor.RUNNER, "s1", {"target": "record", "record_id": "r_a", "field": "task_class", "value": "data", "applies": True})
     assert project(lg.events).judgments == {("r_a", "task_class", "data"): True}
+
+
+def test_procedure_never_reaches_l3_until_its_acceptance_check_was_seen_passing():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_proc", **{**PROC, "acceptance_check": "make check"})
+    lg.confirm("cli", "r_proc")
+    lg.end("s1")
+    lg.gate()
+    follow(lg, "s2")
+    follow(lg, "s3")
+    assert rung(lg.gate(), "r_proc") == "L2"
+    lg.start("s4", **UV)
+    lg.tool_call("s4", "Bash", "uv sync")
+    lg.exit("s4", 0, "uv sync")
+    lg.tool_call("s4", "Bash", "uv run pytest -q")
+    lg.exit("s4", 0, "make check")
+    lg.test("s4", True, "uv run pytest")
+    lg.end("s4")
+    assert rung(lg.gate(), "r_proc") == "L3"

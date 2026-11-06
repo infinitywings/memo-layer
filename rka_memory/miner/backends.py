@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -43,22 +44,44 @@ def parse_cli_output(stdout: str, elapsed: float) -> Completion:
     return Completion(text=str(doc.get("result") or ""), tokens=tokens, seconds=round(seconds, 3))
 
 
+ENV_PASSTHROUGH = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL")
+
+
+def miner_env() -> dict[str, str]:
+    """Only what the CLI needs to find itself and its login. RKA_MEMORY_DISABLE
+    stops rka-memory's own hooks, or mining one session would log another."""
+    env = {k: v for k, v in os.environ.items() if k in ENV_PASSTHROUGH or k.startswith(("ANTHROPIC_", "CLAUDE_"))}
+    env["RKA_MEMORY_DISABLE"] = "1"
+    return env
+
+
+def claude_command(cfg: Config) -> list[str]:
+    # The prompt quotes tool output the agent saw, so it may carry injected
+    # instructions: the miner gets no tools, no MCP servers and no project.
+    return [
+        "claude", "-p",
+        "--model", cfg.miner_model,
+        "--output-format", "json",
+        "--tools", "",
+        "--strict-mcp-config",
+        "--no-session-persistence",
+    ]
+
+
 def claude_cli(cfg: Config) -> Backend:
     def run(prompt: str) -> Completion:
-        # The miner's own Claude session must not fire rka-memory hooks, or
-        # mining one session would log (and later mine) another.
-        env = {**os.environ, "RKA_MEMORY_DISABLE": "1"}
-        cmd = ["claude", "-p", "--model", cfg.miner_model, "--output-format", "json"]
         started = time.monotonic()
         try:
-            proc = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=cfg.miner_timeout_seconds,
-            )
+            with tempfile.TemporaryDirectory(prefix="rkm-miner-") as cwd:
+                proc = subprocess.run(
+                    claude_command(cfg),
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    env=miner_env(),
+                    cwd=cwd,
+                    timeout=cfg.miner_timeout_seconds,
+                )
         except FileNotFoundError as exc:
             raise BackendError("claude CLI not found on PATH") from exc
         except subprocess.TimeoutExpired as exc:
