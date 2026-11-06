@@ -111,17 +111,26 @@ def command_argv(command: str) -> list[str] | None:
     return argv or None
 
 
-# Arguments a test command may carry after its runner and still count:
-# positional paths or selectors, `--`, and these flags (any `=value` form).
-# Everything else (listing, plugin, config or rootdir overrides) disqualifies.
-ALLOWED_TEST_FLAGS = frozenset(
-    {
-        "-q", "-qq", "-v", "-vv", "-vvv", "-x", "-s", "-l", "-ra", "-rA",
-        "--quiet", "--verbose", "--exitfirst", "--tb", "--maxfail", "--lf", "--last-failed", "--ff",
-        "--failed-first", "--durations", "--color", "--no-header", "--all", "--workspace", "--release",
-        "-race", "-count", "-timeout", "--run", "--ci",
-    }
+PYTEST_FLAGS = frozenset(
+    {"-q", "-qq", "-v", "-vv", "-vvv", "-x", "-s", "-l", "-ra", "-rA", "--quiet", "--verbose", "--exitfirst",
+     "--lf", "--last-failed", "--ff", "--failed-first", "--no-header"}
 )
+JS_FLAGS = frozenset({"--run", "--ci", "--silent"})
+# Per runner: flags allowed as-is, and flags allowed only in `--name=value` form.
+# Anything else after the runner (listing, plugin, config, rootdir or workspace
+# switches) means the command records an exit code but no test result.
+TEST_RUNNER_ARGS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "pytest": (PYTEST_FLAGS, frozenset({"--tb", "--maxfail", "--durations", "--color"})),
+    "cargo": (frozenset({"-q", "--quiet", "-v", "--verbose", "--release", "--all", "--workspace"}), frozenset()),
+    "go": (frozenset({"-v", "-race", "-short"}), frozenset({"-count", "-timeout"})),
+    "npm": (JS_FLAGS, frozenset()),
+    "pnpm": (JS_FLAGS, frozenset()),
+    "yarn": (JS_FLAGS, frozenset()),
+    "bun": (JS_FLAGS, frozenset()),
+    "vitest": (JS_FLAGS, frozenset()),
+    "jest": (JS_FLAGS, frozenset()),
+}
+NO_ARGS: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
 TESTS_RAN = re.compile(
     r"\b[1-9]\d* (?:passed|tests? passed)\b"
     r"|test result: ok\. [1-9]\d* passed"
@@ -145,10 +154,17 @@ def tests_ran(output: str) -> bool:
     return NO_TESTS.search(tail) is None and TESTS_RAN.search(tail) is not None
 
 
-def _allowed_test_arg(arg: str) -> bool:
-    if not arg.startswith("-") or arg == "--":
+def _allowed_test_arg(arg: str, runner: str) -> bool:
+    flags, value_flags = TEST_RUNNER_ARGS.get(runner, NO_ARGS)
+    if arg == "--":
         return True
-    return arg.split("=", 1)[0] in ALLOWED_TEST_FLAGS
+    if arg.startswith("-"):
+        name, has_value, _ = arg.partition("=")
+        return name in value_flags if has_value else arg in flags
+    # A positional argument must stay a relative path inside the project:
+    # `/tmp/fake_test.py`, `../x` or a pytest `@argsfile` could run other code.
+    parts = Path(arg).parts
+    return not arg.startswith(("@", "~")) and not Path(arg).is_absolute() and ".." not in parts and "://" not in arg
 
 
 def is_test_command(command: str, cfg: Config) -> bool:
@@ -161,7 +177,7 @@ def is_test_command(command: str, cfg: Config) -> bool:
     for configured in cfg.test_commands:
         want = command_argv(configured)
         if want and argv[: len(want)] == want:
-            return all(_allowed_test_arg(a) for a in argv[len(want) :])
+            return all(_allowed_test_arg(a, want[0]) for a in argv[len(want) :])
     return False
 
 
