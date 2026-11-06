@@ -1,0 +1,52 @@
+# rka-memory defaults. Copy to ~/.rka-memory/config.yaml and edit; any key
+# you leave out keeps the value below.
+
+ledger:
+  dir: ~/.rka-memory          # local spool: ledger.jsonl, blobs/, cursors
+core:
+  url: http://127.0.0.1:9712  # RKA Core REST; the durable store for the ledger
+  project_id: null            # set by `rka-memory init`
+  sync_on_session_end: true
+
+gate:
+  k: 2.0                      # weighted grounding needed for L1 -> L2
+  min_sessions: 2             # distinct sessions among that grounding
+  skill_min_sessions: 2       # later sessions that followed a procedure for L2 -> L3
+  retire_after_days: 60       # untouched L1 records retire to L4
+  confirm_overrides: true     # a user confirm promotes straight to L2
+  narrow_priority: [user_context, task_class, toolchain, model_id, project]
+
+weights:                      # grounding weight per event kind (absent kinds never ground)
+  exit_code: 1.0
+  test_result: 1.0
+  user_confirm: 1.0
+  user_reject: 1.0
+  user_edit: "1/3"
+  user_undo: "1/3"
+  user_repeat: "1/3"
+  user_msg: "1/3"
+  tool_result: "1/3"
+
+packet:
+  budget_tokens: 1200
+  hints_budget_tokens: 600
+  arms: [gated, none]         # rotated by calendar day; add `ungated` for the L1-everything baseline
+
+scope:
+  task_classes: [coding, debugging, refactoring, testing, writing, research, ops, data, other]
+  user_context: default       # overridden by RKA_MEMORY_CONTEXT
+
+signals:
+  repeat_threshold: 0.8       # prompt similarity that counts as user_repeat
+  repeat_lookback_sessions: 50
+  dedup_threshold: 0.75       # candidate similarity that merges into an existing record
+  test_commands: [pytest, "uv run pytest", "npm test", "pnpm test", "yarn test", "cargo test", "go test", "make test", "bun test", vitest, jest]
+  payload_max_chars: 2000
+
+miner:
+  backend: claude_cli         # claude_cli | none
+  model: haiku
+  timeout_seconds: 240
+
+skills:
+  dir: ~/.claude/skills

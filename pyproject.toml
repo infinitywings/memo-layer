@@ -1,0 +1,28 @@
+[project]
+name = "rka-memory"
+version = "0.1.0"
+description = "Validity-gated memory layer for Claude Code agents on top of RKA Core"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "mcp>=1.30.0,<2",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+rka-memory = "rka_memory.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rka_memory"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
