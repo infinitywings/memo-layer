@@ -8,7 +8,7 @@ import type { TestContext } from 'node:test'
 import { captureStderr, fakeAgent, fakeHost, until, userMessage } from './fakes.ts'
 
 const REPO = resolve(import.meta.dirname, '../../..')
-const VENV_BIN = join(REPO, '.venv', 'bin')
+const VENV_BIN = process.env.RKA_MEMORY_VENV_BIN ?? join(REPO, '.venv', 'bin')
 
 interface LedgerEvent { session_id: string; kind: string; actor: string; payload: Record<string, any> }
 

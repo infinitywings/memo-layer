@@ -1,0 +1,64 @@
+# rka-memory development and test stack. Plan: docs/DEV_ENV_PLAN.md.
+# Use the Makefile (`make test`, `make down`); it runs docker through
+# scripts/dockerw so it also works from a sandboxed Claude Code session.
+name: rka-memory
+
+services:
+  core:
+    build:
+      context: ${RKA_CORE_SRC:-/Volumes/FuSpace/Projects/rka-projects/rka}
+    image: rka-memory-stack-core
+    profiles: [test, interactive, workload]
+    environment:
+      RKA_EMBEDDINGS_ENABLED: "false"
+    volumes:
+      - core-data:/data
+    ports:
+      - "127.0.0.1:${RKA_STACK_CORE_PORT:-9722}:9712"
+
+  mock-llm:
+    image: python:3.12-slim
+    profiles: [test, interactive, workload]
+    command: ["python", "/scripts/mock_openai.py", "8000", "/runs/mock-llm-requests.jsonl", "/workspaces"]
+    environment:
+      MOCK_BIND: 0.0.0.0
+    volumes:
+      - ./scripts:/scripts:ro
+      - runs:/runs
+
+  dev:
+    build:
+      context: .
+      dockerfile: docker/dev/Dockerfile
+    image: rka-memory-dev
+    profiles: [test]
+    working_dir: /src
+    command: ["make", "test-inner"]
+    environment:
+      RKA_TEST_CORE_URL: http://core:9712
+    volumes:
+      - .:/src
+      - dev-venv:/opt/venv
+      - uv-cache:/root/.cache/uv
+    depends_on:
+      core:
+        condition: service_healthy
+
+  dsh-e2e:
+    build:
+      context: .
+      dockerfile: docker/dsh/Dockerfile
+    image: rka-memory-dsh
+    profiles: [test]
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        DSH_BIN=$$(command -v dsh) NODE24_BIN=$$(dirname $$(command -v node))
+        uv run --no-dev python scripts/e2e_dsh.py
+        && sh scripts/sandbox_check.sh
+
+volumes:
+  core-data:
+  runs:
+  dev-venv:
+  uv-cache:

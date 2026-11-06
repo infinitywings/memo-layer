@@ -115,7 +115,7 @@ Each run writes a manifest (image digests, config, model ids, seed), the ledger 
 
 ## Decisions needed
 
-1. **Who runs Docker.** Your host Claude Code sessions are sandboxed, so I cannot reach the Docker socket. (a) You run `docker compose` from a terminal while I write code and tests. (b) Allow the Docker socket in Claude Code's sandbox; then any Claude Code session could start a container that mounts `~/.rka-memory`, which reopens the host ledger boundary. (c) Turn off host hardening while the stack is built.
+1. **Who runs Docker.** Decided 2026-11-06: allow the Docker socket in Claude Code's sandbox (`sandbox.network.allowUnixSockets`). Any Claude Code session can now start a container that mounts `~/.rka-memory`, so the host ledger boundary is open again through Docker. `scripts/dockerw` runs the docker CLI with its client state in a temp dir, so builds work without widening the sandbox further.
 2. **Model for live runs.** dsh's native provider is DeepSeek. Do you have an API key for the workload and for the miner, or another OpenAI-compatible endpoint?
 3. **Workload content.** Synthetic personal-agent tasks that we write first, or a coding benchmark subset as well?
 4. **Core.** The stack's own isolated Core only (default), or also sync to memo-rka-agent on your host Core?

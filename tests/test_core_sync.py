@@ -17,7 +17,10 @@ from rka_memory.ledger import core
 from rka_memory.service import Memory
 
 RKA = Path.home() / ".local" / "bin" / "rka"
-pytestmark = pytest.mark.skipif(not RKA.exists(), reason="RKA Core CLI not installed at ~/.local/bin/rka")
+STACK_CORE = os.environ.get("RKA_TEST_CORE_URL")
+pytestmark = pytest.mark.skipif(
+    not STACK_CORE and not RKA.exists(), reason="no RKA_TEST_CORE_URL and no RKA Core CLI at ~/.local/bin/rka"
+)
 
 
 def free_port() -> int:
@@ -28,6 +31,10 @@ def free_port() -> int:
 
 @pytest.fixture(scope="module")
 def core_url(tmp_path_factory):
+    if STACK_CORE:
+        # The compose stack's own Core; each run creates a fresh project there.
+        yield STACK_CORE.rstrip("/")
+        return
     data = tmp_path_factory.mktemp("core")
     port = free_port()
     env = {k: v for k, v in os.environ.items() if not k.startswith("RKA_")}

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# The docker CLI with its client state in a private temp dir, so it also works
+# from a sandboxed Claude Code session, where ~/.docker is not writable (buildx
+# keeps state there). The real CLI plugins are linked in, and DOCKER_HOST names
+# the Docker Desktop socket when it exists. Registry logins from ~/.docker are
+# not used; the stack only pulls public images.
+set -euo pipefail
+DOCKER_CONFIG="${RKM_DOCKER_CONFIG:-${TMPDIR:-$HOME/.cache}/rkm-docker-config-$(id -u)}"
+mkdir -p -m 700 "$DOCKER_CONFIG"
+# The CLI runs plugins found here, so the directory must be ours alone.
+if [ ! -O "$DOCKER_CONFIG" ] || [ -n "$(find "$DOCKER_CONFIG" -maxdepth 0 -perm -g+w -o -maxdepth 0 -perm -o+w)" ]; then
+  echo "dockerw: $DOCKER_CONFIG is not a private directory owned by you" >&2
+  exit 1
+fi
+plugins="$HOME/.docker/cli-plugins"
+link="$DOCKER_CONFIG/cli-plugins"
+if [ -L "$link" ]; then
+  [ "$(readlink "$link")" = "$plugins" ] || { echo "dockerw: unexpected $link" >&2; exit 1; }
+elif [ -e "$link" ]; then
+  echo "dockerw: unexpected $link" >&2
+  exit 1
+elif [ -d "$plugins" ]; then
+  ln -s "$plugins" "$link"
+fi
+export DOCKER_CONFIG
+if [ -z "${DOCKER_HOST:-}" ] && [ -S "$HOME/.docker/run/docker.sock" ]; then
+  export DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"
+fi
+exec docker "$@"

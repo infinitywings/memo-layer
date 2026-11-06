@@ -104,6 +104,14 @@ Defaults live in [rka_memory/default.yaml](rka_memory/default.yaml). Put overrid
 
 ## Development
 
+The compose stack runs the whole test suite in containers: unit and plugin tests, Core sync against the stack's own RKA Core, the real-dsh plugin check and the agent-forgery check. It needs Docker and your RKA Core source (`RKA_CORE_SRC`, default `/Volumes/FuSpace/Projects/rka-projects/rka`). The plan for the full environment is [docs/DEV_ENV_PLAN.md](docs/DEV_ENV_PLAN.md).
+
+```bash
+make test
+```
+
+On the host:
+
 ```bash
 uv sync
 ```
