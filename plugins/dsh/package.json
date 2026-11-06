@@ -1,0 +1,15 @@
+{
+  "name": "dsh-plugin-rka-memory",
+  "version": "0.1.0",
+  "description": "rka-memory for DeepSeek Harness: validity-gated memory packets, skills and a session ledger",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
