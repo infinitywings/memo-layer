@@ -5,18 +5,30 @@
 # the same project path as Claude Code sessions, and ~/.rka-memory is shared.
 # The ledger must stay out of the agent's reach: dsh's tool sandbox (the
 # default workspace-write mode) denies writes outside the project, and the
-# plugin, which runs outside that sandbox, is the only writer. Never approve
-# a sandbox escalation that touches /rka-memory. config.yaml is mounted
-# read-only, so not even an escalated command can change the gate.
+# plugin, which runs outside that sandbox, is the only writer. Approving a
+# sandbox escalation gives that command root in the container and breaks
+# this boundary, so never approve one. The image filesystem is read-only, so
+# even then the rka-memory code cannot be changed; config.yaml is read-only.
 set -euo pipefail
 image="${RKA_DSH_IMAGE:-rka-memory-dsh}"
 ledger="${RKA_MEMORY_DIR:-$HOME/.rka-memory}"
-root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 mkdir -p "$ledger"
 touch "$ledger/config.yaml"
+ledger="$(cd "$ledger" && pwd -P)"
+root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+root="$(cd "$root" && pwd -P)"
+# The sandbox lets the agent write anywhere under the project, so the ledger
+# must not be reachable from it under a second path.
+case "$ledger/" in "$root"/*) overlap=1 ;; *) overlap=0 ;; esac
+case "$root/" in "$ledger"/*) overlap=1 ;; esac
+if [ "$overlap" = 1 ]; then
+  echo "dsh-docker: the project ($root) and the ledger ($ledger) overlap; run it from inside a project that does not contain the ledger" >&2
+  exit 2
+fi
 tty=()
 if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
 exec docker run --rm "${tty[@]}" \
+  --read-only --tmpfs /tmp:exec --tmpfs /root \
   -v "$root:$root" -w "$PWD" \
   -v "$ledger:/rka-memory" \
   -v "$ledger/config.yaml:/rka-memory/config.yaml:ro" \
