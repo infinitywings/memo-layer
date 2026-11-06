@@ -12,7 +12,7 @@ import yaml
 
 from rka_memory.domain import SCOPE_FIELDS, Kind
 
-DEFAULT_PATH = Path(__file__).resolve().parent.parent / "config" / "default.yaml"
+DEFAULT_PATH = Path(__file__).resolve().parent / "default.yaml"
 
 
 def user_config_path() -> Path:

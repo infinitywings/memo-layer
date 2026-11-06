@@ -23,7 +23,7 @@ A link from a record to an event counts only when all of these hold:
 3. The event was in the ledger before the link.
 4. A user verdict (`user_confirm`, `user_reject`) counts only for the record it names.
 5. A model-made link (from the miner) only cites events from its own session.
-6. For support, the kind has a positive weight in `config/default.yaml`.
+6. For support, the kind has a positive weight in `rka_memory/default.yaml`.
 
 Weights default to 1 for exit codes, test results and user verdicts, and 1/3 for user edits, undos, repeats, messages and tool results.
 

@@ -63,7 +63,7 @@ def main() -> int:
     settings = home / ".claude" / "settings.json"
     install = [str(BIN), "install-hooks", "--settings", str(settings), "--command-path", str(BIN)]
     if hardened:
-        install.append("--harden")
+        install += ["--harden", "--allow-editable"]
     subprocess.run(install, env=env, check=True, capture_output=True)
 
     steps = [

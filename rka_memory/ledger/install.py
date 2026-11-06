@@ -78,13 +78,16 @@ def path_rules(path: Path, home: Path) -> list[str]:
     return list(dict.fromkeys(forms))
 
 
-def protected_rules(ledger_dir: Path, home: Path, extra_files: tuple[Path, ...] = ()) -> tuple[list[str], list[str]]:
-    """(Edit deny rules, sandbox denyWrite paths) for the ledger directory and
-    any rka-memory file that lives outside it, such as a relocated config."""
+def protected_rules(
+    ledger_dir: Path, home: Path, extra_files: tuple[Path, ...] = (), extra_dirs: tuple[Path, ...] = ()
+) -> tuple[list[str], list[str]]:
+    """(Edit deny rules, sandbox denyWrite paths) for the ledger directory, the
+    installed rka-memory code and its launcher: whatever the hooks run or read."""
     edit, write = [], []
-    for rule in path_rules(ledger_dir, home):
-        edit.append(f"Edit({rule}/**)")
-        write.append(rule)
+    for d in (ledger_dir, *extra_dirs):
+        for rule in path_rules(d, home):
+            edit.append(f"Edit({rule}/**)")
+            write.append(rule)
     ledger = ledger_dir.expanduser().resolve()
     for f in extra_files:
         if ledger in f.expanduser().resolve().parents:
@@ -102,6 +105,7 @@ def harden(
     *,
     undo: bool = False,
     extra_files: tuple[Path, ...] = (),
+    extra_dirs: tuple[Path, ...] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """Keep the agent from writing the ledger, which hooks alone cannot do.
 
@@ -113,7 +117,7 @@ def harden(
     Claude Code itself already guards its settings files, user and project, from
     both the Write tool and sandboxed shells (scripts/host_hardening_check.py).
     """
-    edit_rules, write_rules = protected_rules(ledger_dir, home, extra_files)
+    edit_rules, write_rules = protected_rules(ledger_dir, home, extra_files, extra_dirs)
     out = json.loads(json.dumps(settings))
     perms = out.setdefault("permissions", {})
     deny = [r for r in perms.get("deny", []) if r not in edit_rules]
@@ -157,12 +161,15 @@ def install_hooks(
     harden_ledger: Path | None = None,
     home: Path | None = None,
     extra_files: tuple[Path, ...] = (),
+    extra_dirs: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     before = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     after = merge(before, command, uninstall=uninstall)
     notes: list[str] = []
     if harden_ledger is not None:
-        after, notes = harden(after, harden_ledger, home or Path.home(), undo=uninstall, extra_files=extra_files)
+        after, notes = harden(
+            after, harden_ledger, home or Path.home(), undo=uninstall, extra_files=extra_files, extra_dirs=extra_dirs
+        )
     backup = settings_path.with_name(settings_path.name + BACKUP_SUFFIX)
     changed = after != before
     if changed:
@@ -182,3 +189,16 @@ def install_hooks(
         "hardened": harden_ledger is not None and not uninstall,
         "notes": notes,
     }
+
+
+def installed_code() -> tuple[Path, bool]:
+    """(the environment the running rka-memory comes from, whether its code
+    lives inside that environment). An editable install runs source from a
+    checkout, which a Claude Code session in that checkout may write."""
+    import sys
+
+    import rka_memory
+
+    env = Path(sys.prefix).resolve()
+    package = Path(rka_memory.__file__).resolve().parent
+    return env, env in package.parents

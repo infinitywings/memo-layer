@@ -143,13 +143,28 @@ def cmd_install_hooks(args) -> int:
     from rka_memory.ledger import install
 
     target = Path(args.settings).expanduser()
-    ledger, extra = None, ()
+    ledger, files, dirs = None, (), ()
     if args.harden:
         from rka_memory import config as config_mod
 
-        ledger, extra = config_mod.load().ledger_dir, (config_mod.user_config_path(),)
+        ledger = config_mod.load().ledger_dir
+        config_file = config_mod.user_config_path()
+        if ledger.resolve() not in config_file.resolve().parents:
+            print(f"--harden needs the config inside the ledger directory ({ledger}); it is at {config_file}", file=sys.stderr)
+            return 2
+        env, contained = install.installed_code()
+        if not contained and not args.allow_editable:
+            print(
+                "--harden needs a non-editable install: this rka-memory runs source from a checkout an agent may edit. "
+                "Install it with `uv tool install <path-to-rka-memory>` and run that copy.",
+                file=sys.stderr,
+            )
+            return 2
+        launcher = Path(args.command_path).expanduser()
+        files = (launcher,) if launcher.is_absolute() else ()
+        dirs = (env,)
     result = install.install_hooks(
-        target, command=args.command_path, uninstall=args.uninstall, harden_ledger=ledger, extra_files=extra
+        target, command=args.command_path, uninstall=args.uninstall, harden_ledger=ledger, extra_files=files, extra_dirs=dirs
     )
     _print(result)
     if not args.harden and not args.uninstall:
@@ -258,8 +273,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--harden",
         action="store_true",
-        help="also deny the agent write access to the ledger (permission rule + OS bash sandbox)",
+        help="also deny the agent write access to the ledger and the installed code (permission rule + OS bash sandbox)",
     )
+    s.add_argument("--allow-editable", action="store_true", help="tests only: harden an editable install anyway")
     s.set_defaults(fn=cmd_install_hooks)
 
     s = sub.add_parser("skills", help="L3 skills valid for a session (for harness plugins)")

@@ -38,7 +38,7 @@ The Docker setup for dsh (`docker/dsh`, `scripts/dsh-docker`) mounts the same sp
 | judgment | model, runner | session: `target=session`, `session_id`, `field`, `value`, `judge`; record: `target=record`, `record_id`, `field`, `value`, `applies`, `judge` | none |
 | cost | runner | `component` (miner, gate), `session_id`, `tokens`, `seconds` | none |
 
-Grounding weights per kind live in `config/default.yaml` (`weights`). A kind with no weight never grounds. Model-authored events never ground, whatever the link says.
+Grounding weights per kind live in `rka_memory/default.yaml` (`weights`). A kind with no weight never grounds. Model-authored events never ground, whatever the link says.
 
 ## Session state
 

@@ -103,3 +103,31 @@ def test_harden_covers_symlinked_ledgers_and_a_config_outside_the_ledger(tmp_pat
     assert hard["sandbox"]["filesystem"]["denyWrite"] == ["~/.rka-memory", disk, etc]
     undone, _ = harden(hard, home / ".rka-memory", home, undo=True, extra_files=(config, inside))
     assert "permissions" not in undone and "filesystem" not in undone["sandbox"]
+
+
+def test_cli_harden_refuses_an_editable_install_and_a_config_outside_the_ledger(tmp_path, monkeypatch, capsys):
+    from rka_memory import cli
+
+    monkeypatch.setenv("RKA_MEMORY_DIR", str(tmp_path / "ledger"))
+    monkeypatch.setenv("RKA_MEMORY_CONFIG", str(tmp_path / "ledger" / "config.yaml"))
+    settings = tmp_path / "settings.json"
+    assert cli.main(["install-hooks", "--settings", str(settings), "--harden"]) == 2
+    assert "non-editable install" in capsys.readouterr().err
+    assert not settings.exists()
+    monkeypatch.setenv("RKA_MEMORY_CONFIG", str(tmp_path / "elsewhere.yaml"))
+    assert cli.main(["install-hooks", "--settings", str(settings), "--harden", "--allow-editable"]) == 2
+    assert "config inside the ledger directory" in capsys.readouterr().err
+
+
+def test_harden_protects_the_installed_code_and_its_launcher(tmp_path):
+    from rka_memory.ledger.install import harden
+
+    home = tmp_path / "home"
+    tool = home / ".local" / "share" / "uv" / "tools" / "rka-memory"
+    tool.mkdir(parents=True)
+    hard, _ = harden({}, home / ".rka-memory", home, extra_files=(home / ".local" / "bin" / "rka-memory",), extra_dirs=(tool,))
+    assert hard["permissions"]["deny"] == [
+        "Edit(~/.rka-memory/**)",
+        "Edit(~/.local/share/uv/tools/rka-memory/**)",
+        "Edit(~/.local/bin/rka-memory)",
+    ]

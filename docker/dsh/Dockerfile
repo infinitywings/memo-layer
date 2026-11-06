@@ -21,7 +21,6 @@ ENV UV_PYTHON=3.12 \
 WORKDIR /opt/rka-memory
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY rka_memory ./rka_memory
-COPY config ./config
 COPY plugins/dsh ./plugins/dsh
 COPY scripts ./scripts
 COPY docker/dsh ./docker/dsh

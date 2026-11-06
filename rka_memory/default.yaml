@@ -1,5 +1,5 @@
-# rka-memory defaults. Copy to ~/.rka-memory/config.yaml and edit; any key
-# you leave out keeps the value below.
+# rka-memory defaults, shipped inside the package. Override in
+# ~/.rka-memory/config.yaml; any key you leave out keeps the value below.
 
 ledger:
   dir: ~/.rka-memory          # local spool: ledger.jsonl, blobs/, cursors

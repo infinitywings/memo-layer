@@ -22,8 +22,10 @@ The spec is [docs/SPEC.md](docs/SPEC.md). The event schema is [docs/LEDGER.md](d
 Requires Python 3.12, [uv](https://docs.astral.sh/uv/), and a running RKA Core 3.0 (for sync only; the hooks work without it).
 
 ```bash
-uv tool install --editable /Volumes/FuSpace/Projects/memo-layer
+uv tool install /Volumes/FuSpace/Projects/memo-layer
 ```
+
+This installs a copy, not an editable link: the hooks must not run code that a Claude Code session in this repository could edit. After changing the code, reinstall with `uv tool install --reinstall /Volumes/FuSpace/Projects/memo-layer`.
 
 Create the RKA Core project that stores the ledger. The command writes its id into `~/.rka-memory/config.yaml`:
 
@@ -34,7 +36,7 @@ rka-memory init
 Add the hooks to your Claude Code user settings. The command backs up the file first and leaves your other hooks alone. `--harden` also keeps the agent from writing the ledger: an `Edit` deny rule for `~/.rka-memory` plus Claude Code's OS-level bash sandbox with that directory denied and the unsandboxed escape hatch off. Without it, a prompt-injected agent can forge ledger events, including your verdicts (see the trust boundary in [docs/LADDER.md](docs/LADDER.md)). The sandbox applies to every Claude Code session, including its network isolation, so commands that reach the network may ask first.
 
 ```bash
-rka-memory install-hooks --settings ~/.claude/settings.json --harden
+rka-memory install-hooks --settings ~/.claude/settings.json --harden --command-path ~/.local/bin/rka-memory
 ```
 
 Register the MCP server:
@@ -98,7 +100,7 @@ Other commands are `gate`, `mine <session-id>`, `export-skills`, `metrics --writ
 
 ## Configuration
 
-Defaults live in [config/default.yaml](config/default.yaml). Put overrides in `~/.rka-memory/config.yaml`. You can tune the promotion threshold `k`, the signal weights, the packet budget, the A/B arms, the task classes, and the retirement window. Set `RKA_MEMORY_CONTEXT` (for example `work` or `personal`) to scope records by user context.
+Defaults live in [rka_memory/default.yaml](rka_memory/default.yaml). Put overrides in `~/.rka-memory/config.yaml`. You can tune the promotion threshold `k`, the signal weights, the packet budget, the A/B arms, the task classes, and the retirement window. Set `RKA_MEMORY_CONTEXT` (for example `work` or `personal`) to scope records by user context.
 
 ## Development
 
