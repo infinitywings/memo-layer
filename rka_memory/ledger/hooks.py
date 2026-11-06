@@ -140,7 +140,10 @@ def on_session_start(memory: Memory, payload: Mapping[str, Any]) -> Output:
     memory.gate(session_id=sid)
     packet = memory.deliver(sid, state, channel="session_start")
     _spawn_catchup(memory, world, sid)
-    return _context("SessionStart", packet.render())
+    text = packet.render()
+    if text:
+        text += f"\n(rka-memory session id: {sid}; pass it as session_id to memory_* tools.)"
+    return _context("SessionStart", text)
 
 
 def _rkm_command(memory: Memory, session_id: str, prompt: str) -> Output:

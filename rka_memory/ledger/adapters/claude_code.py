@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -74,9 +75,52 @@ def _response_summary(response: Any, cfg: Config) -> str:
     return _clip(canonical_json(response), cfg)
 
 
+RUNNER_PREFIXES: tuple[tuple[str, ...], ...] = (
+    ("uv", "run"),
+    ("poetry", "run"),
+    ("pipenv", "run"),
+    ("pdm", "run"),
+    ("npx",),
+    ("bunx",),
+    ("pnpm", "exec"),
+    ("python", "-m"),
+    ("python3", "-m"),
+)
+SHELL_META = re.compile(r"[;&|`<>#\n]|\$\(")
+ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+
+
+def command_argv(command: str) -> list[str] | None:
+    """The argv of a plain command with env assignments and runner prefixes
+    stripped, or None for anything compound, piped or redirected."""
+    if SHELL_META.search(command):
+        return None
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    while argv and ENV_ASSIGNMENT.fullmatch(argv[0]):
+        argv = argv[1:]
+    stripped = True
+    while stripped:
+        stripped = False
+        for prefix in RUNNER_PREFIXES:
+            if len(argv) > len(prefix) and tuple(argv[: len(prefix)]) == prefix:
+                argv, stripped = argv[len(prefix) :], True
+    return argv or None
+
+
 def is_test_command(command: str, cfg: Config) -> bool:
-    normalized = " ".join(command.split())
-    return any(tc in normalized for tc in cfg.test_commands)
+    """A test result is strong grounding, so only a plain invocation of a
+    configured runner counts; `echo pytest` or `pytest; true` do not."""
+    argv = command_argv(command)
+    if argv is None:
+        return False
+    for configured in cfg.test_commands:
+        want = command_argv(configured)
+        if want and argv[: len(want)] == want:
+            return True
+    return False
 
 
 @dataclass(frozen=True)

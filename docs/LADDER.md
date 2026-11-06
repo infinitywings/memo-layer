@@ -59,4 +59,6 @@ An event counts toward a record when it is inside the record's scope. User verdi
 ## Known gaps
 
 - Within one session, the miner can still cite an unrelated passing test as support for an injected claim. Two such sessions inside scope would promote the claim. This is the laundering problem from the threat model. Closing it needs runner-made links (for example, tying test results to records whose steps ran), which this prototype does not have.
+- An exit code is strong grounding whatever command produced it, and the agent chooses its commands. A miner can cite `ls` exiting 0 as support. Test results are stricter: only a plain invocation of a configured test runner counts, so `echo pytest` or `pytest; true` do not. The same runner-made-links fix would close both.
+- User edits and undos are credited to the user only when no agent shell command in the project named the file or rewrote the git working tree after the write. A change made by some other program between sessions is still credited to the user.
 - The Core dashboard page (rung history and evidence graph) is not built. Use `rka-memory explain <id>` or the `memory_explain` MCP tool instead.

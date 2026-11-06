@@ -136,3 +136,25 @@ def test_similarity_ignores_case_punctuation_and_rkm_commands():
     assert signals.similarity("run the tests then commit", "run the tests then push") == 4 / 6
     assert signals.similarity("rkm reject r_1 run the tests", "rkm reject r_1 run the tests") == 0.0
     assert signals.similarity("continue", "continue") == 0.0
+
+
+def test_only_plain_runner_invocations_count_as_tests():
+    c = cfg()
+    plain = ["pytest", "uv run pytest -q tests/", "FOO=1 uv run pytest", "npm test", "python -m pytest -x", "cargo test --all"]
+    assert [adapter.is_test_command(cmd, c) for cmd in plain] == [True] * 6
+    forged = ["echo pytest", "pytest; true", "pytest || true", "pytest | tee out", "cd x && pytest", "pytest > log", "true # pytest"]
+    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 7
+
+
+def test_a_file_the_agent_reverted_itself_is_not_a_user_undo(tmp_path, memory):
+    c = memory.cfg
+    f = tmp_path / "hello.txt"
+    f.write_text("hi\n")
+    events = [
+        start("a", tmp_path),
+        write_event("a", f, "absent", signals.snapshot(f, c)),
+        Event.new(Kind.TOOL_CALL, Actor.MODEL, "a", {"tool": "Bash", "input": "git checkout -- ."}),
+    ]
+    f.unlink()
+    changes = signals.detect_file_changes(project(events), "b", State(project=str(tmp_path)), c)
+    assert changes == []

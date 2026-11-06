@@ -9,7 +9,7 @@ The ledger is an append-only list of events. Everything else (sessions, records,
 - `actor`: set by the adapter, never by the model. `domain.KIND_ACTORS` lists the actors each kind allows; constructing any other pair raises.
 - `state_hash`: hash of the session `State` when the event was written (empty for engine events).
 
-The local spool is `~/.rka-memory/ledger.jsonl`. `rka-memory sync` copies it into an RKA Core project as journal entries (`type=log`, tag `rka-memory`, `request_id` = event id, so re-sending is idempotent).
+The local spool is `~/.rka-memory/ledger.jsonl`. `rka-memory sync` copies it into an RKA Core project as journal entries (`type=log`, tags `rka-memory`, `rkm-kind:<kind>`, `rkm-session:<sid>` and `rkm-seq:<ledger position>`, `request_id` = event id, so re-sending is idempotent). Core orders notes by a one-second `created_at`, so `rka-memory pull` restores ledger order from `rkm-seq`.
 
 ## Kinds and payloads
 
