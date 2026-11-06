@@ -160,15 +160,17 @@ def cmd_install_hooks(args) -> int:
                 file=sys.stderr,
             )
             return 2
+        import shutil
+
         launcher = Path(args.command_path).expanduser()
         if not launcher.is_absolute():
-            import shutil
-
+            # `which` returns a relative path when PATH has a relative entry, and
+            # a relative hook command would resolve inside the project.
             found = shutil.which(args.command_path)
-            if found is None:
-                print(f"--harden needs an absolute --command-path; cannot resolve {args.command_path!r}", file=sys.stderr)
-                return 2
-            launcher = Path(found)
+            launcher = Path(found).resolve() if found else launcher
+        if not launcher.is_absolute() or not launcher.is_file():
+            print(f"--harden needs --command-path to name an existing absolute file; got {args.command_path!r}", file=sys.stderr)
+            return 2
         args.command_path = str(launcher)
         files = (launcher,)
         dirs = install.interpreter_dirs()

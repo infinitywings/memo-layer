@@ -131,3 +131,24 @@ def test_harden_protects_the_installed_code_and_its_launcher(tmp_path):
         "Edit(~/.local/share/uv/tools/rka-memory/**)",
         "Edit(~/.local/bin/rka-memory)",
     ]
+
+
+def test_cli_harden_never_writes_a_relative_launcher(tmp_path, monkeypatch, capsys):
+    from rka_memory import cli
+    from rka_memory.ledger import install
+
+    monkeypatch.setenv("RKA_MEMORY_DIR", str(tmp_path / "ledger"))
+    monkeypatch.setenv("RKA_MEMORY_CONFIG", str(tmp_path / "ledger" / "config.yaml"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bin").mkdir()
+    planted = tmp_path / "bin" / "rka-memory"
+    planted.write_text("#!/bin/sh\n")
+    planted.chmod(0o755)
+    monkeypatch.setenv("PATH", "bin")
+    monkeypatch.setattr(install, "interpreter_dirs", lambda: ())
+    settings = tmp_path / "settings.json"
+    assert cli.main(["install-hooks", "--settings", str(settings), "--harden", "--allow-editable", "--command-path", "rka-memory"]) == 0
+    commands = {h["command"] for gs in __import__("json").loads(settings.read_text())["hooks"].values() for g in gs for h in g["hooks"]}
+    assert commands == {f"{planted.resolve()} hook {e}" for e in install.HOOK_EVENTS}
+    assert cli.main(["install-hooks", "--settings", str(settings), "--harden", "--allow-editable", "--command-path", "missing-cmd"]) == 2
+    assert "existing absolute file" in capsys.readouterr().err
