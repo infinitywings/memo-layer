@@ -215,6 +215,13 @@ def cmd_skills(args) -> int:
     return 0
 
 
+def cmd_jobs(args) -> int:
+    from rka_memory import jobs
+
+    jobs.loop(_memory(), args.every, rounds=1 if args.once else None, emit=lambda r: _print(r.to_json()))
+    return 0
+
+
 def cmd_mcp(args) -> int:
     from rka_memory.mcp import server
 
@@ -293,6 +300,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--session", default=None)
     s.add_argument("--cwd", default=".")
     s.set_defaults(fn=cmd_skills)
+
+    s = sub.add_parser("jobs", help="periodic gate, skill export, daily metrics and sync")
+    s.add_argument("--every", type=float, default=300.0, help="seconds between rounds")
+    s.add_argument("--once", action="store_true")
+    s.set_defaults(fn=cmd_jobs)
 
     sub.add_parser("mcp", help="run the MCP server (stdio)").set_defaults(fn=cmd_mcp)
     return p
