@@ -356,3 +356,19 @@ def test_changes_made_by_the_agents_own_shell_commands_are_never_credited_to_the
     assert shell_writes == [str(formatted), str(reverted)]
     user_signals = [(e.kind.value, e.payload["path"]) for e in events if e.kind in (Kind.USER_EDIT, Kind.USER_UNDO)]
     assert user_signals == [("user_edit", str(user_owned))]
+
+
+def test_a_change_after_the_agents_last_tool_call_is_still_the_agents(memory, proj, tmp_path, spawned, capsys):
+    a = base("sess-a", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    f = proj / "bg.py"
+    write = {"tool_name": "Write", "tool_input": {"file_path": str(f), "content": "x=1\n"}, "tool_use_id": "w1"}
+    fire(capsys, "PreToolUse", {**a, **write})
+    f.write_text("x=1\n")
+    fire(capsys, "PostToolUse", {**a, **write, "tool_response": {"filePath": str(f)}})
+    f.write_text("x=1  # written by a backgrounded command\n")
+    fire(capsys, "SessionEnd", {**a, "reason": "other"})
+    fire(capsys, "SessionStart", {**base("sess-b", proj, tmp_path), "source": "startup"})
+    events = memory.ledger.read()
+    assert [e.payload["tool"] for e in events if e.kind is Kind.FILE_WRITE] == ["Write", "session_end"]
+    assert [e for e in events if e.kind in (Kind.USER_EDIT, Kind.USER_UNDO)] == []

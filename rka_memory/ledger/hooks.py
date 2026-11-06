@@ -238,10 +238,23 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
     return None
 
 
+def _late_writes(memory: Memory, session_id: str) -> list:
+    tracked = _read_json(_tracked_file(memory, session_id))
+    if not isinstance(tracked, dict):
+        return []
+    state_hash = _state_hash(memory, session_id)
+    out = []
+    for written, last_hash in sorted(tracked.items()):
+        now = signals.snapshot(written, memory.cfg)
+        if now != last_hash:
+            out.append(adapter.late_write_event(session_id, written, last_hash, now, state_hash))
+    return out
+
+
 def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
     sid = adapter.session_id(payload)
     usage = adapter.transcript_usage(adapter.read_transcript(payload.get("transcript_path")))
-    memory.append(adapter.session_end_event(payload, usage))
+    memory.append(*_late_writes(memory, sid), adapter.session_end_event(payload, usage))
     commands = [_cli("mine", sid)]
     if memory.cfg.sync_on_session_end and memory.cfg.core_project_id:
         commands.append(_cli("sync"))

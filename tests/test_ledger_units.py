@@ -145,8 +145,9 @@ def test_only_plain_runner_invocations_count_as_tests():
     forged = [
         "echo pytest", "pytest; true", "pytest || true", "pytest | tee out", "cd x && pytest", "pytest > log",
         "true # pytest", "PATH=/tmp/x pytest", "pytest --collect-only", "uv run pytest --version",
+        "pytest -p myplugin", "pytest -o addopts=--co", "pytest --collect-only-ish",
     ]
-    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 10
+    assert [adapter.is_test_command(cmd, c) for cmd in forged] == [False] * 13
 
 
 def test_a_passing_test_result_needs_the_runner_summary_to_show_tests_ran():
@@ -156,3 +157,11 @@ def test_a_passing_test_result_needs_the_runner_summary_to_show_tests_ran():
     empty = adapter.tool_events({**base, "tool_use_id": "t2", "tool_response": {"stdout": "no tests ran"}}, c, failed=False)
     assert [e.kind.value for e in ran] == ["tool_call", "tool_result", "exit_code", "test_result"]
     assert [e.kind.value for e in empty] == ["tool_call", "tool_result", "exit_code"]
+
+
+def test_only_the_closing_summary_of_a_run_that_ran_tests_counts():
+    assert adapter.tests_ran("collected 3 items\n...\n== 3 passed in 0.12s ==")
+    assert adapter.tests_ran("ok  \texample.com/pkg\t0.012s")
+    assert not adapter.tests_ran("ok  \texample.com/pkg\t0.012s [no tests to run]")
+    assert not adapter.tests_ran("?   \texample.com/pkg\t[no test files]")
+    assert not adapter.tests_ran("3 passed\n" + "\n".join(f"line {i}" for i in range(6)) + "\nno tests ran")

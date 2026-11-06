@@ -115,21 +115,31 @@ NO_RUN_FLAGS = frozenset(
     {
         "--version", "-V", "--help", "-h", "--collect-only", "--co", "--no-run", "--list", "--list-tests",
         "--listTests", "--dry-run", "--setup-plan", "--setup-only", "--fixtures", "--markers",
+        "-o", "-c", "-p", "--override-ini", "--rootdir", "--confcutdir", "--noconftest",
     }
 )
+NO_RUN_PREFIXES = ("--collect", "--list", "--override", "--version", "--help")
 TESTS_RAN = re.compile(
     r"\b[1-9]\d* (?:passed|tests? passed)\b"
     r"|test result: ok\. [1-9]\d* passed"
-    r"|^ok\s+\S+"
+    r"|^ok\s+\S+\s+[\d.]+s\s*$"
     r"|Tests:.*\b[1-9]\d* passed"
     r"|\b[1-9]\d* (?:tests?|specs?|examples?) (?:completed|passed|run)\b",
     re.MULTILINE | re.IGNORECASE,
 )
 
 
+NO_TESTS = re.compile(r"\[no test files\]|\[no tests to run\]|no tests ran|\b0 passed\b", re.IGNORECASE)
+SUMMARY_LINES = 5
+
+
 def tests_ran(output: str) -> bool:
-    """The runner's own summary shows at least one test ran and passed."""
-    return TESTS_RAN.search(output) is not None
+    """The runner's closing summary shows at least one test ran and passed.
+
+    Only the last lines count, so text printed earlier in the run cannot pose
+    as the summary."""
+    tail = "\n".join([line for line in output.splitlines() if line.strip()][-SUMMARY_LINES:])
+    return NO_TESTS.search(tail) is None and TESTS_RAN.search(tail) is not None
 
 
 def is_test_command(command: str, cfg: Config) -> bool:
@@ -137,7 +147,7 @@ def is_test_command(command: str, cfg: Config) -> bool:
     configured runner counts; `echo pytest`, `pytest; true` or
     `pytest --collect-only` do not."""
     argv = command_argv(command)
-    if argv is None or NO_RUN_FLAGS.intersection(argv):
+    if argv is None or NO_RUN_FLAGS.intersection(argv) or any(a.startswith(NO_RUN_PREFIXES) for a in argv):
         return False
     for configured in cfg.test_commands:
         want = command_argv(configured)
@@ -210,6 +220,19 @@ def shell_write_event(
         {"tool": use.tool, "tool_use_id": use.tool_use_id, "path": path, "pre_hash": pre_hash, "post_hash": post_hash},
         state_hash=state_hash,
         id=derived_id("ev", "shell-write", use.session_id, use.tool_use_id, path),
+    )
+
+
+def late_write_event(session_id: str, path: str, pre_hash: str, post_hash: str, state_hash: str = "") -> Event:
+    """A file the agent wrote changed after its last tool call but before the
+    session ended, e.g. by a backgrounded command: still the agent's change."""
+    return Event.new(
+        Kind.FILE_WRITE,
+        Actor.TOOL,
+        session_id,
+        {"tool": "session_end", "tool_use_id": "", "path": path, "pre_hash": pre_hash, "post_hash": post_hash},
+        state_hash=state_hash,
+        id=derived_id("ev", "late-write", session_id, path, post_hash),
     )
 
 
