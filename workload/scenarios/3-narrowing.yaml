@@ -1,0 +1,79 @@
+name: narrowing
+description: >-
+  A record broadened over toolchain is validated in uv sessions. The project
+  then drifts to pip, where the suite fails and the miner links the failure
+  as counter-evidence. Excluding pip from the scope keeps all the uv support,
+  so the engine narrows instead of demoting: the record stays L2, is
+  delivered again in uv state, and is not delivered in pip state.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &tests
+          content: Run the test suite with pytest -q before finishing
+          kind: preference
+          broaden: [toolchain]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*tests]
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+
+  - at: +2d
+    drift:
+      - remove: uv.lock
+      - write: {path: requirements.txt, content: "pytest\n"}
+      - write: {path: test_pip.py, content: "import calc\n\n\ndef test_power():\n    assert calc.power(2, 3) == 8\n"}
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      counter_links:
+        - record: Run the test suite with pytest -q before finishing
+          event: {kind: test_result, passed: false}
+          reason: the suite fails in the pip project
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, delivered: true}
+      - {record: Run the test suite with pytest -q before finishing, narrowed: {toolchain: pip}}
+      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+
+  - at: +3d
+    drift:
+      - remove: requirements.txt
+      - remove: test_pip.py
+      - write: {path: uv.lock, content: ""}
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, delivered: true}
+      - {record: Run the test suite with pytest -q before finishing, in_prompt: true}
+
+  - at: +4d
+    drift:
+      - remove: uv.lock
+      - write: {path: requirements.txt, content: "pytest\n"}
+    prompt: Add a maximum function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def maximum(a, b):\n    return max(a, b)\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, delivered: false}
+      - {record: Run the test suite with pytest -q before finishing, in_prompt: false}
+      - {record: Run the test suite with pytest -q before finishing, rung: L2}

@@ -120,12 +120,16 @@ def clock_now() -> datetime:
     path = os.environ.get("RKA_MEMORY_CLOCK_FILE")
     if path:
         try:
-            base = _aware(datetime.fromisoformat(Path(path).read_text().strip()))
-            elapsed = max(0.0, time.time() - os.stat(path).st_mtime)
-            return base + timedelta(seconds=elapsed)
+            return clock_file_now(Path(path))
         except (OSError, ValueError):
             pass
     return datetime.now(UTC)
+
+
+def clock_file_now(path: Path) -> datetime:
+    """The instant in a clock file plus the real time since it was written."""
+    base = _aware(datetime.fromisoformat(path.read_text().strip()))
+    return base + timedelta(seconds=max(0.0, time.time() - os.stat(path).st_mtime))
 
 
 def _aware(dt: datetime) -> datetime:

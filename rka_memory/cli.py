@@ -215,6 +215,17 @@ def cmd_skills(args) -> int:
     return 0
 
 
+def cmd_workload_run(args) -> int:
+    from rka_memory.workload import runner
+    from rka_memory.workload.stream import StreamError
+
+    try:
+        return runner.run_all(Path(args.path), Path(args.out), args.dsh)
+    except (StreamError, FileNotFoundError, ValueError) as exc:
+        print(f"rka-memory workload: {exc}", file=sys.stderr)
+        return 2
+
+
 def cmd_mcp(args) -> int:
     from rka_memory.mcp import server
 
@@ -295,6 +306,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_skills)
 
     sub.add_parser("mcp", help="run the MCP server (stdio)").set_defaults(fn=cmd_mcp)
+
+    s = sub.add_parser("workload", help="task streams through dsh with a scripted model (docs/WORKLOAD.md)")
+    wsub = s.add_subparsers(dest="workload_command", required=True)
+    r = wsub.add_parser("run", help="run stream files; exit non-zero if any expectation fails")
+    r.add_argument("path", help="a stream file, or a directory of them")
+    r.add_argument("--out", default="workload-runs", help="results go to a new timestamped directory here")
+    r.add_argument("--dsh", default=None, help="dsh executable (default: $DSH_BIN, then dsh on PATH)")
+    r.set_defaults(fn=cmd_workload_run)
     return p
 
 

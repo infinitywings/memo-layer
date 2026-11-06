@@ -61,11 +61,11 @@ class Config:
         return self.weights.get(kind, 0.0)
 
 
-def _merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+def merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for key, value in over.items():
         if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = _merge(out[key], value)
+            out[key] = merge(out[key], value)
         else:
             out[key] = value
     return out
@@ -90,9 +90,9 @@ def load(path: Path | None = None, overrides: dict[str, Any] | None = None) -> C
     raw = yaml.safe_load(DEFAULT_PATH.read_text())
     user_path = path or user_config_path()
     if user_path.exists():
-        raw = _merge(raw, yaml.safe_load(user_path.read_text()) or {})
+        raw = merge(raw, yaml.safe_load(user_path.read_text()) or {})
     if overrides:
-        raw = _merge(raw, overrides)
+        raw = merge(raw, overrides)
     return from_dict(raw)
 
 

@@ -1,0 +1,61 @@
+name: skill
+description: >-
+  A procedure with steps and the acceptance check `pytest -q` is confirmed to
+  L2 by a typed `rkm confirm`. Two later sessions follow its steps and pass
+  the check, so it reaches L3. The next session is offered it as a dsh skill,
+  loads it, follows it, and the check fails on a regression test the project
+  gained: the skill retires to L4.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Before finishing a calc.py change, check git status --short and then run pytest -q
+          kind: procedure
+          steps:
+            - {tool: Bash, match: git status --short}
+            - {tool: Bash, match: pytest -q}
+          acceptance_check: pytest -q
+          evidence: [{kind: test_result, passed: true}]
+    user:
+      - confirm: Before finishing a calc.py change, check git status --short and then run pytest -q
+    expect:
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L2}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    expect:
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", delivered: true}
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    expect:
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L3}
+
+  - at: +3d
+    drift:
+      - write: {path: test_regression.py, content: "import calc\n\n\ndef test_add_floats():\n    assert calc.add(0.1, 0.2) == 0.3\n"}
+    prompt: Add a negate function to calc.py
+    agent:
+      - skill: offered
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    expect:
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", skill_offered: true}
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L4}

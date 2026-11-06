@@ -1,0 +1,36 @@
+name: retirement
+description: >-
+  An L1 record that gains no links or deliveries retires to L4 once it has
+  been untouched for more than 60 simulated days. A session on day 59 leaves
+  it at L1; the gate at the start of a session on day 61 retires it.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: calc.py keeps its functions in alphabetical order
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: calc.py keeps its functions in alphabetical order, rung: L1}
+
+  - at: +59d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: calc.py keeps its functions in alphabetical order, rung: L1}
+
+  - at: +61d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: calc.py keeps its functions in alphabetical order, rung: L4}
