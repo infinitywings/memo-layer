@@ -55,6 +55,7 @@ class Config:
     miner_api_key_env: str | None
     hooks_background: str
     skills_dir: Path
+    skills_export_files: bool
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
@@ -78,6 +79,12 @@ BACKGROUND = frozenset({"spawn", "inline", "off"})
 def _choice(value: Any, allowed: frozenset[str], key: str) -> str:
     if value not in allowed:
         raise ValueError(f"{key} must be one of {sorted(allowed)}, got {value!r}")
+    return value
+
+
+def _flag(value: Any, key: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be true or false, got {value!r}")
     return value
 
 
@@ -137,5 +144,6 @@ def from_dict(raw: dict[str, Any]) -> Config:
         miner_api_key_env=raw["miner"].get("api_key_env"),
         hooks_background=_choice(raw.get("hooks", {}).get("background", "spawn"), BACKGROUND, "hooks.background"),
         skills_dir=Path(raw["skills"]["dir"]).expanduser(),
+        skills_export_files=_flag(raw["skills"].get("export_files", True), "skills.export_files"),
         raw=raw,
     )

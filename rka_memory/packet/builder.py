@@ -95,6 +95,15 @@ def arm_for(day: date, cfg: Config) -> str:
     return cfg.arms[day.toordinal() % len(cfg.arms)]
 
 
+def session_arm(world: World, session_id: str, cfg: Config, today: date) -> str:
+    """The arm a session runs under: the one its session-start packet used, so
+    every later channel (prompt packets, skills) follows it; else today's arm."""
+    for d in world.deliveries:
+        if d.event.session_id == session_id and d.channel == "session_start":
+            return d.arm
+    return arm_for(today, cfg)
+
+
 def _item(rec: RecordState, world: World, cfg: Config, unvalidated: bool = False) -> PacketItem:
     support = assess(rec, world, cfg).support
     return PacketItem(

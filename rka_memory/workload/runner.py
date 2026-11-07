@@ -226,7 +226,9 @@ class StreamRun:
             "core": {"sync_on_session_end": False},
             "miner": miner,
             "hooks": {"background": "inline"},
-            "skills": {"dir": str(p.skills)},
+            # dsh gets skills through the plugin, which follows the packet arm;
+            # SKILL.md files in reach would hand them to every session
+            "skills": {"dir": str(p.skills), "export_files": False},
             "packet": {"arms": ["gated"]},
         }
         p.config.write_text(yaml.safe_dump(config_mod.merge(base, self.stream.config), sort_keys=False))

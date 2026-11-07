@@ -11,18 +11,28 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from rka_memory.workload.stream import Append, Clean, FileAction, Remove, Replace, Restore, Write
+from rka_memory.workload.stream import Append, Clean, Commit, FileAction, Remove, Replace, Restore, Write
 
 UNTRACKED = frozenset({".git", ".pytest_cache", "__pycache__", ".claude"})
 Snapshot = dict[str, bytes]
 
 
+GIT = ["git", "-c", "user.name=workload", "-c", "user.email=workload@example.invalid"]
+
+
 def create_project(fixture: Path, project: Path) -> None:
     """Copy the fixture into a fresh git repository with one commit."""
     shutil.copytree(fixture, project)
-    git = ["git", "-c", "user.name=workload", "-c", "user.email=workload@example.invalid"]
     for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "fixture"]):
-        subprocess.run([*git, *args], cwd=project, check=True, capture_output=True)
+        subprocess.run([*GIT, *args], cwd=project, check=True, capture_output=True)
+
+
+def commit(project: Path, message: str) -> None:
+    """Commit every change, or nothing when the tree is clean."""
+    subprocess.run([*GIT, "add", "-A"], cwd=project, check=True, capture_output=True)
+    staged = subprocess.run([*GIT, "diff", "--cached", "--quiet"], cwd=project, capture_output=True)
+    if staged.returncode == 1:
+        subprocess.run([*GIT, "commit", "-q", "-m", message], cwd=project, check=True, capture_output=True)
 
 
 def snapshot(project: Path) -> Snapshot:
@@ -45,6 +55,9 @@ def target(project: Path, path: str) -> Path:
 def apply(action: FileAction, project: Path, before: Snapshot) -> None:
     """Apply one drift or user file action. `before` is the snapshot taken
     before the latest agent session, which `restore` returns a file to."""
+    if isinstance(action, Commit):
+        commit(project, action.message)
+        return
     path = target(project, action.path)
     match action:
         case Write(content=content):

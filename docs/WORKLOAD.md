@@ -67,6 +67,7 @@ Both lists take the same file actions. Paths are relative to the project and mus
 | `replace: {path, old, new}` | Replaces the first occurrence of `old`; fails if it is missing. |
 | `restore: <path>` | Puts the file back as it was before the latest agent session, or deletes it if it did not exist then. |
 | `clean: <path>` | Deletes the file or directory if it exists, such as a cache the agent left behind. |
+| `commit: <message>` | Commits every change in the project, as a user does between sessions; does nothing on a clean tree. Without commits, uncommitted work piles up across sessions, which no real project does. |
 
 rka-memory detects a changed file when the next session starts. A file the agent wrote that now differs from what it wrote is a `user_edit`; one that is back to its content before the agent wrote it is a `user_undo`. The event belongs to that next session, so the miner rule that links it belongs there too.
 
@@ -165,7 +166,7 @@ The runner still checks the harness for every session: dsh exited 0, the plugin 
 
 `workload/live/1-calc-weeks.yaml` covers three simulated weeks on `calc-uv`. The user states the house rules once (type hints, one-line docstrings, `pytest -q` before finishing) and never repeats them. Packets alternate by day between the gated arm and no packet. The user adds a test by hand after the fourth session, and the project moves from uv to pip in the second week.
 
-`workload/live/2-house-rules.yaml` covers twelve simulated days. In the first session the user states two rules the code never shows: run the tests as `pytest -q -p no:cacheprovider` so no `.pytest_cache` is left behind, and log every new function in `CHANGELOG.md` as `- add <name>()`. The user repeats them once, in the third session, and never again. Each session observes whether both rules held; `clean: .pytest_cache` runs before every session so each observation covers one session. The cache rule can be grounded by a passing test run, the changelog rule only by the user's words (1/3 each), so the stream also shows how the ladder treats a preference without strong evidence. Run it alone with `make live LIVE=workload/live/2-house-rules.yaml`.
+`workload/live/2-house-rules.yaml` covers twelve simulated days. In the first session the user states two rules that leave nothing in the project for a later session to see: run the tests as `pytest -q -p no:cacheprovider` so no `.pytest_cache` is left behind, and end every reply with a line that starts with `Summary:`. The user repeats them once, in the third session, never again, and commits after every session. Each session observes whether both rules held: the cache from the project, the reply from dsh's output in `{run}/logs/s<n>.out`. `clean: .pytest_cache` runs before every session so each observation covers one session. The cache rule can be grounded by a passing test run, the reply rule only by the user's words (1/3 each), so the stream also shows how the ladder treats a preference without strong evidence. A rule that leaves an artifact, such as a changelog format, cannot test memory: every later session can copy the artifact. Run it alone with `make live LIVE=workload/live/2-house-rules.yaml`.
 
 ## Run directory
 
@@ -174,8 +175,8 @@ Each stream gets its own directory under the run, with its own scripted model on
 | Path | Contents |
 |---|---|
 | `ledger/` | `RKA_MEMORY_DIR`: `ledger.jsonl`, blobs and `hook-errors.log`. |
-| `project/` | The git repository the agent works in. Exported project skills land in `project/.claude/skills`. |
-| `config.yaml` | `RKA_MEMORY_CONFIG`: the `openai_compat` miner pointed at the scripted model, `hooks.background: inline`, `core.sync_on_session_end: false`, and the stream's overrides. |
+| `project/` | The git repository the agent works in. No skill files are exported into it: dsh gets skills through the plugin, which follows the packet arm, while a SKILL.md in the workspace would reach every session. |
+| `config.yaml` | `RKA_MEMORY_CONFIG`: the `openai_compat` miner pointed at the scripted model (DeepSeek for a live stream), `hooks.background: inline`, `core.sync_on_session_end: false`, `skills.export_files: false`, and the stream's overrides. |
 | `clock` | `RKA_MEMORY_CLOCK_FILE`. |
 | `dsh-home/` | `DSH_HOME`. |
 | `rka-memory.yml`, `mock-route.yml` | The dsh overlays: the plugin with a 600-second call timeout, and the route to the scripted model (scripted streams only). |

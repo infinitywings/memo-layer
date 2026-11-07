@@ -189,8 +189,9 @@ def cmd_install_hooks(args) -> int:
 def cmd_skills(args) -> int:
     """L3 skills valid for a session, for harness plugins that load skills
     themselves. With --session the offer is logged as a delivery."""
-    from rka_memory.domain import Actor, Event, Kind
+    from rka_memory.domain import Actor, Event, Kind, clock_now
     from rka_memory.ledger import state as state_mod
+    from rka_memory.packet.builder import arm_for, session_arm
     from rka_memory.skills.export import session_skills
 
     mem = _memory()
@@ -200,14 +201,17 @@ def cmd_skills(args) -> int:
         st = sess.state
     else:
         st = state_mod.detect(Path(args.cwd).resolve(), mem.cfg)
-    skills = session_skills(world, mem.cfg, st)
-    if sess is not None and sess.started is not None and skills:
+    known = sess is not None and sess.started is not None
+    today = clock_now().astimezone().date()
+    arm = session_arm(world, args.session, mem.cfg, today) if known else arm_for(today, mem.cfg)
+    skills = session_skills(world, mem.cfg, st, arm)
+    if known and skills:
         mem.append(
             Event.new(
                 Kind.PACKET_DELIVERED,
                 Actor.RUNNER,
                 args.session,
-                {"record_ids": [s["record_id"] for s in skills], "arm": "gated", "channel": "skills"},
+                {"record_ids": [s["record_id"] for s in skills], "arm": arm, "channel": "skills"},
                 state_hash=st.hash(),
             )
         )

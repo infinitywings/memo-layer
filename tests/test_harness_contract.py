@@ -41,8 +41,12 @@ def test_session_end_takes_reported_usage_when_there_is_no_transcript(memory, ca
     }
 
 
-def test_session_skills_returns_only_l3_procedures_valid_for_the_state(memory):
-    st = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
+L3_STATE = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
+
+
+def l3_procedure(memory):
+    """A procedure confirmed, then followed with its check passing in two sessions: L3."""
+    st = L3_STATE
     lg = Ledger()
     lg.start("s1", **st)
     lg.propose("s1", "r_proc", scope=Scope.exact(State(**st)), kind=RecordKind.PROCEDURE,
@@ -59,11 +63,38 @@ def test_session_skills_returns_only_l3_procedures_valid_for_the_state(memory):
         lg.end(s)
     memory.append(*lg.events)
     memory.gate(now=lg.clock)
-    world = memory.world()
-    assert world.records["r_proc"].rung.value == "L3"
+    lg.events.clear()
+    assert memory.world().records["r_proc"].rung.value == "L3"
+    return lg
 
-    here = session_skills(world, memory.cfg, State(**st))
+
+def test_session_skills_returns_only_l3_procedures_valid_for_the_state(memory):
+    st = L3_STATE
+    l3_procedure(memory)
+    world = memory.world()
+
+    here = session_skills(world, memory.cfg, State(**st), "gated")
     assert [(s["name"], s["description"]) for s in here] == [("rka-r-proc", "Run uv sync before tests")]
     assert here[0]["body"].startswith("# rka-r-proc\n")
     assert "Before finishing, run `uv run pytest`" in here[0]["body"]
-    assert session_skills(world, memory.cfg, State(**{**st, "model_id": "m2"})) == []
+    assert session_skills(world, memory.cfg, State(**{**st, "model_id": "m2"}), "gated") == []
+    assert session_skills(world, memory.cfg, State(**st), "ungated") == here
+    assert session_skills(world, memory.cfg, State(**st), "none") == []
+
+
+def test_skills_command_follows_the_sessions_packet_arm_and_logs_it(memory, capsys):
+    from rka_memory import cli
+    from rka_memory.domain import Actor
+
+    lg = l3_procedure(memory)
+    for sid, arm in (("s4", "none"), ("s5", "gated")):
+        lg.start(sid, **L3_STATE)
+        lg._ev(Kind.PACKET_DELIVERED, Actor.RUNNER, sid, {"record_ids": [], "arm": arm, "channel": "session_start"})
+    memory.append(*lg.events)
+
+    assert cli.main(["skills", "--session", "s4", "--cwd", "/p/app"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert cli.main(["skills", "--session", "s5", "--cwd", "/p/app"]) == 0
+    assert [s["name"] for s in json.loads(capsys.readouterr().out)] == ["rka-r-proc"]
+    offers = [(d.event.session_id, d.arm, d.record_ids) for d in memory.world().deliveries if d.channel == "skills"]
+    assert offers == [("s5", "gated", ("r_proc",))]

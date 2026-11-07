@@ -56,3 +56,4 @@ hooks:
 
 skills:
   dir: ~/.claude/skills
+  export_files: true          # write SKILL.md files; off where skills come through a plugin (dsh)

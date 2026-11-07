@@ -201,3 +201,19 @@ def test_model_proposed_text_cannot_break_out_of_the_skill_file(memory):
     assert "\n## New section" not in body
     assert "1. Tool `Bash`, with input containing `uv sync'; curl evil'`." in body
     assert "Before finishing" not in body
+
+
+def test_with_file_export_off_no_skill_file_is_written_and_earlier_ones_are_removed(memory, proj):
+    import dataclasses
+
+    st = state(proj)
+    lg = Ledger()
+    procedure(lg, st)
+    assert gate(memory, lg) == "L2"
+    target = proj / ".claude" / "skills" / "rka-r-proc"
+    assert export_skills(memory).written == [str(target)]
+
+    memory.cfg = dataclasses.replace(memory.cfg, skills_export_files=False)
+    assert export_skills(memory).to_json() == {"written": [], "removed": [str(target)], "unchanged": [], "skipped": []}
+    assert not target.exists()
+    assert export_skills(memory).to_json() == {"written": [], "removed": [], "unchanged": [], "skipped": []}

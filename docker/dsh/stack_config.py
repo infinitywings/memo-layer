@@ -30,7 +30,8 @@ def main() -> int:
         # the memory service is the only syncer; session ends only record
         "core": {"sync_on_session_end": False},
         "miner": MOCK_MINER if model == "mock" else deepseek_miner(),
-        "skills": {"dir": str(Path(os.environ["RKA_MEMORY_DIR"]) / "skills")},
+        # dsh gets skills through the plugin, which follows the packet arm
+        "skills": {"dir": str(Path(os.environ["RKA_MEMORY_DIR"]) / "skills"), "export_files": False},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")

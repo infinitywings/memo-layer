@@ -61,6 +61,13 @@ class Clean:
 
 
 @dataclass(frozen=True)
+class Commit:
+    """Commit every change in the project, as a user does between sessions."""
+
+    message: str
+
+
+@dataclass(frozen=True)
 class Restore:
     """Put the file back as it was before the latest agent session; delete it if it did not exist."""
 
@@ -76,7 +83,7 @@ class Verdict:
     reason: str = ""
 
 
-FileAction = Write | Remove | Append | Replace | Restore | Clean
+FileAction = Write | Remove | Append | Replace | Restore | Clean | Commit
 UserAction = FileAction | Verdict
 
 
@@ -159,10 +166,12 @@ def _file_action(key: str, value: Any, where: str) -> FileAction:
         return Replace(_str(d["path"], where), _str(d["old"], where), _str(d["new"], where))
     if key == "clean":
         return Clean(_str(value, where))
+    if key == "commit":
+        return Commit(_str(value, where))
     return Restore(_str(value, where))
 
 
-FILE_ACTIONS = {"write", "remove", "append", "replace", "restore", "clean"}
+FILE_ACTIONS = {"write", "remove", "append", "replace", "restore", "clean", "commit"}
 
 
 def _user_action(raw: Any, where: str) -> UserAction:

@@ -414,7 +414,8 @@ def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
     assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live")]
     rules = streams[1]
-    assert [o.label for s in rules.sessions for o in s.observe] == ["no .pytest_cache left", "CHANGELOG entry"] * 12
+    assert [o.label for s in rules.sessions for o in s.observe] == ["no .pytest_cache left", "reply ends with Summary"] * 12
+    assert [s.observe[1].expect.value["path"] for s in rules.sessions] == [f"{{run}}/logs/s{i}.out" for i in range(1, 13)]
 
 
 def test_clean_removes_a_file_or_directory_if_present(tmp_path):
@@ -460,3 +461,23 @@ def test_file_contains_reads_the_file_at_the_substituted_path(tmp_path):
     assert evaluate(obs, Expect("file_contains", {"path": str(tmp_path / "CHANGELOG.md"), "text": "- add divide()"})) == (True, "found")
     assert evaluate(obs, Expect("file_contains", {"path": str(tmp_path / "CHANGELOG.md"), "text": "add mode("})) == (False, "not found")
     assert evaluate(obs, Expect("file_contains", {"path": str(tmp_path / "nope.md"), "text": "x"})) == (False, "no such file")
+
+
+def test_commit_records_every_change_and_skips_a_clean_tree(tmp_path):
+    import subprocess
+    from rka_memory.workload.stream import Commit
+
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "calc.py").write_text("x = 1\n")
+    proj = tmp_path / "proj"
+    files.create_project(fixture, proj)
+    (proj / "calc.py").write_text("x = 2\n")
+    (proj / "NEW.md").write_text("n\n")
+    files.apply(Commit("calc: add x"), proj, {})
+    files.apply(Commit("nothing to commit"), proj, {})
+
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=proj, capture_output=True, text=True, check=True).stdout
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=proj, capture_output=True, text=True, check=True).stdout
+    assert log.splitlines() == ["calc: add x", "fixture"]
+    assert status == ""

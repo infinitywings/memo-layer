@@ -163,11 +163,14 @@ def render(rec: RecordState, world: World, cfg: Config, placement: Placement) ->
     return f"---\n{frontmatter}---\n\n" + "\n".join(body) + "\n"
 
 
-def session_skills(world: World, cfg: Config, state: State) -> list[dict[str, str]]:
+def session_skills(world: World, cfg: Config, state: State, arm: str) -> list[dict[str, str]]:
     """L3 skills valid for one session's state, for a harness whose own skill
-    provider is asked per session and so enforces the full scope itself."""
+    provider is asked per session and so enforces the full scope itself. A
+    session in the `none` arm gets no memory, so no skills either."""
     from rka_memory.validity.engine import valid
 
+    if arm == "none":
+        return []
     out = []
     for rec in sorted(exportable(world), key=lambda r: r.id):
         if rec.rung is not Rung.L3 or not valid(rec, state, world, cfg):
@@ -201,11 +204,15 @@ def _roots(world: World, cfg: Config) -> list[Path]:
 
 
 def export_skills(memory: Memory) -> ExportResult:
+    """Reconcile SKILL.md files with the ledger. With `skills.export_files` off
+    nothing is written and earlier exports are removed: a harness that gets
+    skills through its plugin (dsh) should not find them as files, which any
+    session can read whatever its packet arm."""
     cfg = memory.cfg
     world = memory.world()
     result = ExportResult()
     wanted: dict[Path, tuple[RecordState, str, Placement]] = {}
-    for rec in sorted(exportable(world), key=lambda r: r.id):
+    for rec in sorted(exportable(world), key=lambda r: r.id) if cfg.skills_export_files else ():
         name = skill_name(rec.id)
         if not NAME_PATTERN.fullmatch(name):
             result.skipped.append({"record_id": rec.id, "reason": f"skill name {name!r} is not a valid skill name"})
