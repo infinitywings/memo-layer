@@ -1,6 +1,6 @@
 # The memory as a knowledge graph
 
-Status: proposal, not built (2026-11-07). The PI settled the four design questions on 2026-11-07; see the decisions at the end.
+Status: phase 1 built (2026-11-07), phases 2 to 4 proposed. The PI settled the four design questions on 2026-11-07; see the decisions at the end.
 
 The direction is to treat rka-memory as one graph of typed nodes and typed edges, instead of a list of separate records, and to derive what the agent receives (packets, skills, hints) from that graph on demand, with provenance. This document argues for a specific version of that idea. In short, the ledger already is a graph. The work is to make it explicit, add the few node and edge types that code can check, and render every view from it. It does not add a model-built entity graph.
 
@@ -112,7 +112,7 @@ The PI asked for the risks to be thought through. These are the ones I expect, w
 
 Each phase ends with unit tests, a scenario and a live run, and lands only if the live run shows no rise in misapplication or in tokens before the first write.
 
-1. **Show the graph that exists.** Add a `rka-memory graph` JSON export and extend `explain` with relations and the views that carried a record. No behavior changes. Done when every packet line of a live run resolves to its evidence events.
+1. **Show the graph that exists.** Add a `rka-memory graph` JSON export and extend `explain` with relations and the views that carried a record. No behavior changes. Done when every packet line of a live run resolves to its evidence events. Built in `rka_memory/graph.py`. On the second house-rules run (`workload-runs/20261107T193618Z`), `rka-memory graph --trace` traced all 20 record deliveries to grounding evidence linked before them. The workload runner now checks this for every session.
 2. **Add anchors.** Derive anchors and `touches` edges in `World`. Let the miner propose `about` with the check above. Order packets by touched and named anchors. Done when a scenario shows a record about `calc.py` delivered first in a session that names `calc.py`, with no new model calls.
 3. **Render skills from the graph.** Render SKILL.md from the procedure and its L2 dependencies. Add procedure versions through `supersedes`, and the rule extractor's "replaces" for a user's changed rule. Done when a scenario shows a withdrawn rule leaving the rendered SKILL.md at the next export, and a replaced rule delivered alone.
 4. **Add `refines` and staleness flags.** Done when a longer live stream (`workload/live/1-calc-weeks.yaml`) shows qualifications delivered with the rule they qualify.

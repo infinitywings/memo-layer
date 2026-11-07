@@ -12,7 +12,7 @@ from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, State, clock_now
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.packet import builder
-from rka_memory.validity.engine import ENGINE_SESSION, assess, counted, evaluate
+from rka_memory.validity.engine import ENGINE_SESSION, assess, counted, evaluate, statement
 from rka_memory.domain import Polarity
 from rka_memory.world import World, project
 
@@ -133,16 +133,23 @@ class Memory:
                 if link.event_id in all_counted
                 else "not grounding"
             )
-            links.append(
-                {
-                    "event_id": link.event_id,
-                    "polarity": link.polarity.value,
-                    "kind": ev.kind.value if ev else None,
-                    "actor": ev.actor.value if ev else None,
-                    "session_id": ev.session_id if ev else None,
-                    "status": status,
-                }
-            )
+            row = {
+                "event_id": link.event_id,
+                "polarity": link.polarity.value,
+                "kind": ev.kind.value if ev else None,
+                "actor": ev.actor.value if ev else None,
+                "session_id": ev.session_id if ev else None,
+                "status": status,
+            }
+            said = statement(world.events.get(link.via), ev, self.cfg) if ev is not None else None
+            if said is not None:
+                row["statement"] = {"quote": said[0], "standing": said[1]}
+            links.append(row)
+
+        def ref(rid: str) -> dict[str, Any]:
+            other = world.records.get(rid)
+            return {"record_id": rid, "rung": other.rung.value if other and other.rung else None}
+
         return {
             "record": rec.spec.to_json(),
             "rung": rec.rung.value if rec.rung else None,
@@ -167,8 +174,14 @@ class Memory:
                 for n in rec.narrowings
             ],
             "links": links,
+            "relations": {
+                "depends_on": [ref(d) for d in rec.spec.depends_on],
+                "dependents": [ref(r.id) for r in world.records.values() if record_id in r.spec.depends_on],
+                "supersedes": ref(rec.spec.supersedes) if rec.spec.supersedes else None,
+                "superseded_by": [ref(r.id) for r in world.records.values() if r.spec.supersedes == record_id],
+            },
             "deliveries": [
-                {"session_id": d.event.session_id, "ts": d.event.ts, "arm": d.arm, "channel": d.channel}
+                {"event_id": d.event.id, "session_id": d.event.session_id, "ts": d.event.ts, "arm": d.arm, "channel": d.channel}
                 for d in world.deliveries
                 if record_id in d.record_ids
             ],

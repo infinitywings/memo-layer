@@ -28,6 +28,7 @@ import yaml
 
 import rka_memory
 from rka_memory import config as config_mod
+from rka_memory import graph
 from rka_memory.domain import Kind, clock_file_now
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.miner.backends import DEEPSEEK, deepseek_miner
@@ -399,6 +400,9 @@ class StreamRun:
         self.check(s.label, "no plugin warnings", not warnings, warnings[:3])
         self.check(s.label, "one session recorded", sid is not None, new)
         self.check(s.label, "session mined", sid is not None and world.sessions[sid].mined)
+        if sid is not None:
+            gaps = [t.record_id for t in graph.traces(world, config_mod.load(path=p.config), sid) if not t.evidence]
+            self.check(s.label, "every delivered record traces to evidence", not gaps, gaps[:3])
         if self.stream.model == "scripted":
             problems = [msg for r in mock.requests(s.label) for msg in r.get("problems") or ()]
             self.check(s.label, "scripted model resolved every rule", not problems, problems[:3])

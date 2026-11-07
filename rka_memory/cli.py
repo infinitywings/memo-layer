@@ -75,6 +75,26 @@ def cmd_explain(args) -> int:
     return 0
 
 
+def cmd_graph(args) -> int:
+    from rka_memory import graph
+
+    mem = _memory()
+    world = mem.world()
+    if args.trace:
+        found = graph.traces(world, mem.cfg)
+        gaps = [t.to_json() for t in found if not t.evidence]
+        _print({"delivered": len(found), "traced": len(found) - len(gaps), "gaps": gaps})
+        return 1 if gaps else 0
+    g = graph.project(world, mem.cfg)
+    if args.record is not None:
+        if args.record not in world.records:
+            print(f"unknown record {args.record}", file=sys.stderr)
+            return 2
+        g = g.around(args.record, args.depth)
+    _print(g.to_json())
+    return 0
+
+
 def cmd_verdict(args) -> int:
     mem = _memory()
     ev = mem.verdict(args.record_id, confirm=args.command == "confirm", reason=getattr(args, "reason", ""))
@@ -272,6 +292,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("explain", help="rung history, scope and evidence of one record")
     s.add_argument("record_id")
     s.set_defaults(fn=cmd_explain)
+
+    s = sub.add_parser("graph", help="the ledger as typed nodes and edges, as JSON")
+    s.add_argument("--record", help="only this record's neighborhood")
+    s.add_argument("--depth", type=int, default=1, help="edges to follow from --record (default 1)")
+    s.add_argument(
+        "--trace", action="store_true", help="check that every delivered record traces to evidence; exit 1 if not"
+    )
+    s.set_defaults(fn=cmd_graph)
 
     s = sub.add_parser("confirm", help="user confirm: strong grounding (and override) for a record")
     s.add_argument("record_id")

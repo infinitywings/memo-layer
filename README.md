@@ -96,6 +96,8 @@ rka-memory explain <record-id>
 rka-memory packet --cwd .
 ```
 
+`explain` shows a record's evidence, rung history, relations to other records and every delivery that carried it. `rka-memory graph` prints the ledger as typed nodes and edges in JSON (`--record <id>` for one record's neighborhood). `rka-memory graph --trace` checks that every delivered record traces to grounding evidence linked before the delivery, and exits 1 if one does not.
+
 Other commands are `gate`, `mine <session-id>`, `export-skills`, `metrics --write`, `replay`, `sync`, and `pull`. Run `rka-memory --help` for details.
 
 ## Configuration
