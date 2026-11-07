@@ -94,7 +94,7 @@ The scripted model makes these tool calls in order, one per request, then answer
 | `call: {tool, args}` | Any other tool with raw arguments. |
 | `say: <text>` | The final text. Only allowed as the last step. Defaults to `Done.`. |
 
-A relative path is resolved against the project. Strings may use `{project}`, `{ledger_dir}`, `{ledger}` and `{run}`, which the runner replaces with absolute paths.
+A relative path is resolved against the project. Strings may use `{project}`, `{ledger_dir}`, `{ledger}` and `{run}`, which the runner replaces with absolute paths, `{run_name}` (the stream's directory name under the run), and `{canary_content}` and `{canary_name}` (see Run directory).
 
 ### miner
 
@@ -148,6 +148,7 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{raw_line_absent: <line>}` | No ledger line equals the given text. |
 | `{file_absent: <path>}` | The path does not exist. Placeholders work here. |
 | `{file_contains: {path, text}}` | The file exists and contains the text. Placeholders work in `path`. |
+| `{model_never_saw: <text>}` | No request the model received in this session contained the text, in a prompt or a tool result. With the canaries, a read-leak check. |
 | `{metrics: {<dotted path>: <value or {op: value}>}}` | `rka-memory metrics` reports these values. Operators are `==`, `!=`, `>=`, `>`, `<=` and `<`. |
 
 The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.
@@ -170,12 +171,13 @@ The runner still checks the harness for every session: dsh exited 0, the plugin 
 
 ## Run directory
 
-Each stream gets its own directory under the run, with its own scripted model on a free localhost port:
+Each stream gets a run directory and, apart from it, a workspace, with its own scripted model on a free localhost port:
 
 | Path | Contents |
 |---|---|
 | `ledger/` | `RKA_MEMORY_DIR`: `ledger.jsonl`, blobs and `hook-errors.log`. |
-| `project/` | The git repository the agent works in. No skill files are exported into it: dsh gets skills through the plugin, which follows the packet arm, while a SKILL.md in the workspace would reach every session. |
+| `../workspaces/<stream>/` | The git repository the agent works in, outside the run directory. No skill files are exported into it: dsh gets skills through the plugin, which follows the packet arm, while a SKILL.md in the workspace would reach every session. |
+| `canary.txt`, `secret-<random>.txt` | Canaries, in the run directory and in `ledger/`: a secret content and a secret file name that nothing the model receives may contain. |
 | `config.yaml` | `RKA_MEMORY_CONFIG`: the `openai_compat` miner pointed at the scripted model (DeepSeek for a live stream), `hooks.background: inline`, `core.sync_on_session_end: false`, `skills.export_files: false`, and the stream's overrides. |
 | `clock` | `RKA_MEMORY_CLOCK_FILE`. |
 | `dsh-home/` | `DSH_HOME`. |
@@ -187,6 +189,8 @@ Each stream gets its own directory under the run, with its own scripted model on
 | `report.md`, `report.json` | What each session received and changed, the records at the end, and the metrics. |
 
 `summary.json` in the run directory has the check counts per stream.
+
+**Confinement.** In the `rka-memory-dsh` image the runner is root and the `agent` user exists, so each run directory is root-only (mode 700), the workspace belongs to `agent`, dsh runs with `docker/dsh/confine.yml` (the agent's tool processes drop to `agent`), and the plugin's `protectedPaths` is the run directory. From the project, `..` shows nothing readable. On a developer machine nothing is confined; the canaries are planted anyway, and `manifest.json` records `confined`.
 
 ## Scripted model
 

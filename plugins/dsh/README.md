@@ -32,6 +32,7 @@ The plugin runs as TypeScript source, and dsh loads the `.ts` file directly. dsh
 |---|---|---|---|
 | `command` | string array | `['rka-memory']` | The argv that starts rka-memory. The plugin appends `hook <Event>` or `skills ...` to it. |
 | `timeoutMs` | number | `30000` | The plugin kills a call that runs longer than this and continues as if the call printed nothing. |
+| `protectedPaths` | string[] | `[$RKA_MEMORY_DIR]` when set, else `[]` | Directories the agent's file tools may not read or change. dsh's `read`, `glob`, `grep`, `write`, `edit` and `apply_patch` run inside dsh, outside any sandbox, so the plugin denies a call whose arguments name a path under one of these directories, resolving relative paths against the session's working directory and symlinks with `lstat` and `readlink` (not through the kernel, which can refuse root a link another user owns in `/tmp`), and logs the attempt as a failed tool call. Shell commands are not checked here: the OS sandbox confines them (in the `rka-memory-dsh` image, `confine.sh` runs them as the `agent` user, who cannot read the root-owned ledger). |
 
 `Config` is a Standard Schema validator that the plugin defines itself, so the plugin has no runtime dependency. dsh validates the config with it at load time. `dsh --dump-config-schema` lists the plugin's schema as unsupported, because it reads only `@deepseek-ai/schemastery` schemas.
 

@@ -78,7 +78,8 @@ Scenario suites run on the mock model and assert ladder behavior end to end, thr
 6. retirement of an untouched L1 record after 60 simulated days;
 7. A/B arms alternating by simulated day, with rediscovery tokens measured per arm;
 8. forgery attempts by the agent (the existing sandbox check, run inside the stack);
-9. a later session adding its evidence to an existing record through a support link, which the first live run showed a real miner needs (added after M4).
+9. a later session adding its evidence to an existing record through a support link, which the first live run showed a real miner needs (added after M4);
+10. reads of the ledger and the run directory by the agent, through the shell and through dsh's own file tools, which the second clean house-rules run showed a no-memory session doing (added after M4).
 
 Live streams use a real model and produce metrics, not pass/fail: a personal-agent task set over simulated weeks first. A coding benchmark subset (for example SWE-bench Lite) is possible later, but the prototype spec keeps benchmark harnesses out of scope.
 

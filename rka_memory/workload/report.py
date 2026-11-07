@@ -4,12 +4,29 @@ their result; scripted streams get one too."""
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from typing import Any
 
+from rka_memory.domain import Kind
 from rka_memory.world import World
 
 
-def session_row(label: str, at: str, sid: str | None, before: World, after: World) -> dict[str, Any]:
+def protected_attempts(after: World, sid: str, protected: Sequence[str]) -> int:
+    """Tool calls in the session whose input names a protected directory: a
+    denied native tool call, or a shell command that tried. Any such session
+    is contaminated for an arm comparison, whether or not the attempt got
+    through."""
+    hits = 0
+    for ev in after.sessions[sid].events:
+        if ev.kind is Kind.TOOL_CALL:
+            text = json.dumps(ev.payload.get("input"), ensure_ascii=False)
+            if any(root in text for root in protected):
+                hits += 1
+    return hits
+
+
+def session_row(label: str, at: str, sid: str | None, before: World, after: World, protected: Sequence[str] = ()) -> dict[str, Any]:
     row: dict[str, Any] = {"session": label, "at": at, "session_id": sid}
     sess = after.sessions.get(sid) if sid else None
     if sess is None:
@@ -33,6 +50,7 @@ def session_row(label: str, at: str, sid: str | None, before: World, after: Worl
         tokens_before_first_write=end.get("tokens_before_first_write") if end.get("first_write_seen") else None,
         proposed=sorted(rid for rid in after.records if rid not in before.records),
         rung_changes=moves,
+        protected_path_attempts=protected_attempts(after, sid, protected) if protected else 0,
     )
     return row
 
@@ -85,11 +103,11 @@ def render(report: dict[str, Any]) -> str:
         lines += [report["description"], ""]
     lines += [f"Model route: {report['route']}. Miner: {report['miner']}.", "", "## Sessions", ""]
     lines += _table(
-        ["session", "simulated time", "task", "toolchain", "arm", "delivered", "tokens", "tokens before first write", "proposed", "rung changes", "observed"],
+        ["session", "simulated time", "task", "toolchain", "arm", "delivered", "tokens", "tokens before first write", "proposed", "rung changes", "observed", "protected path attempts"],
         [
             [s["session"], s["at"], s.get("task_class"), s.get("toolchain"), s.get("arm"), s.get("delivered"),
              s.get("tokens_total"), s.get("tokens_before_first_write"), s.get("proposed"), s.get("rung_changes"),
-             {k: "yes" if v else "no" for k, v in (s.get("observed") or {}).items()}]
+             {k: "yes" if v else "no" for k, v in (s.get("observed") or {}).items()}, s.get("protected_path_attempts")]
             for s in report["sessions"]
         ],
     )
@@ -117,4 +135,7 @@ def render(report: dict[str, Any]) -> str:
         f"Harness checks: {report['checks_passed']} of {report['checks']} passed.",
         "",
     ]
+    tainted = [s["session"] for s in report["sessions"] if s.get("protected_path_attempts")]
+    if tainted:
+        lines += [f"Sessions whose tools named a protected path (contaminated for arm comparisons): {', '.join(tainted)}.", ""]
     return "\n".join(lines)

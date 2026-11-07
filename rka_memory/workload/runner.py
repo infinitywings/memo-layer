@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
+import secrets
 import shutil
 import signal
 import subprocess
@@ -57,11 +59,19 @@ class CheckResult:
         return {"session": self.session, "check": self.name, "ok": self.ok, "detail": self.detail}
 
 
+# The user the agent's tool processes run as in the rka-memory-dsh image
+# (docker/dsh/confine.sh). When the runner is root and this user exists, the
+# project belongs to it and everything else in the run is root-only.
+AGENT_USER = "agent"
+
+
 @dataclass(frozen=True)
 class RunPaths:
-    """One stream's run directory. The ledger and the project are siblings, so
-    dsh's sandbox, which lets the agent write only the project, keeps the
-    ledger out of its reach."""
+    """One stream's run directory and its workspace. The workspace holds the
+    project the agent edits; the run directory holds the ledger, dsh's home,
+    the logs and the configuration, which the agent must not read. Under
+    confinement the run directory is root-only and the workspace belongs to
+    the agent user; from the project, `..` shows nothing readable."""
 
     root: Path
     ledger_dir: Path
@@ -76,14 +86,16 @@ class RunPaths:
     requests: Path
     rka_overlay: Path
     route_overlay: Path
+    canary_content: str = ""
+    canary_name: str = ""
 
     @classmethod
-    def under(cls, root: Path) -> RunPaths:
+    def under(cls, root: Path, workspace: Path) -> RunPaths:
         return cls(
             root=root,
             ledger_dir=root / "ledger",
             ledger=root / "ledger" / "ledger.jsonl",
-            project=root / "project",
+            project=workspace,
             dsh_home=root / "dsh-home",
             skills=root / "skills",
             logs=root / "logs",
@@ -101,7 +113,29 @@ class RunPaths:
             "{ledger_dir}": str(self.ledger_dir),
             "{ledger}": str(self.ledger),
             "{run}": str(self.root),
+            "{run_name}": self.root.name,
+            "{canary_content}": self.canary_content,
+            "{canary_name}": self.canary_name,
         }
+
+
+def confinement() -> tuple[int, int] | None:
+    """The agent user's uid and gid when the runner can confine the agent's
+    tools (root, the user exists, the dsh overlay is present), else None."""
+    overlay = os.environ.get("RKM_CONFINE_OVERLAY")
+    if os.geteuid() != 0 or not overlay or not Path(overlay).is_file():
+        return None
+    try:
+        user = pwd.getpwnam(AGENT_USER)
+    except KeyError:
+        return None
+    return user.pw_uid, user.pw_gid
+
+
+def chown_tree(path: Path, uid: int, gid: int) -> None:
+    os.chown(path, uid, gid, follow_symlinks=False)
+    for sub in path.rglob("*"):
+        os.chown(sub, uid, gid, follow_symlinks=False)
 
 
 def rka_bin() -> Path:
@@ -191,9 +225,10 @@ def _wait_for_group(pgid: int) -> None:
 
 
 class StreamRun:
-    def __init__(self, stream: Stream, root: Path, dsh: str) -> None:
+    def __init__(self, stream: Stream, root: Path, dsh: str, workspace: Path | None = None) -> None:
         self.stream = stream
-        self.paths = RunPaths.under(root.resolve())
+        self.paths = RunPaths.under(root.resolve(), (workspace or root / "project").resolve())
+        self.confine = confinement()
         self.dsh = dsh
         self.results: list[CheckResult] = []
         self.before: files.Snapshot = {}
@@ -218,6 +253,25 @@ class StreamRun:
         )
         return env
 
+    def _own(self) -> None:
+        """Hand the project to the agent user and keep the run directory root-only.
+        Called before every session, since drift and user actions run as root."""
+        if self.confine is None:
+            return
+        uid, gid = self.confine
+        chown_tree(self.paths.project, uid, gid)
+        for d in (self.paths.root, self.paths.ledger_dir):
+            os.chmod(d, 0o700)
+
+    def _plant_canaries(self) -> None:
+        """Secrets only the ledger side knows. A stream's `model_never_saw`
+        checks on them show whether the agent could read protected paths."""
+        p = self.paths
+        self.paths = replace(p, canary_content=f"CANARY-{secrets.token_hex(12)}", canary_name=f"secret-{secrets.token_hex(6)}.txt")
+        for directory in (p.ledger_dir, p.root):
+            (directory / "canary.txt").write_text(self.paths.canary_content + "\n")
+            (directory / self.paths.canary_name).write_text(self.paths.canary_content + "\n")
+
     def _setup(self, port: int | None) -> None:
         p = self.paths
         miner = deepseek_miner() if port is None else {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
@@ -233,11 +287,9 @@ class StreamRun:
         }
         p.config.write_text(yaml.safe_dump(config_mod.merge(base, self.stream.config), sort_keys=False))
         config_mod.load(path=p.config)
+        plugin_config = {"command": [str(rka_bin())], "timeoutMs": PLUGIN_TIMEOUT_MS, "protectedPaths": [str(p.root)]}
         p.rka_overlay.write_text(
-            yaml.safe_dump(
-                [{"insert": [{"id": "rka-memory", "name": str(PLUGIN), "config": {"command": [str(rka_bin())], "timeoutMs": PLUGIN_TIMEOUT_MS}}]}],
-                sort_keys=False,
-            )
+            yaml.safe_dump([{"insert": [{"id": "rka-memory", "name": str(PLUGIN), "config": plugin_config}]}], sort_keys=False)
         )
         route = [
             {
@@ -264,6 +316,7 @@ class StreamRun:
                 {
                     "stream": self.stream.name,
                     "model": self.stream.model,
+                    "confined": self.confine is not None,
                     "source": str(self.stream.source),
                     "start": self.stream.start.isoformat(),
                     "config": yaml.safe_load(p.config.read_text()),
@@ -285,8 +338,9 @@ class StreamRun:
 
     def _run_dsh(self, prompt: str, log: str) -> tuple[int, str]:
         route = ["--patch", str(self.paths.route_overlay)] if self.paths.route_overlay.exists() else []
+        confine = ["--patch", os.environ["RKM_CONFINE_OVERLAY"]] if self.confine is not None else []
         cmd = [
-            self.dsh, "--profile", "headless", "--patch", str(self.paths.rka_overlay), *route,
+            self.dsh, "--profile", "headless", "--patch", str(self.paths.rka_overlay), *route, *confine,
             "--approval-policy", "never", "--permission-mode", "workspace-write",
             prompt,
         ]
@@ -330,6 +384,7 @@ class StreamRun:
         self._set_clock(self.stream.start + s.at)
         for action in s.drift:
             files.apply(action, p.project, self.before)
+        self._own()
         self.before = files.snapshot(p.project)
         mock.script(label=s.label, agent=files.substitute(s.agent, p.placeholders()), say=s.say, miner=s.miner)
         before = self.world()
@@ -367,7 +422,7 @@ class StreamRun:
             expect = replace(expect, value=files.substitute(expect.value, p.placeholders()))
             ok, detail = evaluate(obs, expect)
             self.check(s.label, expect.describe(), ok, detail)
-        row = report.session_row(s.label, (self.stream.start + s.at).isoformat(timespec="minutes"), sid, before, obs.world)
+        row = report.session_row(s.label, (self.stream.start + s.at).isoformat(timespec="minutes"), sid, before, obs.world, protected=(str(p.root),))
         row["observed"] = {
             o.label: evaluate(obs, replace(o.expect, value=files.substitute(o.expect.value, p.placeholders())))[0]
             for o in s.observe
@@ -376,9 +431,11 @@ class StreamRun:
 
     def run(self) -> list[CheckResult]:
         p = self.paths
-        for d in (p.root, p.ledger_dir, p.dsh_home, p.logs):
+        for d in (p.root, p.ledger_dir, p.dsh_home, p.logs, p.project.parent):
             d.mkdir(parents=True, exist_ok=True)
         files.create_project(self.stream.fixture, p.project)
+        self._plant_canaries()
+        self._own()
         label = "-"
         try:
             mock = MockModel(p) if self.stream.model == "scripted" else LiveModel()
@@ -433,7 +490,7 @@ def run_all(path: Path, out: Path, dsh: str | None = None) -> int:
     summary = {}
     for st in streams:
         print(f"== {st.name}: {st.source}", flush=True)
-        results = StreamRun(st, root / st.name, binary).run()
+        results = StreamRun(st, root / st.name, binary, workspace=root / "workspaces" / st.name).run()
         failed = sum(not r.ok for r in results)
         summary[st.name] = {"checks": len(results), "failed": failed}
         print(f"== {st.name}: {len(results) - failed}/{len(results)} checks passed; report in {root / st.name / 'report.md'}\n", flush=True)

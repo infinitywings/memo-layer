@@ -11,7 +11,14 @@ RUN apt-get update \
  && git config --system --add safe.directory '*'
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.17 /uv /uvx /usr/local/bin/
-RUN npm install -g --no-fund --no-audit "@deepseek-ai/dsh@${DSH_VERSION}"
+RUN npm install -g --no-fund --no-audit "@deepseek-ai/dsh@${DSH_VERSION}" \
+ && ln -s "$(ls /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/node-addon-system-linux-*/bin/landlock-run)" /usr/local/bin/landlock-run
+
+# The agent's tools run as this user (docker/dsh/confine.sh), so a root-owned
+# mode-700 ledger directory is out of their reach while dsh itself, and the
+# plugin inside it, stay root. Workspaces the agent edits must be its own.
+RUN useradd --create-home --shell /bin/sh agent \
+ && mkdir -p /workspaces && chown agent:agent /workspaces
 
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_INSTALL_DIR=/opt/uv-python
@@ -36,7 +43,8 @@ RUN uv sync --frozen --no-dev --python 3.12 && chmod +x docker/dsh/*.sh
 ENV PATH=/opt/agent-python/bin:$PATH \
     DSH_HOME=/dsh-home \
     RKA_MEMORY_DIR=/rka-memory \
-    RKA_MEMORY_CONFIG=/rka-memory/config.yaml
+    RKA_MEMORY_CONFIG=/rka-memory/config.yaml \
+    RKM_CONFINE_OVERLAY=/opt/rka-memory/docker/dsh/confine.yml
 
 ENTRYPOINT ["/opt/rka-memory/docker/dsh/entrypoint.sh"]
 CMD ["tui"]

@@ -7,6 +7,8 @@
  */
 
 import { spawn } from 'node:child_process'
+import { closeSync, constants, existsSync, fchmodSync, fchownSync, fstatSync, lstatSync, openSync, readlinkSync, realpathSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -24,9 +26,22 @@ export interface Config {
   command: string[]
   /** A call still running after this many milliseconds is killed and treated as having printed nothing. */
   timeoutMs: number
+  /**
+   * Directories the agent's tools may not read or change: the ledger (by
+   * default `$RKA_MEMORY_DIR`) and whatever else the deployment keeps from the
+   * agent. dsh's own file tools run inside dsh, outside any sandbox, so the
+   * plugin denies their calls on these paths; shell commands are confined by
+   * the OS instead (docker/dsh/confine.sh).
+   */
+  protectedPaths: string[]
 }
 
-const DEFAULTS: Config = { command: ['rka-memory'], timeoutMs: 30_000 }
+function defaultProtectedPaths(): string[] {
+  const ledger = process.env.RKA_MEMORY_DIR
+  return ledger === undefined || ledger === '' ? [] : [ledger]
+}
+
+const DEFAULTS: Config = { command: ['rka-memory'], timeoutMs: 30_000, protectedPaths: defaultProtectedPaths() }
 
 interface ConfigIssue { message: string; path: string[] }
 
@@ -42,7 +57,13 @@ function parseConfig(input: unknown): { value: Config } | { issues: ConfigIssue[
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     issues.push({ message: 'expected a positive number', path: ['timeoutMs'] })
   }
-  return issues.length > 0 ? { issues } : { value: { command: command as string[], timeoutMs: timeoutMs as number } }
+  const protectedPaths = input.protectedPaths ?? DEFAULTS.protectedPaths
+  if (!Array.isArray(protectedPaths) || !protectedPaths.every(p => typeof p === 'string' && isAbsolute(p))) {
+    issues.push({ message: 'expected an array of absolute paths', path: ['protectedPaths'] })
+  }
+  return issues.length > 0
+    ? { issues }
+    : { value: { command: command as string[], timeoutMs: timeoutMs as number, protectedPaths: protectedPaths as string[] } }
 }
 
 /**
@@ -71,6 +92,175 @@ const CLAUDE_TOOL_NAMES: Readonly<Record<string, string>> = {
 
 /** File-writing tools. rka-memory hashes their target before they run, and the first call ends the pre-write token count. */
 const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'apply_patch'])
+
+/**
+ * Tools whose arguments are not paths the plugin should police: the shell
+ * tools run under the OS sandbox, which confines them whatever their command
+ * text says, and a command may mention a protected path without touching it.
+ */
+const OS_CONFINED_TOOLS: ReadonlySet<string> = new Set(['bash', 'pwsh'])
+
+/** Every string inside a tool's arguments, a few levels deep. */
+function stringsIn(value: unknown, depth = 0): string[] {
+  if (typeof value === 'string') return [value]
+  if (depth >= 4 || value === null || typeof value !== 'object') return []
+  const values = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>)
+  return values.flatMap(v => stringsIn(v, depth + 1))
+}
+
+/** The paths one argument string may name: itself, its glob-free prefix, and any path-like token in it (a patch names files inside its text). */
+function pathCandidates(text: string): string[] {
+  const out = new Set<string>()
+  const glob = text.search(/[*?[{]/)
+  for (const candidate of [text, glob >= 0 ? text.slice(0, glob) : '']) {
+    if (candidate !== '' && candidate.length < 4096) out.add(candidate)
+  }
+  for (const token of text.split(/[\s"'`]+/)) {
+    if (/^(\/|\.\.?\/)/.test(token) && token.length < 4096) out.add(token)
+  }
+  return [...out]
+}
+
+/**
+ * The files one native write may have created or replaced, from its arguments:
+ * `file_path` or `path`, and the files a patch names.
+ */
+export function writtenPaths(name: string, args: unknown): string[] {
+  if (!isRecord(args)) return []
+  const out: string[] = []
+  for (const key of ['file_path', 'path']) {
+    if (typeof args[key] === 'string') out.push(args[key] as string)
+  }
+  if (name === 'apply_patch' && typeof args.patch === 'string') {
+    for (const match of (args.patch as string).matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) out.push(match[1]!.trim())
+    for (const match of (args.patch as string).matchAll(/^\*\*\* Move to: (.+)$/gm)) out.push(match[1]!.trim())
+  }
+  return out
+}
+
+/**
+ * dsh's file tools run inside dsh, so under confinement (docker/dsh/confine.sh)
+ * they write as root while the agent's shell runs as the workspace owner. A
+ * file they create would then be unreadable to the agent's own commands. Give
+ * such files, and any directories the write created, to the workspace owner
+ * and open their mode to the workspace's. A no-op unless this process is root.
+ *
+ * Root changing ownership of agent-named paths is an escalation target: the
+ * agent's shell could replace the written file with a symlink or a hard link
+ * to the ledger between the write and this call. So every component from the
+ * file up to the workspace is inspected without following links, a symlink
+ * anywhere abandons the path, a file with more than one link is left alone,
+ * and the change goes through a descriptor opened with O_NOFOLLOW.
+ */
+function ownWrites(name: string, args: unknown, cwd: string): void {
+  if (process.getuid?.() !== 0) return
+  let workspace: string
+  try {
+    workspace = realpathSync(cwd)
+  } catch {
+    return
+  }
+  const owner = statSync(workspace)
+  if (owner.uid === 0) return
+  for (const written of writtenPaths(name, args)) {
+    const target = resolve(workspace, written)
+    if (!within(target, workspace) || target === workspace) continue
+    const chain: string[] = []
+    let clean = true
+    for (let path = target; path !== workspace; path = dirname(path)) {
+      let stat
+      try {
+        stat = lstatSync(path)
+      } catch {
+        if (path === target) break // deleted, nothing to own
+        clean = false
+        break
+      }
+      if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink !== 1)) {
+        clean = false
+        break
+      }
+      if (stat.uid !== 0) break // already the owner's; so is everything above it
+      chain.push(path)
+    }
+    if (!clean) continue
+    for (const path of chain) {
+      let fd: number | undefined
+      try {
+        const isDir = lstatSync(path).isDirectory()
+        fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | (isDir ? constants.O_DIRECTORY : 0))
+        const open = fstatSync(fd)
+        if (open.uid !== 0 || (!isDir && open.nlink !== 1)) continue
+        fchownSync(fd, owner.uid, owner.gid)
+        fchmodSync(fd, isDir ? owner.mode & 0o777 : owner.mode & 0o666)
+      } catch {
+        // replaced or removed since the write; leave it
+      } finally {
+        if (fd !== undefined) closeSync(fd)
+      }
+    }
+  }
+}
+
+/**
+ * The real path of an absolute `target`, resolving every symlink with lstat
+ * and readlink instead of letting the kernel follow it. The kernel can refuse
+ * root a link that another user owns in a sticky world-writable directory such
+ * as /tmp (fs.protected_symlinks), while dsh's file tools resolve the same link
+ * themselves and read through it; following through the kernel would then
+ * miss the target. `..` is applied to the resolved path, as the kernel does. A
+ * component that does not exist is kept as written; a symlink loop leaves the
+ * path as given.
+ */
+export function realPathOf(target: string): string {
+  const pending = target.split(sep).filter(part => part !== '')
+  let current = sep
+  let hops = 0
+  while (pending.length > 0) {
+    const part = pending.shift()!
+    if (part === '.') continue
+    if (part === '..') {
+      current = dirname(current)
+      continue
+    }
+    const next = join(current, part)
+    let stat
+    try {
+      stat = lstatSync(next)
+    } catch {
+      return join(next, ...pending)
+    }
+    if (!stat.isSymbolicLink()) {
+      current = next
+      continue
+    }
+    if (++hops > 40) return target
+    const link = readlinkSync(next)
+    if (isAbsolute(link)) current = sep
+    pending.unshift(...link.split(sep).filter(p => p !== ''))
+  }
+  return current
+}
+
+function within(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
+}
+
+/** The first protected root a tool call reaches, with the argument that names it, or undefined. */
+export function protectedTarget(args: unknown, cwd: string, roots: readonly string[]): { named: string; root: string } | undefined {
+  if (roots.length === 0) return undefined
+  for (const text of stringsIn(args)) {
+    for (const named of pathCandidates(text)) {
+      // `..` after a symlink differs physically and lexically; a tool may use
+      // either, so the call is denied if either reading reaches a root.
+      const physical = realPathOf(isAbsolute(named) ? named : `${cwd}${sep}${named}`)
+      const lexical = realPathOf(resolve(cwd, named))
+      const root = roots.find(r => within(physical, r) || within(lexical, r))
+      if (root !== undefined) return { named, root }
+    }
+  }
+  return undefined
+}
 
 /** External contributors pick any finite order. 9000 follows the tool sections and precedes structured output (9900) and the persona suffix (10200). */
 const SECTION_ORDER = 9000
@@ -221,6 +411,8 @@ function usageReport(usage: Usage): Record<string, unknown> {
 export function apply(ctx: Context, config: Partial<Config> = {}): void {
   const command = config.command ?? DEFAULTS.command
   const timeoutMs = config.timeoutMs ?? DEFAULTS.timeoutMs
+  const protectedRoots = (config.protectedPaths ?? DEFAULTS.protectedPaths).map(p => realPathOf(resolve(p)))
+
   const sessions = new Map<string, SessionState>()
   const reported = new Set<string>()
 
@@ -374,6 +566,22 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
 
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next): Promise<PreToolDecision> => {
     const agent = exec.agent
+    if (!OS_CONFINED_TOOLS.has(exec.name)) {
+      const hit = protectedTarget(exec.arguments, agent === undefined ? process.cwd() : cwdOf(agent), protectedRoots)
+      if (hit !== undefined) {
+        const reason = `rka-memory: ${hit.named} is inside ${hit.root}, which the agent's tools may not read or change`
+        if (agent !== undefined) {
+          // Logged as a failed call, so the ledger shows the attempt.
+          void guard('PostToolUseFailure', () => hook(agent, 'PostToolUseFailure', {
+            tool_name: CLAUDE_TOOL_NAMES[exec.name] ?? exec.name,
+            tool_input: exec.arguments,
+            tool_use_id: exec.callId,
+            error: reason,
+          }))
+        }
+        return { kind: 'deny', reason }
+      }
+    }
     if (agent !== undefined && FILE_WRITING_TOOLS.has(exec.name)) {
       await guard('PreToolUse', () => hook(agent, 'PreToolUse', {
         tool_name: CLAUDE_TOOL_NAMES[exec.name] ?? exec.name,
@@ -387,6 +595,13 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.on('tools/result', (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => {
     const agent = exec.agent
     if (agent === undefined) return
+    if (FILE_WRITING_TOOLS.has(exec.name) || exec.name === 'str_replace_editor') {
+      try {
+        ownWrites(exec.name, exec.arguments, cwdOf(agent))
+      } catch (error) {
+        warn(`could not hand a written file to the workspace owner: ${errorText(error)}`)
+      }
+    }
     void guard('PostToolUse', () => {
       const { event, fields } = toolOutcome(exec.name, exec.arguments, result)
       return hook(agent, event, { tool_name: CLAUDE_TOOL_NAMES[exec.name] ?? exec.name, tool_use_id: exec.callId, ...fields })

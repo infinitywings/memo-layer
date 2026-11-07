@@ -295,7 +295,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read"]
 
 
 LIVE = """
@@ -377,6 +377,7 @@ def test_report_row_says_what_a_session_received_and_changed():
         "tokens_before_first_write": 400,
         "proposed": ["r_b"],
         "rung_changes": {"r_a": "L1 -> L2", "r_b": "new -> L0D"},
+        "protected_path_attempts": 0,
     }
     assert report.session_row("s3", "", None, before, after) == {"session": "s3", "at": "", "session_id": None}
     row["observed"] = {"no pytest cache": True, "changelog entry": False}
@@ -403,7 +404,7 @@ def test_report_row_says_what_a_session_received_and_changed():
     )
     lines = text.splitlines()
     assert lines[0] == "# Stream live-sample (live model)"
-    assert "| s2 | 2027-01-05T12:00 | coding | uv | none | r_a | 900 | 400 | r_b | r_a: L1 -> L2; r_b: new -> L0D | no pytest cache: yes; changelog entry: no |" in lines
+    assert "| s2 | 2027-01-05T12:00 | coding | uv | none | r_a | 900 | 400 | r_b | r_a: L1 -> L2; r_b: new -> L0D | no pytest cache: yes; changelog entry: no | 0 |" in lines
     assert "| no pytest cache | none | 1 | 1 |" in lines
     assert "| L2 | preference | r_a | Run the tests | any state |" in lines
     assert "| none | 1 | 400.0 | 400 |" in lines
@@ -481,3 +482,49 @@ def test_commit_records_every_change_and_skips_a_clean_tree(tmp_path):
     status = subprocess.run(["git", "status", "--porcelain"], cwd=proj, capture_output=True, text=True, check=True).stdout
     assert log.splitlines() == ["calc: add x", "fixture"]
     assert status == ""
+
+
+def test_run_paths_keep_the_workspace_apart_from_the_run_directory(tmp_path):
+    from rka_memory.workload.runner import RunPaths, confinement
+
+    paths = RunPaths.under(tmp_path / "run" / "s", tmp_path / "run" / "workspaces" / "s")
+    assert paths.project == tmp_path / "run" / "workspaces" / "s"
+    assert paths.ledger == tmp_path / "run" / "s" / "ledger" / "ledger.jsonl"
+    assert paths.placeholders()["{run_name}"] == "s"
+    assert paths.placeholders()["{canary_content}"] == ""
+    # on a developer machine the runner is not root, so nothing is confined
+    assert confinement() is None or __import__("os").geteuid() == 0
+
+
+def test_protected_path_attempts_count_tool_calls_that_name_the_run_directory():
+    from rka_memory.domain import Actor, Kind
+    from rka_memory.workload import report
+
+    lg = Ledger()
+    lg.start("s1", project="/p")
+    lg._ev(Kind.TOOL_CALL, Actor.MODEL, "s1", {"tool": "Bash", "input": "cat /runs/x/ledger/ledger.jsonl"})
+    lg._ev(Kind.TOOL_CALL, Actor.MODEL, "s1", {"tool": "Read", "input": "/runs/x/canary.txt"})
+    lg._ev(Kind.TOOL_CALL, Actor.MODEL, "s1", {"tool": "Bash", "input": "pytest -q"})
+    lg.end("s1")
+    world = project(lg.events)
+    assert report.protected_attempts(world, "s1", ["/runs/x"]) == 2
+    assert report.protected_attempts(world, "s1", ["/elsewhere"]) == 0
+    row = report.session_row("s1", "", "s1", project([]), world, protected=["/runs/x"])
+    assert row["protected_path_attempts"] == 2
+    text = report.render({"stream": "t", "model": "scripted", "route": "r", "miner": "m", "sessions": [row], "records": [], "metrics": {}, "checks": 1, "checks_passed": 1})
+    assert "Sessions whose tools named a protected path (contaminated for arm comparisons): s1." in text
+
+
+def test_model_never_saw_scans_every_request_the_model_received():
+    obs = Observed(
+        project([]),
+        None,
+        [
+            {"kind": "agent", "body": {"messages": [{"role": "tool", "content": "CANARY-abc leaked"}]}},
+            {"kind": "miner", "body": {"messages": [{"role": "user", "content": "CANARY-xyz is in the miner prompt only"}]}},
+        ],
+        [],
+        metrics=dict,
+    )
+    assert evaluate(obs, Expect("model_never_saw", "CANARY-abc")) == (False, "seen in requests [0]")
+    assert evaluate(obs, Expect("model_never_saw", "CANARY-xyz")) == (True, "never seen")

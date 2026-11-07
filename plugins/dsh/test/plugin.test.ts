@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
-import { Config } from '../src/index.ts'
+import { Config, protectedTarget, realPathOf, writtenPaths } from '../src/index.ts'
 import { captureStderr, fakeAgent, fakeHost, fakeRkaMemory, until, userMessage } from './fakes.ts'
 
 const CWD = '/work/app'
@@ -15,15 +18,65 @@ function base(event: string) {
 
 const enter = (messages: unknown[]) => async () => ({ kind: 'enter', messages })
 
-test('Config fills defaults and rejects a bad command or timeout', () => {
+test('Config fills defaults and rejects a bad command, timeout or protected path', () => {
   const { validate } = Config['~standard']
-  assert.deepEqual(validate(undefined), { value: { command: ['rka-memory'], timeoutMs: 30000 } })
-  assert.deepEqual(validate({ command: ['uv', 'run', 'rka-memory'] }), { value: { command: ['uv', 'run', 'rka-memory'], timeoutMs: 30000 } })
-  assert.deepEqual(validate({ command: [], timeoutMs: 0 }), {
+  const protectedPaths = process.env.RKA_MEMORY_DIR ? [process.env.RKA_MEMORY_DIR] : []
+  assert.deepEqual(validate(undefined), { value: { command: ['rka-memory'], timeoutMs: 30000, protectedPaths } })
+  assert.deepEqual(validate({ command: ['uv', 'run', 'rka-memory'], protectedPaths: ['/var/ledger'] }), {
+    value: { command: ['uv', 'run', 'rka-memory'], timeoutMs: 30000, protectedPaths: ['/var/ledger'] },
+  })
+  assert.deepEqual(validate({ command: [], timeoutMs: 0, protectedPaths: ['relative/dir'] }), {
     issues: [
       { message: 'expected a non-empty array of non-empty strings', path: ['command'] },
       { message: 'expected a positive number', path: ['timeoutMs'] },
+      { message: 'expected an array of absolute paths', path: ['protectedPaths'] },
     ],
+  })
+})
+
+test('native file tools cannot reach a protected directory, by any path to it; shell commands are left to the OS sandbox', async (t) => {
+  // realpath: on macOS the temp dir sits under the /tmp -> /private/tmp symlink
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'rkm-protect-')))
+  const ledger = join(root, 'ledger')
+  mkdirSync(ledger)
+  writeFileSync(join(ledger, 'ledger.jsonl'), '{}\n')
+  const workspace = join(root, 'work')
+  mkdirSync(workspace)
+  symlinkSync(ledger, join(workspace, 'link'))
+  const rkm = fakeRkaMemory(t)
+  const host = fakeHost({ command: rkm.command, protectedPaths: [ledger] })
+  const agent = fakeAgent('s1', workspace)
+  const allow = async () => ({ kind: 'allow' })
+  const denied = (name: string, args: Record<string, unknown>) => host.emit('tools/pre-execute', { callId: `c-${name}`, name, arguments: args, agent }, allow)
+
+  for (const [name, args] of [
+    ['read', { file_path: join(ledger, 'ledger.jsonl') }],
+    ['read', { file_path: 'link/ledger.jsonl' }],
+    ['read', { file_path: '../ledger/ledger.jsonl' }],
+    ['glob', { pattern: `${ledger}/**/*` }],
+    ['grep', { pattern: 'house rule', path: ledger }],
+    ['write', { file_path: join(ledger, 'forged.jsonl'), content: '{}' }],
+    ['apply_patch', { patch: `*** Begin Patch\n*** Add File: ${ledger}/x\n+hi\n*** End Patch` }],
+    ['read', { file_path: join(ledger, 'missing', 'deep', 'file') }],
+  ] as const) {
+    const decision = await denied(name, args)
+    assert.equal(decision.kind, 'deny', `${name} ${JSON.stringify(args)}`)
+    assert.match(decision.reason, new RegExp(`inside ${ledger.replaceAll('/', '\\/')}`))
+  }
+  assert.deepEqual(await denied('read', { file_path: join(workspace, 'calc.py') }), { kind: 'allow' })
+  assert.deepEqual(await denied('read', { file_path: `${ledger}-other/file` }), { kind: 'allow' })
+  assert.deepEqual(await denied('bash', { command: `cat ${ledger}/ledger.jsonl`, description: 'read' }), { kind: 'allow' })
+
+  await until(() => rkm.calls().length >= 8)
+  const logged = rkm.calls().filter(call => call.args[1] === 'PostToolUseFailure')
+  assert.equal(logged.length, 8)
+  assert.deepEqual(logged[0].input, {
+    ...base('PostToolUseFailure'),
+    cwd: workspace,
+    tool_name: 'Read',
+    tool_input: { file_path: join(ledger, 'ledger.jsonl') },
+    tool_use_id: 'c-read',
+    error: `rka-memory: ${join(ledger, 'ledger.jsonl')} is inside ${ledger}, which the agent's tools may not read or change`,
   })
 })
 
@@ -251,4 +304,42 @@ test('unloading the plugin removes the skills it registered', async (t) => {
   host.unload()
 
   assert.deepEqual(agent.skills, [])
+})
+
+
+test('the files a native write touches are read from its arguments, patches included', () => {
+  assert.deepEqual(writtenPaths('write', { file_path: '/w/a.py', content: '' }), ['/w/a.py'])
+  assert.deepEqual(writtenPaths('str_replace_editor', { command: 'create', path: 'b.py', file_text: '' }), ['b.py'])
+  assert.deepEqual(writtenPaths('bash', { command: 'echo > c.py' }), [])
+  const patch = '*** Begin Patch\n*** Add File: src/new.py\n+x = 1\n*** Update File: calc.py\n*** Move to: calc2.py\n@@\n-a\n+b\n*** Delete File: old.py\n*** End Patch'
+  assert.deepEqual(writtenPaths('apply_patch', { patch }), ['src/new.py', 'calc.py', 'old.py', 'calc2.py'])
+})
+
+
+test('paths resolve through symlink chains without the kernel following them', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'rkm-resolve-')))
+  const ledger = join(root, 'run', 'ledger')
+  mkdirSync(ledger, { recursive: true })
+  writeFileSync(join(ledger, 'canary.txt'), 'C\n')
+  const scratch = join(root, 'scratch')
+  mkdirSync(scratch)
+  symlinkSync(ledger, join(scratch, 'abs'))
+  symlinkSync('../run/ledger', join(scratch, 'rel'))
+  symlinkSync(join(scratch, 'abs'), join(scratch, 'chain'))
+  symlinkSync(join(scratch, 'loop-b'), join(scratch, 'loop-a'))
+  symlinkSync(join(scratch, 'loop-a'), join(scratch, 'loop-b'))
+
+  assert.equal(realPathOf(join(scratch, 'abs', 'canary.txt')), join(ledger, 'canary.txt'))
+  assert.equal(realPathOf(join(scratch, 'rel', 'canary.txt')), join(ledger, 'canary.txt'))
+  assert.equal(realPathOf(join(scratch, 'chain', 'missing', 'deep')), join(ledger, 'missing', 'deep'))
+  // physically, `..` after the link climbs from the link's target, not from scratch
+  assert.equal(realPathOf(`${scratch}/abs/../ledger/canary.txt`), join(ledger, 'canary.txt'))
+  assert.equal(realPathOf(join(scratch, 'loop-a', 'x')), join(scratch, 'loop-a', 'x'))
+
+  const roots = [join(root, 'run')]
+  for (const named of ['abs/canary.txt', 'rel/canary.txt', 'chain/canary.txt', 'abs/../ledger/canary.txt', `${scratch}/chain/x`]) {
+    assert.deepEqual(protectedTarget({ file_path: named }, scratch, roots), { named, root: roots[0] }, named)
+  }
+  assert.equal(protectedTarget({ file_path: 'loop-a/x' }, scratch, roots), undefined)
+  assert.equal(protectedTarget({ file_path: join(root, 'scratch', 'notes.txt') }, scratch, roots), undefined)
 })

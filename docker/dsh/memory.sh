@@ -5,6 +5,7 @@
 # only after this container has written the config.
 set -e
 bin=/opt/rka-memory/.venv/bin
+mkdir -p "$RKA_MEMORY_DIR" && chmod 700 "$RKA_MEMORY_DIR"
 "$bin/python" /opt/rka-memory/docker/dsh/stack_config.py
 if ! "$bin/python" -c 'import sys; from rka_memory.config import load; sys.exit(0 if load().core_project_id else 1)'; then
   # A new name per ledger: Core refuses a second project with the same name.

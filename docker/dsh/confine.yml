@@ -1,0 +1,8 @@
+# dsh overlay: run every sandboxed tool process through confine.sh, which
+# drops root to the `agent` user before applying dsh's Landlock grants.
+# Applied by entrypoint.sh and by the workload runner (RKM_CONFINE_OVERLAY).
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+  config:
+    runnerCommand: [/opt/rka-memory/docker/dsh/confine.sh]
+    runnerFailureSignatures: ['rka-confine:']
