@@ -93,11 +93,12 @@ def test_stream_file_parses_into_typed_sessions(tmp_path):
             }
         ],
         "counter_links": [{"record": "Other record", "event": {"kind": "user_undo"}, "reason": "undone"}],
+        "support_links": [],
     }
     assert first.user == (Restore("calc.py"), Verdict(False, "Run pytest -q", "we use tox"), Verdict(True, "Other record"))
     assert first.expect == (Expect("rung", "L2", "Run pytest -q"), Expect("arm", "none"))
     assert second.drift == (Remove("uv.lock"), Write("requirements.txt", "pytest\n"))
-    assert (second.say, second.agent, second.miner) == ("Done.", (), {"candidates": [], "counter_links": []})
+    assert (second.say, second.agent, second.miner) == ("Done.", (), {"candidates": [], "counter_links": [], "support_links": []})
 
 
 @pytest.mark.parametrize(
@@ -204,6 +205,7 @@ def test_mock_miner_resolves_selectors_and_contents_from_a_real_prompt():
             {"record": "Run the tests with pytest -q", "event": {"kind": "test_result", "command": "pytest tests/test_slow.py"}, "reason": "slow suite failed"},
             {"record": "Run the tests with pytest -q", "event": {"kind": "user_undo"}, "reason": "undone"},
         ],
+        "support_links": [{"record": "Keep functions small", "event": {"kind": "test_result", "passed": True}, "reason": "held"}],
     }
     doc, problems = mock_llm.miner_reply(prompt, rules)
     assert problems == []
@@ -223,6 +225,7 @@ def test_mock_miner_resolves_selectors_and_contents_from_a_real_prompt():
             {"record_id": "r_tests", "event_id": ids["bad"], "reason": "slow suite failed"},
             {"record_id": "r_tests", "event_id": ids["undo"], "reason": "undone"},
         ],
+        "support_links": [{"record_id": "r_style", "event_id": ids["ok"], "reason": "held"}],
     }
 
 
@@ -257,7 +260,7 @@ def test_mock_routes_requests_and_walks_agent_steps_by_tool_results():
     finished = {**first, "messages": first["messages"] + [{"role": "tool"}, {"role": "tool"}]}
     assert mock_llm.respond(finished, script) == ("agent", {"content": "All done."}, [])
     miner = {"messages": [{"role": "user", "content": mock_llm.MINER_PREFIX + ", a memory layer"}]}
-    assert mock_llm.respond(miner, script) == ("miner", {"content": '{"candidates": [], "counter_links": []}'}, [])
+    assert mock_llm.respond(miner, script) == ("miner", {"content": '{"candidates": [], "counter_links": [], "support_links": []}'}, [])
     assert mock_llm.respond({"messages": [{"role": "user", "content": "title?"}]}, script) == ("plain", {"content": "rka-memory workload"}, [])
 
 
@@ -292,7 +295,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support"]
 
 
 LIVE = """

@@ -1,0 +1,44 @@
+name: support
+description: >-
+  A later session adds its evidence to an existing record through a support
+  link instead of restating it, as a real miner is asked to. Passing tests in
+  two sessions, the second linked to the record the first proposed, promote
+  it to L2, and the third session receives it.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Run the test suite with pytest -q before finishing
+          kind: preference
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links:
+        - record: Run the test suite with pytest -q before finishing
+          event: {kind: test_result, passed: true}
+          reason: the suite passed again
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+      - {metrics: {records_by_rung.L1: 0, records_by_rung.L2: 1}}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: Run the test suite with pytest -q before finishing, delivered: true}
+      - {record: Run the test suite with pytest -q before finishing, in_prompt: true}

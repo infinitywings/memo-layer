@@ -196,11 +196,12 @@ def _selector(raw: Any, where: str) -> dict[str, Any]:
     return dict(raw)
 
 
+LINK_KEYS = ("counter_links", "support_links")
 CANDIDATE_KEYS = {"broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on"}
 
 
 def _miner(raw: Any, where: str) -> dict[str, Any]:
-    d = _keys(raw or {}, where, set(), {"task_class", "candidates", "counter_links"})
+    d = _keys(raw or {}, where, set(), {"task_class", "candidates", *LINK_KEYS})
     candidates = []
     for i, c in enumerate(_list(d.get("candidates"), f"{where}.candidates")):
         cw = f"{where}.candidates[{i}]"
@@ -212,12 +213,14 @@ def _miner(raw: Any, where: str) -> dict[str, Any]:
         evidence = [_selector(s, f"{cw}.evidence") for s in _list(c.get("evidence"), cw)]
         depends_on = [_str(x, f"{cw}.depends_on") for x in _list(c.get("depends_on"), cw)]
         candidates.append({**c, "evidence": evidence, "depends_on": depends_on})
-    links = []
-    for i, link in enumerate(_list(d.get("counter_links"), f"{where}.counter_links")):
-        lw = f"{where}.counter_links[{i}]"
-        link = _keys(link, lw, {"record", "event"}, {"reason"})
-        links.append({"record": _str(link["record"], lw), "event": _selector(link["event"], lw), "reason": link.get("reason", "")})
-    out: dict[str, Any] = {"candidates": candidates, "counter_links": links}
+    out: dict[str, Any] = {"candidates": candidates}
+    for key in LINK_KEYS:
+        links = []
+        for i, link in enumerate(_list(d.get(key), f"{where}.{key}")):
+            lw = f"{where}.{key}[{i}]"
+            link = _keys(link, lw, {"record", "event"}, {"reason"})
+            links.append({"record": _str(link["record"], lw), "event": _selector(link["event"], lw), "reason": link.get("reason", "")})
+        out[key] = links
     if d.get("task_class"):
         out["task_class"] = _str(d["task_class"], where)
     return out
@@ -304,7 +307,7 @@ def parse(doc: Any, source: Path) -> Stream:
     for s in sessions if model == "live" else ():
         scripted = {
             "agent": s.agent,
-            "miner": s.miner["candidates"] or s.miner["counter_links"] or "task_class" in s.miner,
+            "miner": any(s.miner[k] for k in ("candidates", *LINK_KEYS)) or "task_class" in s.miner,
             "expect": s.expect,
             "typed verdicts": any(isinstance(a, Verdict) for a in s.user),
         }

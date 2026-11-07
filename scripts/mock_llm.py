@@ -133,14 +133,17 @@ def miner_reply(prompt: str, rules: dict[str, Any]) -> tuple[dict[str, Any], lis
         deps = [r.record(dep, known, f"{label} depends_on") for dep in c.get("depends_on") or ()]
         out["depends_on"] = [d for d in deps if d]
         candidates.append(out)
-    links = []
-    for link in rules.get("counter_links") or ():
-        label = f"counter link to {link['record']!r}"
-        rid = r.record(link["record"], r.prompt.delivered, label)
-        for eid in r.events(link["event"], label):
-            if rid:
-                links.append({"record_id": rid, "event_id": eid, "reason": link.get("reason", "")})
-    doc: dict[str, Any] = {"candidates": candidates, "counter_links": links}
+    doc: dict[str, Any] = {"candidates": candidates}
+    # a counter link names a delivered record; a support link any listed one
+    for key, rows in (("counter_links", r.prompt.delivered), ("support_links", known)):
+        links = []
+        for link in rules.get(key) or ():
+            label = f"{key[:-6]} link to {link['record']!r}"
+            rid = r.record(link["record"], rows, label)
+            for eid in r.events(link["event"], label):
+                if rid:
+                    links.append({"record_id": rid, "event_id": eid, "reason": link.get("reason", "")})
+        doc[key] = links
     if rules.get("task_class"):
         doc["task_class"] = rules["task_class"]
     return doc, r.problems

@@ -77,7 +77,8 @@ Scenario suites run on the mock model and assert ladder behavior end to end, thr
 5. a procedure reaching L3 after repeated successful use, then retiring on a failed acceptance check;
 6. retirement of an untouched L1 record after 60 simulated days;
 7. A/B arms alternating by simulated day, with rediscovery tokens measured per arm;
-8. forgery attempts by the agent (the existing sandbox check, run inside the stack).
+8. forgery attempts by the agent (the existing sandbox check, run inside the stack);
+9. a later session adding its evidence to an existing record through a support link, which the first live run showed a real miner needs (added after M4).
 
 Live streams use a real model and produce metrics, not pass/fail: a personal-agent task set over simulated weeks first. A coding benchmark subset (for example SWE-bench Lite) is possible later, but the prototype spec keeps benchmark harnesses out of scope.
 
@@ -97,7 +98,7 @@ Each run writes a manifest (image digests, config, model ids, seed), the ledger 
 |---|---|---|
 | T0 unit | `dev` | the Python and plugin unit tests (exist) |
 | T1 integration | `dev`, `dsh` | Core sync and pull against `core`; the real-dsh plugin check (exists) |
-| T2 scenarios | `workload` | the eight scenario suites above, mock model, assertions on rung transitions |
+| T2 scenarios | `workload` | the scenario suites above, mock model, assertions on rung transitions |
 | T3 security | `workload` | forgery attempts by the agent inside the stack |
 | T4 live | `workload` | real-model streams (`make live`); harness checks, then a report of rungs and metrics instead of assertions |
 

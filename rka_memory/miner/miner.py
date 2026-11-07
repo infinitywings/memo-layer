@@ -98,7 +98,10 @@ class Candidate:
 
 
 @dataclass(frozen=True)
-class CounterLink:
+class RecordLink:
+    """A miner judgment that an event of the mined session supports or
+    contradicts a record the prompt listed."""
+
     record_id: str
     event_id: str
     reason: str
@@ -117,7 +120,8 @@ class Drop:
 class MinerOutput:
     task_class: str | None
     candidates: tuple[Candidate, ...]
-    counter_links: tuple[CounterLink, ...]
+    counter_links: tuple[RecordLink, ...]
+    support_links: tuple[RecordLink, ...]
     dropped: tuple[Drop, ...]
 
 
@@ -274,10 +278,10 @@ def _candidate(raw: Any, index: int) -> Candidate | Drop:
     )
 
 
-def _counter_link(raw: Any, index: int) -> CounterLink | Drop:
+def _record_link(raw: Any, label: str) -> RecordLink | Drop:
     if not isinstance(raw, dict) or not raw.get("record_id") or not raw.get("event_id"):
-        return Drop(f"counter_link {index}", "needs record_id and event_id")
-    return CounterLink(str(raw["record_id"]), str(raw["event_id"]), str(raw.get("reason") or ""))
+        return Drop(label, "needs record_id and event_id")
+    return RecordLink(str(raw["record_id"]), str(raw["event_id"]), str(raw.get("reason") or ""))
 
 
 def parse_output(text: str) -> MinerOutput:
@@ -290,19 +294,21 @@ def parse_output(text: str) -> MinerOutput:
     except json.JSONDecodeError as exc:
         raise ValueError(f"miner output is not valid JSON: {exc}") from exc
     candidates: list[Candidate] = []
-    links: list[CounterLink] = []
+    links: dict[str, list[RecordLink]] = {"counter_links": [], "support_links": []}
     dropped: list[Drop] = []
     for i, raw in enumerate(_list(doc.get("candidates"))):
         parsed = _candidate(raw, i)
         (dropped if isinstance(parsed, Drop) else candidates).append(parsed)
-    for i, raw in enumerate(_list(doc.get("counter_links"))):
-        parsed = _counter_link(raw, i)
-        (dropped if isinstance(parsed, Drop) else links).append(parsed)
+    for key, kept in links.items():
+        for i, raw in enumerate(_list(doc.get(key))):
+            parsed = _record_link(raw, f"{key[:-1]} {i}")
+            (dropped if isinstance(parsed, Drop) else kept).append(parsed)
     task_class = doc.get("task_class")
     return MinerOutput(
         task_class=str(task_class) if task_class else None,
         candidates=tuple(candidates),
-        counter_links=tuple(links),
+        counter_links=tuple(links["counter_links"]),
+        support_links=tuple(links["support_links"]),
         dropped=tuple(dropped),
     )
 
@@ -422,18 +428,19 @@ class _Planner:
         if not evidence:
             self.result.ungrounded.append(spec.record_id)
 
-    def counter(self, index: int, cl: CounterLink, delivered: set[str]) -> None:
-        label = f"counter_link {index}"
-        if cl.record_id not in delivered:
-            self.result.dropped.append(
-                Drop(f"{label} {cl.record_id}", "record was not delivered in this session or a session it edited")
-            )
+    def record_link(self, label: str, rl: RecordLink, polarity: Polarity, allowed: set[str], why_not: str) -> None:
+        """A counter link may name only a delivered record. A support link may name
+        any record the prompt listed, delivered or existing: support has to reach
+        L1 records, which are never delivered, or nothing accumulates evidence
+        across sessions. Either way the event obeys the candidate citation rules."""
+        if rl.record_id not in allowed:
+            self.result.dropped.append(Drop(f"{label} {rl.record_id}", why_not))
             return
-        if not self.cited(label, (cl.event_id,), Polarity.COUNTER):
+        if not self.cited(label, (rl.event_id,), polarity):
             return
-        if self.link(self.world.records[cl.record_id], cl.event_id, Polarity.COUNTER, cl.reason):
+        if self.link(self.world.records[rl.record_id], rl.event_id, polarity, rl.reason):
             self.result.links.append(
-                {"record_id": cl.record_id, "event_id": cl.event_id, "polarity": "counter", "reason": cl.reason}
+                {"record_id": rl.record_id, "event_id": rl.event_id, "polarity": polarity.value, "reason": rl.reason}
             )
 
 
@@ -444,12 +451,18 @@ def plan(out: MinerOutput, world: World, session_id: str, cfg: Config, result: M
     """
     planner = _Planner(world, session_id, cfg, result)
     result.dropped.extend(out.dropped)
+    view = view_of(world, session_id, cfg)
+    delivered = {r.id for r in view.delivered}
+    listed = delivered | {r.id for r in view.existing}
     planner.judge_task_class(out.task_class)
-    delivered = {r.id for r in delivered_records(world, session_id)}
     for i, c in enumerate(out.candidates):
         planner.candidate(i, c)
-    for i, cl in enumerate(out.counter_links):
-        planner.counter(i, cl, delivered)
+    for i, rl in enumerate(out.counter_links):
+        planner.record_link(
+            f"counter_link {i}", rl, Polarity.COUNTER, delivered, "record was not delivered in this session or a session it edited"
+        )
+    for i, rl in enumerate(out.support_links):
+        planner.record_link(f"support_link {i}", rl, Polarity.SUPPORT, listed, "record was not listed in the prompt")
     return planner.events
 
 

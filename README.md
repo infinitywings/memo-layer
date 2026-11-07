@@ -112,7 +112,7 @@ For workloads and containers: `miner.backend: openai_compat` with `miner.base_ur
 make test
 ```
 
-`make scenarios` runs the eight scenario streams in `workload/scenarios/` through real dsh, the plugin, the miner and the engine, with a scripted model. Each stream asserts rung transitions over simulated days. The stream format is in [docs/WORKLOAD.md](docs/WORKLOAD.md).
+`make scenarios` runs the scenario streams in `workload/scenarios/` through real dsh, the plugin, the miner and the engine, with a scripted model. Each stream asserts rung transitions over simulated days. The stream format is in [docs/WORKLOAD.md](docs/WORKLOAD.md).
 
 ```bash
 make scenarios

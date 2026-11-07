@@ -1,6 +1,6 @@
 # Workload streams
 
-A stream is a YAML file that drives real dsh sessions, against a scripted model or a real one, and records how the rka-memory ladder responds. `rka-memory workload run` executes streams. The eight scenario streams in `workload/scenarios/` are tiers T2 and T3 of [DEV_ENV_PLAN.md](DEV_ENV_PLAN.md); the live streams in `workload/live/` are tier T4.
+A stream is a YAML file that drives real dsh sessions, against a scripted model or a real one, and records how the rka-memory ladder responds. `rka-memory workload run` executes streams. The scenario streams in `workload/scenarios/` are tiers T2 and T3 of [DEV_ENV_PLAN.md](DEV_ENV_PLAN.md); the live streams in `workload/live/` are tier T4.
 
 ## Commands
 
@@ -113,15 +113,19 @@ miner:
     - record: <content of a delivered record>
       event: {kind: user_undo}
       reason: the user undid the change
+  support_links:
+    - record: <content of a delivered or existing record>
+      event: {kind: test_result, passed: true}
+      reason: the suite passed again
 ```
 
-An event selector names a `kind` and optionally an `actor` and payload fields, such as `{kind: test_result, passed: false}` or `{kind: exit_code, command: pytest -q}`. The model resolves it to every matching event in the prompt's event lines. A candidate cites them all as evidence. A counter link becomes one link per matching event.
+An event selector names a `kind` and optionally an `actor` and payload fields, such as `{kind: test_result, passed: false}` or `{kind: exit_code, command: pytest -q}`. The model resolves it to every matching event in the prompt's event lines. A candidate cites them all as evidence. A counter or support link becomes one link per matching event.
 
-`depends_on` contents resolve to ids from the prompt's delivered and existing record rows. A counter link's `record` resolves from the delivered rows only, because the miner may only counter a record delivered in the session or in a session whose file the user edited or undid in it.
+`depends_on` contents resolve to ids from the prompt's delivered and existing record rows. A counter link's `record` resolves from the delivered rows only, because the miner may only counter a record delivered in the session or in a session whose file the user edited or undid in it. A support link's `record` resolves from the delivered and existing rows, because support has to reach L1 records, which are never delivered.
 
 A selector that matches nothing, or a content with no row, is logged as a problem. The session's `scripted model resolved every rule` check then fails.
 
-A repeated candidate adds evidence to the record it repeats, because rka-memory merges a candidate with the same content into the existing record. YAML anchors (`&tests`, `*tests`) keep repeated candidates short.
+A later session adds evidence to an existing record in one of two ways. A support link names the record, which is what the miner prompt asks a real miner to do (scenario `support`). A repeated candidate merges into the record it repeats, because rka-memory merges a candidate with nearly the same content into the existing record (scenario `promotion`). YAML anchors (`&tests`, `*tests`) keep repeated candidates short.
 
 ### expect
 
@@ -184,4 +188,4 @@ Each stream gets its own directory under the run, with its own scripted model on
 - **Headless dsh, not ACP.** Every session is one `dsh --profile headless` process with one prompt, so a session cannot carry follow-up prompts. A typed verdict is a dsh session of its own, and rka-memory delivers it a packet and mines it like any other. Driving dsh over ACP would keep one session open across prompts and verdicts. It is the planned upgrade.
 - **The miner answers from rules, not from reading.** The scripted model cites whatever the rules select. The scenarios therefore test the engine's response to evidence, not the quality of mining.
 - **One fixture.** Every scenario uses `calc-uv`, and drift changes it in place.
-- **Sequential streams.** Streams run one after another. The eight scenarios take about a minute in the container.
+- **Sequential streams.** Streams run one after another. The nine scenarios take several minutes in the container.

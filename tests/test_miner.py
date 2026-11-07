@@ -386,3 +386,66 @@ def test_claude_cli_failure_raises_backend_error(memory, tmp_path, monkeypatch):
     _fake_claude(tmp_path, monkeypatch, 'echo "OAuth session expired" >&2\nexit 1\n')
     with pytest.raises(BackendError, match="exited 1: OAuth session expired"):
         backends.claude_cli(memory.cfg)("PROMPT TEXT")
+
+
+def test_support_link_adds_a_later_sessions_evidence_to_an_existing_record_and_promotes_it(memory, monkeypatch):
+    monkeypatch.setenv("RKA_MEMORY_NOW", "2026-11-02T09:00:00+00:00")
+    lg = Ledger()
+    coding = dict(STATE, task_class="coding")
+    lg.start("s1", **coding)
+    ok1 = lg.test("s1", True)
+    lg.propose("s1", "r_tests", scope=Scope.exact(State(**coding)), content="Run pytest -q before finishing")
+    lg.link("r_tests", ok1)
+    lg.end("s1")
+    lg.start("s2", **coding)
+    ok2 = lg.test("s2", True)
+    lg.end("s2")
+    sync(memory, lg)
+    memory.gate()
+    assert memory.world().records["r_tests"].rung.value == "L1"
+
+    reply = {"candidates": [], "support_links": [{"record_id": "r_tests", "event_id": ok2.id, "reason": "tests passed again"}]}
+    backend = FakeBackend(reply)
+    result = mine_session(memory, "s2", backend=backend)
+
+    assert "- r_tests [L1 preference] Run pytest -q before finishing" in backend.prompts[0]
+    assert result.links == [{"record_id": "r_tests", "event_id": ok2.id, "polarity": "support", "reason": "tests passed again"}]
+    assert result.dropped == []
+    assert [(m["record_id"], m["from"], m["to"]) for m in result.moves] == [("r_tests", "L1", "L2")]
+
+
+def test_support_link_names_only_listed_records_and_cites_by_the_evidence_rules(memory, monkeypatch):
+    from rka_memory.miner.miner import Drop
+
+    monkeypatch.setenv("RKA_MEMORY_NOW", "2026-11-02T09:00:00+00:00")
+    lg = Ledger()
+    coding = dict(STATE, task_class="coding")
+    lg.start("s1", **coding)
+    ok1 = lg.test("s1", True)
+    lg.propose("s1", "r_tests", scope=Scope.exact(State(**coding)))
+    lg.link("r_tests", ok1)
+    lg.propose("s1", "r_bare", scope=Scope.exact(State(**coding)))
+    lg.propose("s1", "r_elsewhere", scope=Scope.exact(State(**dict(coding, project="/p/other"))))
+    lg.link("r_elsewhere", lg.test("s1", True))
+    lg.end("s1")
+    lg.start("s2", **coding)
+    ok2 = lg.test("s2", True)
+    bad = lg.test("s2", False)
+    call = lg.tool_call("s2", "Bash", "pytest -q")
+    lg.end("s2")
+    sync(memory, lg)
+    memory.gate()
+
+    links = [("r_unknown", ok2), ("r_bare", ok2), ("r_elsewhere", ok2), ("r_tests", ok1), ("r_tests", call), ("r_tests", bad)]
+    reply = {"candidates": [], "support_links": [{"record_id": r, "event_id": e.id, "reason": "r"} for r, e in links]}
+    result = mine_session(memory, "s2", backend=FakeBackend(reply))
+
+    assert result.links == []
+    assert result.dropped == [
+        Drop("support_link 0 r_unknown", "record was not listed in the prompt"),
+        Drop("support_link 1 r_bare", "record was not listed in the prompt"),
+        Drop("support_link 2 r_elsewhere", "record was not listed in the prompt"),
+        Drop(f"support_link 3 evidence {ok1.id}", "evidence outside mined session"),
+        Drop(f"support_link 4 evidence {call.id}", "model-authored event never grounds"),
+        Drop(f"support_link 5 evidence {bad.id}", "test_result cannot carry support"),
+    ]
