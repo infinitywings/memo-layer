@@ -17,6 +17,8 @@ import sys
 import time
 
 COMPOSE = shlex.split(os.environ["COMPOSE"]) + ["--profile", "interactive"]
+# the image keeps its own venv off PATH; harness calls name it
+VENV = "/opt/rka-memory/.venv/bin/"
 failed = False
 
 PROBE = """
@@ -72,7 +74,7 @@ def check(name: str, ok: bool, detail: object = "") -> None:
 
 
 def probe() -> dict:
-    out = compose("exec", "-T", "memory", "python", "-", stdin=PROBE)
+    out = compose("exec", "-T", "memory", VENV + "python", "-", stdin=PROBE)
     return json.loads(out.stdout)
 
 
@@ -81,7 +83,7 @@ def main() -> int:
     urls = re.findall(r"http://127\.0\.0\.1:\d+/\S*token=\S+", logs)
     check("dsh web printed a sign-in URL", bool(urls))
     if urls:
-        out = compose("exec", "-T", "memory", "python", "-", urls[-1], stdin=SIGNIN).stdout.split()
+        out = compose("exec", "-T", "memory", VENV + "python", "-", urls[-1], stdin=SIGNIN).stdout.split()
         check("token sign-in answers 303 with a cookie", out[:2] == ["303", "True"], out)
         check("signed-in page loads", out[2:3] == ["200"], out)
         check("a wrong token is refused", out[3:4] == ["401"], out)
@@ -108,13 +110,13 @@ def main() -> int:
     check("session ended and was mined", bool(new) and all(state["sessions"][s]["ended"] and state["sessions"][s]["mined"] for s in new))
     check("no hook errors", not state["hook_errors"], state["hook_errors"])
 
-    rnd = compose("exec", "-T", "memory", "rka-memory", "jobs", "--once")
+    rnd = compose("exec", "-T", "memory", VENV + "rka-memory", "jobs", "--once")
     try:
         report = json.loads(rnd.stdout)
     except ValueError:
         report = {"errors": rnd.stdout[-300:] + rnd.stderr[-300:]}
     check("memory round: gate, skills, metrics, sync", report.get("errors") == {} and "sync" in report.get("steps", {}), report.get("errors"))
-    compose("exec", "-T", "memory", "rka-memory", "pull")
+    compose("exec", "-T", "memory", VENV + "rka-memory", "pull")
     state = probe()
     check(f"Core holds the whole ledger ({state['events']} events)", state["events"] == state["pulled"], f"pulled {state['pulled']}")
     return 1 if failed else 0

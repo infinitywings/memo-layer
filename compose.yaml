@@ -70,7 +70,7 @@ services:
     image: rka-memory-dsh
     profiles: [workload]
     init: true
-    entrypoint: ["rka-memory", "workload", "run"]
+    entrypoint: ["/opt/rka-memory/.venv/bin/rka-memory", "workload", "run"]
     command: ["/opt/rka-memory/workload/scenarios", "--out", "/runs/workload"]
     environment:
       # live streams only (`make live`); scripted streams never read them

@@ -13,14 +13,16 @@ RUN apt-get update \
 COPY --from=ghcr.io/astral-sh/uv:0.9.17 /uv /uvx /usr/local/bin/
 RUN npm install -g --no-fund --no-audit "@deepseek-ai/dsh@${DSH_VERSION}"
 
-ENV UV_PYTHON=3.12 \
-    UV_LINK_MODE=copy \
-    UV_PYTHON_INSTALL_DIR=/opt/uv-python \
-    UV_PROJECT_ENVIRONMENT=/opt/rka-memory/.venv
+ENV UV_LINK_MODE=copy \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python
 
-# The workload's scripted agent runs `pytest -q` against fixture code inside
-# dsh's sandbox. The tool lives outside /root, which dsh-docker mounts as tmpfs.
-RUN UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install pytest==9.2.0
+# The agent's Python: python, python3 and pytest on PATH, as on a developer's
+# machine, outside /root, which dsh-docker mounts as tmpfs. The rka-memory
+# venv stays off PATH and out of uv's settings: the plugin and the harness
+# call it by absolute path, and an agent that can see it learns facts about
+# this harness instead of its project.
+RUN uv venv --python 3.12 /opt/agent-python \
+ && uv pip install --python /opt/agent-python/bin/python pytest==9.2.0
 
 WORKDIR /opt/rka-memory
 COPY pyproject.toml uv.lock README.md LICENSE ./
@@ -29,9 +31,9 @@ COPY plugins/dsh ./plugins/dsh
 COPY scripts ./scripts
 COPY docker/dsh ./docker/dsh
 COPY workload ./workload
-RUN uv sync --frozen --no-dev && chmod +x docker/dsh/*.sh
+RUN uv sync --frozen --no-dev --python 3.12 && chmod +x docker/dsh/*.sh
 
-ENV PATH=/opt/rka-memory/.venv/bin:$PATH \
+ENV PATH=/opt/agent-python/bin:$PATH \
     DSH_HOME=/dsh-home \
     RKA_MEMORY_DIR=/rka-memory \
     RKA_MEMORY_CONFIG=/rka-memory/config.yaml

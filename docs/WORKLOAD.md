@@ -14,6 +14,8 @@ A stream is a YAML file that drives real dsh sessions, against a scripted model 
 
 `--dsh` defaults to `$DSH_BIN`, then `dsh` on `PATH`. dsh needs Node 24.9 or later, and the scenarios' scripted agent runs `pytest -q`, so pytest must be on `PATH`. The `rka-memory-dsh` image has both. Outside compose, start the container with `--init`. After each dsh task the runner waits until no process dsh started is alive. Without an init, a hook process that outlives dsh stays a zombie, and the runner waits on it for 300 seconds.
 
+In the `rka-memory-dsh` image the agent's tools see their own Python, `/opt/agent-python` with `python`, `python3` and `pytest`, as on a developer's machine. The rka-memory venv is not on `PATH` and no uv setting points at it; the plugin, the runner and the `memory` service call it by absolute path. An agent that can see the harness learns about the harness: in the second live run most mined records said that the default `python` lacked pytest, because the rka-memory venv came first on `PATH`.
+
 ## Stream file
 
 ```yaml
