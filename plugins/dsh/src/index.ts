@@ -154,46 +154,54 @@ export function writtenPaths(name: string, args: unknown): string[] {
 }
 
 /**
- * Hand one root-created path under `workspace` to the workspace owner. Each
- * component is opened relative to the directory descriptor of the one before
- * it, through /proc/self/fd (Node has no openat), with O_NOFOLLOW: a symlink
- * anywhere stops the walk, and swapping a directory for a symlink after the
- * check cannot redirect it, because no path is resolved twice. Only regular
- * files with one link and directories change owner; O_NONBLOCK keeps a FIFO
- * from blocking the open.
+ * Hand what one successful write created under `workspace` to the workspace
+ * owner. The whole path is opened first, each component relative to the
+ * previous one's descriptor through /proc/self/fd (Node has no openat), with
+ * O_NOFOLLOW and O_NONBLOCK, so no path is resolved twice and no swap can
+ * redirect it. Nothing changes unless every component exists, none is a
+ * symlink, the target is a regular file with one link, and the path stays out
+ * of every protected root. Then only the trailing run of root-owned components
+ * changes owner: what the write and the directories it made created, below the
+ * deepest component the owner already owns.
  */
-function handOver(workspace: string, written: string, owner: { uid: number; gid: number; mode: number }): void {
-  const rel = relative(workspace, resolve(workspace, written))
+function handOver(workspace: string, written: string, owner: { uid: number; gid: number; mode: number }, protectedRoots: readonly string[]): void {
+  const target = resolve(workspace, written)
+  const rel = relative(workspace, target)
   if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return
+  if (protectedRoots.some(root => within(realPathOf(target), root))) return
   const parts = rel.split(sep)
-  let dirFd = openSync(workspace, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  const fds: number[] = []
   try {
+    fds.push(openSync(workspace, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW))
     for (let i = 0; i < parts.length; i++) {
       const last = i === parts.length - 1
       const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (last ? 0 : constants.O_DIRECTORY)
-      const fd = openSync(`/proc/self/fd/${dirFd}/${parts[i]}`, flags)
-      closeSync(dirFd)
-      dirFd = fd
-      const stat = fstatSync(fd)
-      const isDir = stat.isDirectory()
-      if (stat.uid !== 0 || !(isDir || (stat.isFile() && stat.nlink === 1))) continue
+      fds.push(openSync(`/proc/self/fd/${fds[fds.length - 1]}/${parts[i]}`, flags))
+    }
+    const stats = fds.slice(1).map(fd => fstatSync(fd))
+    const file = stats[stats.length - 1]!
+    if (!file.isFile() || file.nlink !== 1) return
+    let first = stats.length
+    while (first > 0 && stats[first - 1]!.uid === 0) first--
+    for (let i = first; i < stats.length; i++) {
+      const fd = fds[i + 1]!
+      const isDir = stats[i]!.isDirectory()
       fchownSync(fd, owner.uid, owner.gid)
       fchmodSync(fd, isDir ? owner.mode & 0o777 : owner.mode & 0o666)
     }
   } finally {
-    closeSync(dirFd)
+    for (const fd of fds) closeSync(fd)
   }
 }
 
 /**
  * dsh's file tools run inside dsh, so under confinement (docker/dsh/confine.sh)
  * they write as root while the agent's shell runs as the workspace owner. A
- * file they create would then be unreadable to the agent's own commands. Give
- * such files, and any directories the write created, to the workspace owner
- * and open their mode to the workspace's. A no-op unless this process is root
- * on Linux.
+ * file they create would then be unreadable to the agent's own commands. After
+ * a successful write, give what it created to the workspace owner and open its
+ * mode to the workspace's. A no-op unless this process is root on Linux.
  */
-function ownWrites(name: string, args: unknown, cwd: string): void {
+function ownWrites(name: string, args: unknown, cwd: string, protectedRoots: readonly string[]): void {
   if (process.getuid?.() !== 0 || !existsSync('/proc/self/fd')) return
   let workspace: string
   try {
@@ -205,9 +213,9 @@ function ownWrites(name: string, args: unknown, cwd: string): void {
   if (owner.uid === 0) return
   for (const written of writtenPaths(name, args)) {
     try {
-      handOver(workspace, written, owner)
+      handOver(workspace, written, owner, protectedRoots)
     } catch {
-      // a symlink, a missing path or a swapped component: leave it as it is
+      // missing, a symlink, or swapped while we looked: leave it as it is
     }
   }
 }
@@ -605,9 +613,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.on('tools/result', (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => {
     const agent = exec.agent
     if (agent === undefined) return
-    if (FILE_WRITING_TOOLS.has(exec.name) || exec.name === 'str_replace_editor') {
+    if ((FILE_WRITING_TOOLS.has(exec.name) || exec.name === 'str_replace_editor') && !result.isError) {
       try {
-        ownWrites(exec.name, exec.arguments, cwdOf(agent))
+        ownWrites(exec.name, exec.arguments, cwdOf(agent), protectedRoots)
       } catch (error) {
         warn(`could not hand a written file to the workspace owner: ${errorText(error)}`)
       }
