@@ -29,7 +29,7 @@ COPY plugins/dsh ./plugins/dsh
 COPY scripts ./scripts
 COPY docker/dsh ./docker/dsh
 COPY workload ./workload
-RUN uv sync --frozen --no-dev && chmod +x docker/dsh/entrypoint.sh
+RUN uv sync --frozen --no-dev && chmod +x docker/dsh/*.sh
 
 ENV PATH=/opt/rka-memory/.venv/bin:$PATH \
     DSH_HOME=/dsh-home \

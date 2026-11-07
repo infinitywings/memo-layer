@@ -1,0 +1,18 @@
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      mock:
+        displayName: Mock
+        apiKeyEnv: MOCK_LLM_KEY
+        api: openai-completions
+        baseURL: http://mock-llm:8000/v1
+        models:
+          - id: mock-model
+            name: Mock Model
+            contextWindow: 128000
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: mock
+    model: mock-model

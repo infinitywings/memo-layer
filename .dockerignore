@@ -5,3 +5,4 @@
 .pytest_cache
 *.pdf
 workload-runs
+.env

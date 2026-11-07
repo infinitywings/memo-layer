@@ -1,6 +1,6 @@
 # Plan: a Docker Compose environment for developing and testing rka-memory
 
-Status: proposal for review (2026-11-06). M1 to M3 are built; M3 drives dsh headless rather than through ACP (see [WORKLOAD.md](WORKLOAD.md)). Elsewhere, "exists" marks what was built before this plan.
+Status (2026-11-06): M1 to M3 are built, and so is M4's interactive profile (`make up`). M3 drives dsh headless rather than through ACP (see [WORKLOAD.md](WORKLOAD.md)). M4's live stream waits on a model key (decision 2). Elsewhere, "exists" marks what was built before this plan.
 
 ## Goal
 
@@ -26,15 +26,12 @@ flowchart LR
     core[core<br/>RKA Core 3.0.1]
     llm[mock-llm<br/>scripted model]
     dsh[dsh<br/>interactive agent + plugin]
-    wl[workload<br/>task streams via headless dsh]
+    wl[workload<br/>task streams via headless dsh,<br/>own scripted model and ledgers]
     mem[memory<br/>gate, metrics, sync]
     dev[dev<br/>toolbox, tests]
   end
-  dsh -- model calls --> llm
-  wl -- model calls --> llm
-  wl -- miner --> llm
+  dsh -- model and miner calls<br/>when RKM_MODEL=mock --> llm
   dsh -- ledger volume --> mem
-  wl -- ledger volume --> mem
   mem -- REST sync --> core
   dev -- tests --> core
   dev -- tests --> llm
@@ -44,18 +41,20 @@ flowchart LR
 |---|---|---|---|---|
 | `core` | built from your RKA Core source (`RKA_CORE_SRC`, default `/Volumes/FuSpace/Projects/rka-projects/rka`) | the stack's own Core; embeddings off in test runs | `127.0.0.1:9722` | `core-data` |
 | `mock-llm` | small Python image | scripted OpenAI-compatible model for the agent and the miner; logs every request | none | `runs` |
-| `dsh` | `rka-memory-dsh` (exists) | dsh `web` profile for you to watch and drive sessions by hand; plugin loaded | dsh web's port, on `127.0.0.1` (to be read from the `web` profile) | `ledger`, `dsh-home`, `workspaces` |
-| `workload` | `rka-memory-dsh` plus the runner | runs task streams: drives headless dsh (ACP later), plays the user, advances a simulated clock, mines and gates after each session | none | `ledger`, `workspaces`, `runs` |
-| `memory` | `rka-memory` | periodic gate, daily metrics, sync to `core` | none | `ledger`, `runs` |
+| `dsh` | `rka-memory-dsh` (exists) | dsh `web` profile for you to watch and drive sessions by hand; plugin loaded; model chosen by `RKM_MODEL` | `127.0.0.1:3080` (`DSH_HOST_PORT`) | `ledger`, `dsh-home`, `workspaces` |
+| `workload` | `rka-memory-dsh` plus the runner | runs task streams: drives headless dsh (ACP later), plays the user, advances a simulated clock, mines and gates after each session; each stream has its own ledger and scripted model | none | `runs` |
+| `memory` | `rka-memory-dsh` | writes the stack config, creates the stack's Core project once, then gates, exports skills, writes daily metrics and syncs to `core` (`rka-memory jobs`) | none | `ledger` |
 | `dev` | toolbox: Python 3.12, uv, Node 24, git | develop and test rka-memory; repository bind-mounted at `/src` | none | repository, `uv-cache` |
 
 No container gets the Docker socket. Only `core` and `dsh` publish ports, and only on `127.0.0.1`.
 
 Compose profiles select what runs:
 
-- `test`: `core`, `mock-llm`, `dev`. Deterministic, no keys.
-- `workload`: `core`, `mock-llm` (or a real model), `workload`, `memory`.
-- `interactive`: `core`, `dsh`, `memory`, with a real or mock model.
+- `test`: `core`, `mock-llm`, `dev`, `dsh-e2e`. Deterministic, no keys.
+- `workload`: `workload`. Each stream starts its own scripted model and ledger inside the container.
+- `interactive`: `core`, `mock-llm`, `memory`, `dsh`, with the mock or DeepSeek.
+
+`make up` runs the interactive stack as compose project `rka-memory`. `make test` and `make scenarios` run as project `rka-memory-test`, with their own Core, volumes and network and an ephemeral Core port, so they never touch a running stack.
 
 ## The workload
 
@@ -111,7 +110,7 @@ Each run writes a manifest (image digests, config, model ids, seed), the ledger 
 | M1 | compose file, `core` from source, `dev` toolbox, `mock-llm`, `make test` for T0 and T1 | `make test` passes in containers |
 | M2 | simulated clock, `openai_compat` miner, inline background mode | unit tests; the miner runs against `mock-llm` |
 | M3 | workload runner, headless dsh driver (ACP later), task and stream format, the eight scenario suites, T3 | all scenarios pass on the mock model |
-| M4 | `interactive` and live profiles with a real model | one live stream with a metrics report |
+| M4 | `interactive` profile (built: `make up`, checked by `make check-up`); live streams with a real model (waits on decision 2) | one live stream with a metrics report |
 
 ## Decisions needed
 

@@ -2,8 +2,8 @@
 
 Requests that offer tools walk a fixed script by counting the tool results
 already in the conversation: first a `write` call, then a `bash` call, then
-a final answer. Requests without tools (session titles and the like) get
-plain text. Every request body is appended to the log file as one JSON line,
+a final answer. Requests without tools get plain text, except the miner's,
+which get an empty candidate list. Every request body is appended to the log file as one JSON line,
 so a test can read exactly what the harness sent the model.
 
 Usage: python scripts/mock_openai.py <port> <request-log.jsonl> <project-dir>
@@ -25,6 +25,9 @@ USAGE = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
 
 def script(body: dict) -> dict:
     if not body.get("tools"):
+        prompt = " ".join(str(m.get("content", "")) for m in body.get("messages", []))
+        if "candidate miner for rka-memory" in prompt:
+            return {"content": json.dumps({"candidates": [], "counter_links": []})}
         return {"content": "rka-memory dsh test"}
     done = sum(1 for m in body.get("messages", []) if m.get("role") == "tool")
     if done == 0:

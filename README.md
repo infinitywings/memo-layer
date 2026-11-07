@@ -106,7 +106,7 @@ For workloads and containers: `miner.backend: openai_compat` with `miner.base_ur
 
 ## Development
 
-The compose stack runs the whole test suite in containers: unit and plugin tests, Core sync against the stack's own RKA Core, the real-dsh plugin check and the agent-forgery check. It needs Docker and your RKA Core source (`RKA_CORE_SRC`, default `/Volumes/FuSpace/Projects/rka-projects/rka`). The plan for the full environment is [docs/DEV_ENV_PLAN.md](docs/DEV_ENV_PLAN.md).
+`make test` runs the whole test suite in containers: unit and plugin tests, Core sync against the stack's own RKA Core, the real-dsh plugin check and the agent-forgery check. It needs Docker and your RKA Core source (`RKA_CORE_SRC`, default `/Volumes/FuSpace/Projects/rka-projects/rka`). The plan for the full environment is [docs/DEV_ENV_PLAN.md](docs/DEV_ENV_PLAN.md).
 
 ```bash
 make test
@@ -117,6 +117,21 @@ make test
 ```bash
 make scenarios
 ```
+
+`make up` starts the interactive stack: dsh's web UI with the plugin, a `memory` service that gates, writes daily metrics and syncs the ledger, and the stack's own RKA Core on `127.0.0.1:9722`. It prints the sign-in URL for dsh web, which carries a one-time token. The stack keeps its ledger, dsh home and workspaces in Docker volumes, apart from your host ledger. The agent's tools run in dsh's sandbox rooted at `/workspaces` and cannot write the ledger; in dsh web, approve no sandbox escalation, since an approved command can. Tests and scenario runs use a separate compose project, so they never touch a running stack.
+
+```bash
+make up
+```
+
+The model is a mock until you choose DeepSeek. Put the key in `.env` in the repository root (ignored by git and by Docker builds), then run `make up` again:
+
+```
+RKM_MODEL=deepseek
+DEEPSEEK_API_KEY=...
+```
+
+`make check-up` checks a running stack: dsh web sign-in, one dsh session through the plugin, then a memory round that syncs to Core and pulls the ledger back. `make url` prints the sign-in URL again, `make down` stops everything, and `make clean` also deletes the volumes.
 
 On the host:
 

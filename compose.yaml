@@ -1,5 +1,5 @@
 # rka-memory development and test stack. Plan: docs/DEV_ENV_PLAN.md.
-# Use the Makefile (`make test`, `make down`); it runs docker through
+# Use the Makefile (`make test`, `make scenarios`, `make up`); it runs docker through
 # scripts/dockerw so it also works from a sandboxed Claude Code session.
 name: rka-memory
 
@@ -14,7 +14,8 @@ services:
     volumes:
       - core-data:/data
     ports:
-      - "127.0.0.1:${RKA_STACK_CORE_PORT:-9722}:9712"
+      # set but empty (as in `make test`): an ephemeral host port
+      - "127.0.0.1:${RKA_STACK_CORE_PORT-9722}:9712"
 
   mock-llm:
     image: python:3.12-slim
@@ -74,8 +75,70 @@ services:
     volumes:
       - runs:/runs
 
+  # Interactive: dsh's web UI on 127.0.0.1:${DSH_HOST_PORT}, the plugin
+  # recording into the `ledger` volume. dsh's sandbox roots the agent's tools
+  # at /workspaces, so they cannot write the ledger. Approve no sandbox
+  # escalation that touches /rka-memory. RKM_MODEL picks the model: mock
+  # (default, mock-llm) or deepseek (needs DEEPSEEK_API_KEY).
+  dsh:
+    build:
+      context: .
+      dockerfile: docker/dsh/Dockerfile
+    image: rka-memory-dsh
+    profiles: [interactive]
+    init: true
+    entrypoint: ["/opt/rka-memory/docker/dsh/web.sh"]
+    working_dir: /workspaces
+    environment:
+      RKM_MODEL: ${RKM_MODEL:-mock}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MOCK_LLM_KEY: mock-key
+      DSH_HOST_PORT: ${DSH_HOST_PORT:-3080}
+    ports:
+      - "127.0.0.1:${DSH_HOST_PORT:-3080}:3080"
+    volumes:
+      - ledger:/rka-memory
+      - dsh-home:/dsh-home
+      - workspaces:/workspaces
+    depends_on:
+      memory:
+        condition: service_healthy
+      mock-llm:
+        condition: service_started
+
+  # The recorder's upkeep for the interactive ledger: writes the stack config,
+  # creates the stack Core project once, then gates, exports skills, writes
+  # daily metrics and syncs to `core` every RKM_JOBS_EVERY seconds.
+  memory:
+    build:
+      context: .
+      dockerfile: docker/dsh/Dockerfile
+    image: rka-memory-dsh
+    profiles: [interactive]
+    init: true
+    restart: unless-stopped
+    entrypoint: ["/opt/rka-memory/docker/dsh/memory.sh"]
+    environment:
+      RKM_MODEL: ${RKM_MODEL:-mock}
+      RKM_MINER_MODEL: ${RKM_MINER_MODEL:-}
+      RKM_JOBS_EVERY: ${RKM_JOBS_EVERY:-300}
+      RKA_MEMORY_CORE_URL: http://core:9712
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ledger:/rka-memory
+    healthcheck:
+      test: ["CMD", "test", "-e", "/tmp/ready"]
+      interval: 2s
+      retries: 90
+    depends_on:
+      core:
+        condition: service_healthy
+
 volumes:
   core-data:
   runs:
   dev-venv:
   uv-cache:
+  ledger:
+  dsh-home:
+  workspaces:
