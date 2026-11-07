@@ -1,59 +1,63 @@
 name: stated-rule
 description: >-
-  The user states a reply-format rule that nothing in the project or in a
-  tool result can show, then repeats it in the next two sessions. The rule
-  extractor quotes it from the user's messages, so it is recorded in the
-  user's own words, and each repetition adds evidence to that record instead
-  of starting another. A quote the user never wrote is dropped. With k lowered
-  to 1, three statements of weight 1/3 promote the rule to L2, and the fourth
-  session receives it.
+  The user states a house rule that nothing in the project or in a tool result
+  can show. The rule extractor quotes it from the user's message together with
+  the words that make it standing, the engine checks both against the logged
+  message, and the rule reaches L2 at once as the user's confirmed words. The
+  next session receives it as the user's dated quote. A rule whose standing
+  words are not in its message stays an L1 hint, a quote the user never wrote
+  is dropped, and a preference grounded only by a passing test stays at L0D.
+  When the user withdraws the rule it drops to L1 and is no longer delivered.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
-config:
-  gate: {k: 1.0}
 sessions:
   - at: +0d
     prompt: >-
-      Add a multiply function to calc.py. House rule for this project: end
-      every reply to me with a final line that starts with `Summary:`.
+      Add a multiply function to calc.py, and keep it small. House rule for
+      this project: end every reply to me with a final line that starts with
+      `Summary:`.
+    agent:
+      - bash: pytest -q
     miner:
       rules:
         - quote: "end every reply to me with a final line that starts with `Summary:`"
           kind: preference
+          standing: House rule for this project
+        - quote: and keep it small
+          kind: preference
+          standing: from now on
         - quote: Always reply to me in French
           kind: preference
-    expect:
-      - {record: "end every reply to me with a final line that starts with `Summary:`", rung: L1}
-      - {metrics: {records_by_rung.L1: 1}}
-
-  - at: +1d
-    prompt: >-
-      Add a divide function to calc.py, and remember to end every reply to me
-      with a final line that starts with `Summary:`.
-    miner:
-      rules:
-        - quote: "end every reply to me with a final line that starts with `Summary:`"
+      candidates:
+        - content: Prefer pytest -q over plain pytest
           kind: preference
-          restates: "end every reply to me with a final line that starts with `Summary:`"
-    expect:
-      - {record: "end every reply to me with a final line that starts with `Summary:`", rung: L1}
-      - {metrics: {records_by_rung.L1: 1}}
-
-  - at: +2d
-    prompt: >-
-      Add a power function to calc.py. As always, end every reply to me with a
-      final line that starts with `Summary:`.
-    miner:
-      rules:
-        - quote: "end every reply to me with a final line that starts with `Summary:`"
-          kind: preference
-          restates: "end every reply to me with a final line that starts with `Summary:`"
+          evidence: [{kind: test_result, passed: true}]
     expect:
       - {record: "end every reply to me with a final line that starts with `Summary:`", rung: L2}
-      - {metrics: {records_by_rung.L1: 0, records_by_rung.L2: 1}}
+      - {record: and keep it small, rung: L1}
+      - {record: Prefer pytest -q over plain pytest, rung: L0D}
+      - {metrics: {records_by_rung.L0D: 1, records_by_rung.L1: 1, records_by_rung.L2: 1}}
 
-  - at: +4d
-    prompt: Add a modulo function to calc.py.
+  - at: +2d
+    prompt: Add a divide function to calc.py.
     expect:
       - {record: "end every reply to me with a final line that starts with `Summary:`", delivered: true}
-      - {record: "end every reply to me with a final line that starts with `Summary:`", in_prompt: true}
+      - {model_saw: "The user said on 2027-01-04: "}
+      - {record: and keep it small, delivered: false}
+
+  - at: +4d
+    prompt: >-
+      Add a power function to calc.py. You can stop ending replies with a
+      Summary: line now.
+    miner:
+      withdrawn:
+        - quote: "You can stop ending replies with a Summary: line now"
+          record: "end every reply to me with a final line that starts with `Summary:`"
+    expect:
+      - {record: "end every reply to me with a final line that starts with `Summary:`", rung: L1}
+
+  - at: +6d
+    prompt: Add a modulo function to calc.py.
+    expect:
+      - {record: "end every reply to me with a final line that starts with `Summary:`", delivered: false}
+      - {packet_empty: true}

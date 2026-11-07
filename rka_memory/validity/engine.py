@@ -24,8 +24,10 @@ from rka_memory.domain import (
     Rung,
     Scope,
     State,
+    collapse,
     derived_id,
     parse_ts,
+    quotes,
 )
 from rka_memory.skills.gate import check_passed, sessions_following, skill_failure
 from rka_memory.validity import propagate
@@ -40,15 +42,35 @@ from rka_memory.validity.scope import (
 from rka_memory.world import RecordState, World
 
 ENGINE_SESSION = "engine"
+UNBACKED = "a preference needs the user's own evidence"
 
 
 @dataclass(frozen=True)
 class Assessment:
-    """Everything the rules need to know about one record right now."""
+    """Everything the rules need to know about one record right now.
+    `unbacked` marks a preference grounded only by events the user did not
+    author, such as tests: its support counts as empty, since only the user
+    shows what the user wants."""
 
     support: list[Grounding]
     counters: list[Grounding]
     last_confirm: Grounding | None
+    unbacked: bool = False
+
+
+def statement(made_by: Event | None, ev: Event) -> tuple[str, bool] | None:
+    """The user's words a link quotes from the user message it cites, checked
+    here against the logged message: (quote, standing), or None when the link
+    quotes nothing or misquotes. Standing means the words that make the rule
+    standing, such as "from now on", are in the same message too."""
+    if made_by is None or ev.kind is not Kind.USER_MSG or ev.actor is not Actor.USER:
+        return None
+    said = made_by.payload.get("statement")
+    text = str(ev.payload.get("text") or "")
+    if not isinstance(said, dict) or not isinstance(said.get("quote"), str) or not quotes(text, said["quote"]):
+        return None
+    marker = said.get("marker")
+    return said["quote"], isinstance(marker, str) and quotes(text, marker)
 
 
 def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> list[Grounding]:
@@ -74,12 +96,30 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
             continue
         if ev.id != link.via and not world.before(ev.id, link.via):
             continue
-        weight = cfg.weight(ev.kind)
+        weight, targeted, affirms = cfg.weight(ev.kind), is_targeted(ev, rec.id), False
+        said = statement(made_by, ev)
+        if said is not None and polarity is Polarity.SUPPORT and said[1]:
+            # A standing rule in the user's words weighs like a confirm, and
+            # confirms the record outright when the record is those words.
+            weight = cfg.weight(Kind.USER_CONFIRM)
+            affirms = collapse(said[0]) == collapse(rec.spec.content)
+        if said is not None and polarity is Polarity.COUNTER:
+            # The user withdrew the rule: like a reject, it is not scoped away.
+            targeted = True
         if polarity is Polarity.SUPPORT and weight <= 0:
             continue
-        out.append(Grounding(ev, weight, world.state_of(ev), is_targeted(ev, rec.id)))
-    unique = {g.event.id: g for g in out}
+        out.append(Grounding(ev, weight, world.state_of(ev), targeted, affirms))
+    unique: dict[str, Grounding] = {}
+    for g in out:
+        held = unique.get(g.event.id)
+        if held is None or (g.affirms, g.weight, g.targeted) > (held.affirms, held.weight, held.targeted):
+            unique[g.event.id] = g
     return sorted(unique.values(), key=lambda g: world.position[g.event.id])
+
+
+def affirmation(g: Grounding) -> bool:
+    """A user confirm, or a standing statement of exactly what the record says."""
+    return g.event.kind is Kind.USER_CONFIRM or g.affirms
 
 
 def assess(rec: RecordState, world: World, cfg: Config, scope: Scope | None = None) -> Assessment:
@@ -90,14 +130,19 @@ def assess(rec: RecordState, world: World, cfg: Config, scope: Scope | None = No
         for g in counted(rec, world, cfg, Polarity.SUPPORT)
         if inside(scope, g) and (g.targeted or g.session_id not in tainted)
     ]
-    confirms = [g for g in support if g.event.kind is Kind.USER_CONFIRM]
+    unbacked = (
+        rec.spec.kind is RecordKind.PREFERENCE and bool(support) and not any(g.event.actor is Actor.USER for g in support)
+    )
+    if unbacked:
+        support = []
+    confirms = [g for g in support if affirmation(g)]
     last_confirm = confirms[-1] if confirms else None
     counters = [
         g
         for g in counted(rec, world, cfg, Polarity.COUNTER)
         if inside(scope, g) and (last_confirm is None or world.before(last_confirm.event.id, g.event.id))
     ]
-    return Assessment(support, counters, last_confirm)
+    return Assessment(support, counters, last_confirm, unbacked)
 
 
 def meets_l2(support: list[Grounding], cfg: Config) -> bool:
@@ -112,8 +157,9 @@ def meets_l2(support: list[Grounding], cfg: Config) -> bool:
 
 
 def sufficient_for_l2(support: list[Grounding], cfg: Config) -> bool:
-    """Enough grounding to hold L2: the k/sessions threshold, or a user confirm."""
-    if cfg.gate.confirm_overrides and any(g.event.kind is Kind.USER_CONFIRM for g in support):
+    """Enough grounding to hold L2: the k/sessions threshold, or a user confirm
+    (a standing statement of exactly the record's words counts as one)."""
+    if cfg.gate.confirm_overrides and any(affirmation(g) for g in support):
         return True
     return meets_l2(support, cfg)
 
@@ -165,10 +211,16 @@ def step(rec: RecordState, world: World, cfg: Config, now: datetime) -> Event | 
     if rung is None:
         if a.support:
             return _rung(rec, Rung.L1, _ids(a.support), "proposed with non-model grounding", now)
+        if a.unbacked:
+            return _rung(rec, Rung.L0D, [rec.proposed.id], UNBACKED, now)
         return _rung(rec, Rung.L0D, [rec.proposed.id], "proposed without non-model grounding", now)
 
     if rung in (Rung.L0D, Rung.L1) and cfg.gate.confirm_overrides and a.last_confirm and not a.counters:
-        return _rung(rec, Rung.L2, [a.last_confirm.event.id], "user confirmed", now)
+        why = "user confirmed" if a.last_confirm.event.kind is Kind.USER_CONFIRM else "the user stated it as a standing rule"
+        return _rung(rec, Rung.L2, [a.last_confirm.event.id], why, now)
+
+    if a.unbacked and rung in (Rung.L1, Rung.L2):
+        return _rung(rec, rung.one_below(), [rec.proposed.id], UNBACKED, now)
 
     if a.counters and rung is not Rung.L0D:
         counter = a.counters[0]

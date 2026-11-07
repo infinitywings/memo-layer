@@ -391,21 +391,23 @@ class _Planner:
                 kept.append(eid)
         return kept
 
-    def link(self, rec: RecordState, event_id: str, polarity: Polarity, reason: str) -> bool:
+    def link(
+        self, rec: RecordState, event_id: str, polarity: Polarity, reason: str, statement: dict[str, str] | None = None
+    ) -> bool:
+        """`statement` carries the user's words this link quotes from the cited
+        message; the validity engine checks them against the message itself."""
         if any(old.event_id == event_id and old.polarity is polarity for old in rec.links):
             return False
-        self.emit(
-            Kind.EVIDENCE_LINKED,
-            {"record_id": rec.id, "event_id": event_id, "polarity": polarity.value, "reason": reason},
-        )
+        payload = {"record_id": rec.id, "event_id": event_id, "polarity": polarity.value, "reason": reason}
+        self.emit(Kind.EVIDENCE_LINKED, {**payload, "statement": statement} if statement else payload)
         return True
 
-    def candidate(self, label: str, c: Candidate) -> None:
+    def candidate(self, label: str, c: Candidate, statement: dict[str, str] | None = None) -> None:
         evidence = self.cited(label, c.evidence, Polarity.SUPPORT)
         state = self.world.session(self.session_id).state
         dup = dedup.find_duplicate(c.content, c.kind, self.world, state, self.cfg.dedup_threshold)
         if dup is not None:
-            linked = [e for e in evidence if self.link(dup, e, Polarity.SUPPORT, "duplicate candidate cited it")]
+            linked = [e for e in evidence if self.link(dup, e, Polarity.SUPPORT, "duplicate candidate cited it", statement)]
             self.result.merged.append({"record_id": dup.id, "content": c.content, "evidence": linked})
             return
         depends_on = []
@@ -428,14 +430,22 @@ class _Planner:
         self.emit(Kind.RECORD_PROPOSED, {**spec.to_json(), "mined_from_session": self.session_id})
         rec = self.world.records[spec.record_id]
         for e in evidence:
-            self.link(rec, e, Polarity.SUPPORT, "cited by miner")
+            self.link(rec, e, Polarity.SUPPORT, "cited by miner", statement)
         self.result.proposed.append(
             {"record_id": spec.record_id, "kind": c.kind.value, "content": c.content, "evidence": evidence}
         )
         if not evidence:
             self.result.ungrounded.append(spec.record_id)
 
-    def record_link(self, label: str, rl: RecordLink, polarity: Polarity, allowed: set[str], why_not: str) -> None:
+    def record_link(
+        self,
+        label: str,
+        rl: RecordLink,
+        polarity: Polarity,
+        allowed: set[str],
+        why_not: str,
+        statement: dict[str, str] | None = None,
+    ) -> None:
         """A counter link may name only a delivered record. A support link may name
         any record the prompt listed, delivered or existing: support has to reach
         L1 records, which are never delivered, or nothing accumulates evidence
@@ -445,7 +455,7 @@ class _Planner:
             return
         if not self.cited(label, (rl.event_id,), polarity):
             return
-        if self.link(self.world.records[rl.record_id], rl.event_id, polarity, rl.reason):
+        if self.link(self.world.records[rl.record_id], rl.event_id, polarity, rl.reason, statement):
             self.result.links.append(
                 {"record_id": rl.record_id, "event_id": rl.event_id, "polarity": polarity.value, "reason": rl.reason}
             )
@@ -454,9 +464,10 @@ class _Planner:
         """A rule in the user's own words: evidence for the record it restates,
         or a new record citing the message that holds it."""
         label, rule, event_id = f"rule {found.rule.index}", found.rule, found.message.event_id
+        statement = found.statement()
         if rule.restates:
             link = RecordLink(rule.restates, event_id, "the user stated this rule again")
-            self.record_link(label, link, Polarity.SUPPORT, listed, "restates a record that was not listed")
+            self.record_link(label, link, Polarity.SUPPORT, listed, "restates a record that was not listed", statement)
             return
         self.candidate(
             label,
@@ -471,6 +482,21 @@ class _Planner:
                 acceptance_check=None,
                 depends_on=(),
             ),
+            statement,
+        )
+
+    def withdraw(self, gone: extract.Withdrawn, listed: set[str]) -> None:
+        """The user's words withdrawing a listed rule: a counter link that
+        quotes them, which the validity engine applies wherever the rule does."""
+        w = gone.withdrawal
+        link = RecordLink(w.record_id, gone.message.event_id, "the user withdrew this rule")
+        self.record_link(
+            f"withdrawal {w.index}",
+            link,
+            Polarity.COUNTER,
+            listed,
+            "withdraws a record that was not listed",
+            {"quote": w.quote},
         )
 
 
@@ -480,7 +506,7 @@ def plan(
     session_id: str,
     cfg: Config,
     result: MineResult,
-    rules: tuple[extract.Located, ...] = (),
+    extraction: extract.Extraction | None = None,
 ) -> list[Event]:
     """Validate parsed output against the ledger and return the events to append.
     Stated rules go first, so a miner candidate that repeats one merges into it.
@@ -494,8 +520,10 @@ def plan(
     listed = delivered | {r.id for r in view.existing}
     planner.judge_task_class(out.task_class)
     rule_records = {r.id for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS}
-    for found in rules:
+    for found in extraction.rules if extraction else ():
         planner.rule(found, rule_records)
+    for gone in extraction.withdrawn if extraction else ():
+        planner.withdraw(gone, rule_records)
     for i, c in enumerate(out.candidates):
         planner.candidate(f"candidate {i}", c)
     for i, rl in enumerate(out.counter_links):
@@ -514,25 +542,25 @@ def _cost(session_id: str, tokens: int, seconds: float) -> Event:
 
 def stated_rules(
     world: World, view: MinerView, backend: backends.Backend, result: MineResult
-) -> tuple[tuple[extract.Located, ...], backends.Completion | None]:
-    """Ask which rules the user stated in the session and keep those whose
-    quote is in a user message. Returns them with the completion to bill.
+) -> tuple[extract.Extraction | None, backends.Completion | None]:
+    """Ask which rules the user stated or withdrew in the session and keep
+    what quotes a user message. Returns that with the completion to bill.
     The rule records the extractor sees are the ones the miner prompt lists."""
     messages = extract.user_messages(world, view.session_id)
     if not messages:
-        return (), None
+        return None, None
     records = [(r.id, r.content) for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS]
     completion = backend(extract.build_prompt(messages, records))
     if not completion.text.strip():
-        return (), completion
+        return None, completion
     try:
-        rules, dropped = extract.parse_output(completion.text)
+        rules, withdrawals, dropped = extract.parse_output(completion.text)
     except ValueError as exc:
         result.dropped.append(Drop("rule extractor", str(exc)))
-        return (), completion
-    found, missing = extract.locate(rules, messages)
-    result.dropped.extend(Drop(item, reason) for item, reason in (*dropped, *missing))
-    return tuple(found), completion
+        return None, completion
+    extraction = extract.locate(rules, withdrawals, messages)
+    result.dropped.extend(Drop(item, reason) for item, reason in (*dropped, *extraction.dropped))
+    return extraction, completion
 
 
 def mine_session(
@@ -549,14 +577,15 @@ def mine_session(
             return MineResult(session_id, MineStatus.ALREADY_MINED, "session was mined before; use --force")
         view = view_of(world, session_id, memory.cfg)
         result = MineResult(session_id, MineStatus.MINED)
-        rules: tuple[extract.Located, ...] = ()
+        extraction: extract.Extraction | None = None
         spent: list[backends.Completion] = []
         try:
             if memory.cfg.miner_extract_rules:
-                rules, extraction = stated_rules(world, view, backend, result)
-                if extraction is not None:
-                    spent.append(extraction)
-            completion = backend(build_prompt(view, tuple(f.rule.quote for f in rules)))
+                extraction, asked = stated_rules(world, view, backend, result)
+                if asked is not None:
+                    spent.append(asked)
+            stated = tuple(f.rule.quote for f in extraction.rules) if extraction else ()
+            completion = backend(build_prompt(view, stated))
         except backends.BackendError as exc:
             return MineResult(session_id, MineStatus.BACKEND_ERROR, str(exc))
         if not completion.text.strip():
@@ -569,7 +598,7 @@ def mine_session(
         except ValueError as exc:
             out = EMPTY
             result.status, result.detail = MineStatus.PARSE_ERROR, str(exc)
-        events = plan(out, world, session_id, memory.cfg, result, rules)
+        events = plan(out, world, session_id, memory.cfg, result, extraction)
         cost = _cost(session_id, result.tokens, result.seconds)
         memory.append(*events, cost)
         result.appended = [e.id for e in (*events, cost)]

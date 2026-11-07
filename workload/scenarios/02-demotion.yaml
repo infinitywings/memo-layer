@@ -17,11 +17,11 @@ sessions:
       candidates:
         - &docstrings
           content: Give every new calc.py function a one-line docstring
-          kind: preference
+          kind: constraint
           evidence: [{kind: test_result, passed: true}]
         - &tests
           content: Run the test suite with pytest -q before finishing
-          kind: preference
+          kind: constraint
           evidence: [{kind: test_result, passed: true}]
     expect:
       - {record: Give every new calc.py function a one-line docstring, rung: L1}

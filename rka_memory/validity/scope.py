@@ -19,6 +19,9 @@ class Grounding:
     weight: float
     state: State
     targeted: bool
+    # The user stated, in this event and in so many words, that what the
+    # record says is a standing rule: it confirms the record like a verdict.
+    affirms: bool = False
 
     @property
     def session_id(self) -> str:

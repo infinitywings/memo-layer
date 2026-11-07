@@ -98,3 +98,18 @@ def test_a_torn_ledger_line_is_skipped_not_fatal(tmp_path):
     led.append([b])
     assert [e.id for e in led.read()] == [a.id, b.id]
     assert led.skipped == 1
+
+
+def test_a_rule_the_user_stated_is_delivered_as_their_dated_quote():
+    from rka_memory.domain import RecordKind
+
+    rule = "end every reply with a final line that starts with `Summary:`"
+    lg = Ledger()
+    lg.start("s1", **UV)
+    msg = lg.user_msg("s1", f"From now on, {rule}.")
+    lg.propose("s1", "r_sum", kind=RecordKind.PREFERENCE, content=rule)
+    lg.link("r_sum", msg, statement={"quote": rule, "marker": "From now on"})
+    world = lg.gate()
+
+    pkt = builder.build(world, cfg(), State(**UV), arm="gated", channel="session_start")
+    assert f'- [r_sum | L2 preference] The user said on {msg.ts[:10]}: "{rule}" (scope:' in pkt.render()

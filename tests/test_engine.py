@@ -2,7 +2,7 @@ import pytest
 
 from ledger_builder import Ledger, cfg, moves, rung
 from rka_memory.domain import Actor, Event, FieldConstraint, Kind, RecordKind, Scope
-from rka_memory.validity.engine import evaluate, valid
+from rka_memory.validity.engine import assess, evaluate, valid
 from rka_memory.domain import State
 from rka_memory.world import project
 
@@ -387,3 +387,114 @@ def test_procedure_never_reaches_l3_until_its_acceptance_check_was_seen_passing(
     lg.test("s4", True, "uv run pytest")
     lg.end("s4")
     assert rung(lg.gate(), "r_proc") == "L3"
+
+
+SUMMARY = "end every reply with a final line that starts with `Summary:`"
+
+
+def stated(lg: Ledger, session: str, text: str, record_id: str, polarity: str = "support", **said) -> Event:
+    lg.start(session, **UV)
+    msg = lg.user_msg(session, text)
+    lg.link(record_id, msg, polarity, statement=said)
+    lg.end(session)
+    return msg
+
+
+def test_a_standing_statement_of_the_records_own_words_confirms_it_at_once():
+    lg = Ledger()
+    lg.start("s0", **UV)
+    lg.propose("s0", "r_sum", kind=RecordKind.PREFERENCE, content=SUMMARY)
+    lg.end("s0")
+    stated(lg, "s1", f"From now on, {SUMMARY}.", "r_sum", quote=SUMMARY, marker="From now on")
+    world = lg.gate()
+
+    assert moves(world, "r_sum") == [
+        (None, "L1", "proposed with non-model grounding"),
+        ("L1", "L2", "the user stated it as a standing rule"),
+    ]
+    assert evaluate(world, cfg(), lg.clock) == []
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        {"quote": SUMMARY},
+        {"quote": SUMMARY, "marker": "always"},
+        {"quote": "end every reply with a Summary line", "marker": "From now on"},
+    ],
+    ids=["no standing words", "standing words not in the message", "quote not in the message"],
+)
+def test_a_statement_the_message_does_not_bear_out_weighs_as_a_plain_message(said):
+    lg = Ledger()
+    lg.start("s0", **UV)
+    lg.propose("s0", "r_sum", kind=RecordKind.PREFERENCE, content=SUMMARY)
+    lg.end("s0")
+    stated(lg, "s1", f"From now on, {SUMMARY}.", "r_sum", **said)
+    world = lg.gate()
+
+    assert moves(world, "r_sum") == [(None, "L1", "proposed with non-model grounding")]
+    assert [round(g.weight, 2) for g in assess(world.records["r_sum"], world, cfg()).support] == [0.33]
+
+
+def test_a_standing_restatement_in_other_words_weighs_like_a_confirm_but_does_not_confirm():
+    lg = Ledger()
+    lg.start("s0", **UV)
+    lg.propose("s0", "r_sum", kind=RecordKind.PREFERENCE, content="Finish every reply with a Summary line")
+    lg.end("s0")
+    stated(lg, "s1", f"From now on, {SUMMARY}.", "r_sum", quote=SUMMARY, marker="From now on")
+    assert rung(lg.gate(), "r_sum") == "L1"
+    stated(lg, "s2", f"Remember: {SUMMARY}.", "r_sum", quote=SUMMARY, marker="Remember")
+    world = lg.gate()
+
+    assert moves(world, "r_sum")[-1] == ("L1", "L2", "grounded in enough distinct sessions")
+
+
+def test_a_withdrawal_in_the_users_words_demotes_wherever_the_rule_applies_until_restated():
+    lg = Ledger()
+    lg.start("s0", **UV)
+    lg.propose("s0", "r_sum", kind=RecordKind.PREFERENCE, content=SUMMARY, scope=Scope.exact(State(**UV), broaden=frozenset({"task_class", "toolchain", "model_id"})))
+    lg.end("s0")
+    stated(lg, "s1", f"From now on, {SUMMARY}.", "r_sum", quote=SUMMARY, marker="From now on")
+    assert rung(lg.gate(), "r_sum") == "L2"
+    lg.start("s2", **dict(UV, task_class="debugging", toolchain="pip"))
+    stop = lg.user_msg("s2", "You can stop adding Summary lines.")
+    lg.link("r_sum", stop, "counter", statement={"quote": "stop adding Summary lines"})
+    world = lg.gate()
+
+    assert moves(world, "r_sum")[-1] == ("L2", "L1", "counter-event inside scope")
+    assert world.records["r_sum"].narrowings == []
+    stated(lg, "s3", f"Actually, from now on {SUMMARY} again.", "r_sum", quote=SUMMARY, marker="from now on")
+    assert moves(lg.gate(), "r_sum")[-1] == ("L1", "L2", "the user stated it as a standing rule")
+
+
+def test_a_preference_grounded_only_by_outcomes_stays_l0d_until_the_user_backs_it():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    ok = lg.test("s1", True)
+    lg.propose("s1", "r_new", kind=RecordKind.PREFERENCE, content="Prefer small commits")
+    lg.link("r_new", ok)
+    lg.end("s1")
+    assert moves(lg.gate(), "r_new") == [(None, "L0D", "a preference needs the user's own evidence")]
+    lg.start("s2", **UV)
+    lg.link("r_new", lg.user_msg("s2", "Small commits, please."))
+    lg.end("s2")
+    assert moves(lg.gate(), "r_new")[-1] == ("L0D", "L1", "non-model grounding arrived")
+
+
+def test_a_preference_promoted_on_outcomes_before_the_rule_falls_back_to_l0d():
+    lg = Ledger()
+    two_strong_sessions(lg, "r_pref")
+    assert rung(lg.gate(), "r_pref") == "L2"
+    lg.events = [
+        Event.new(e.kind, e.actor, e.session_id, {**e.payload, "kind": "preference"}, id=e.id, ts=e.ts)
+        if e.kind is Kind.RECORD_PROPOSED
+        else e
+        for e in lg.events
+    ]
+    world = lg.gate()
+
+    assert moves(world, "r_pref")[-2:] == [
+        ("L2", "L1", "a preference needs the user's own evidence"),
+        ("L1", "L0D", "a preference needs the user's own evidence"),
+    ]
+    assert evaluate(world, cfg(), lg.clock) == []

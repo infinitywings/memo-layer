@@ -419,7 +419,7 @@ def test_support_link_adds_a_later_sessions_evidence_to_an_existing_record_and_p
     backend = FakeBackend(reply)
     result = mine_session(memory, "s2", backend=backend)
 
-    assert "- r_tests [L1 preference] Run pytest -q before finishing" in backend.prompts[0]
+    assert "- r_tests [L1 fact] Run pytest -q before finishing" in backend.prompts[0]
     assert result.links == [{"record_id": "r_tests", "event_id": ok2.id, "polarity": "support", "reason": "tests passed again"}]
     assert result.dropped == []
     assert [(m["record_id"], m["from"], m["to"]) for m in result.moves] == [("r_tests", "L1", "L2")]
@@ -577,3 +577,37 @@ def test_the_extractor_is_not_asked_without_user_messages_or_when_switched_off(m
     assert (silent.rule_prompts, off.rule_prompts) == ([], [])
     assert (len(silent.prompts), len(off.prompts)) == (1, 1)
     assert result.proposed == []
+
+
+def test_standing_words_confirm_a_stated_rule_and_the_users_withdrawal_demotes_it(memory):
+    from rka_memory.miner.miner import Drop
+
+    lg = Ledger()
+    stated_session(memory, lg, "s1", f"House rule from now on: {SUMMARY_RULE}. And keep the tests green.")
+    rules = {
+        "rules": [
+            {"quote": SUMMARY_RULE, "kind": "preference", "standing": "from now on"},
+            {"quote": "keep the tests green", "kind": "constraint", "standing": "always"},
+        ]
+    }
+    first = mine_session(memory, "s1", backend=FakeBackend({}, rules=rules))
+    rid, other = (p["record_id"] for p in first.proposed)
+
+    assert [(m["record_id"], m["to"], m["reason"]) for m in first.moves] == [
+        (rid, "L1", "proposed with non-model grounding"),
+        (other, "L1", "proposed with non-model grounding"),
+        (rid, "L2", "the user stated it as a standing rule"),
+    ]
+    assert first.dropped == [Drop("rule 1: keep the tests green standing 'always'", "standing words are not in the rule's message")]
+    links = [e.payload for e in appended(memory, first) if e.kind is Kind.EVIDENCE_LINKED]
+    assert [link.get("statement") for link in links] == [
+        {"quote": SUMMARY_RULE, "marker": "from now on"},
+        {"quote": "keep the tests green"},
+    ]
+
+    stop = stated_session(memory, lg, "s2", "You can stop ending replies with Summary lines.")
+    withdrawn = {"rules": [], "withdrawn": [{"quote": "stop ending replies with Summary lines", "record": rid}]}
+    second = mine_session(memory, "s2", backend=FakeBackend({}, rules=withdrawn))
+
+    assert second.links == [{"record_id": rid, "event_id": stop.id, "polarity": "counter", "reason": "the user withdrew this rule"}]
+    assert [(m["record_id"], m["from"], m["to"]) for m in second.moves] == [(rid, "L2", "L1")]

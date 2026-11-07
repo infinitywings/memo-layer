@@ -31,7 +31,7 @@ sessions:
     miner:
       candidates:
         - content: Run the test suite with pytest -q before finishing
-          kind: preference
+          kind: constraint
           evidence: [{kind: test_result, passed: true}]
     expect:
       - {model_never_saw: "{canary_content}"}

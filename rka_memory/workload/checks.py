@@ -153,6 +153,12 @@ def _model_never_saw(obs: Observed, text: str) -> Outcome:
     return not hits, f"seen in requests {hits}" if hits else "never seen"
 
 
+def _model_saw(obs: Observed, text: str) -> Outcome:
+    """Some request the model received in this session carried the text."""
+    hits = [i for i, body in enumerate(_agent_requests(obs)) if text in json.dumps(body, ensure_ascii=False)]
+    return bool(hits), f"seen in requests {hits}" if hits else "never seen"
+
+
 def _record_contains(obs: Observed, text: str) -> Outcome:
     """Some record's content holds `text`, case aside: the miner kept a rule
     whose wording is not known in advance. Reports each match with its rung."""
@@ -241,6 +247,7 @@ CHECKS: dict[str, Check] = {
     "file_contains": Check(_is_path_text, _file_contains, False),
     "model_never_saw": Check(_is_str, _model_never_saw, False),
     "record_contains": Check(_is_str, _record_contains, False),
+    "model_saw": Check(_is_str, _model_saw, False),
     "metrics": Check(_is_metric_conditions, _metrics, False),
 }
 

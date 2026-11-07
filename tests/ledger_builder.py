@@ -74,15 +74,17 @@ class Ledger:
         session: str,
         record_id: str,
         scope: Scope | None = None,
-        kind: RecordKind = RecordKind.PREFERENCE,
+        kind: RecordKind = RecordKind.FACT,
         **spec: Any,
     ) -> Event:
         steps = tuple(Step(*s) for s in spec.pop("steps", ()))
         rs = RecordSpec(record_id, kind, spec.pop("content", f"content of {record_id}"), scope or Scope(), steps=steps, **spec)
         return self._ev(Kind.RECORD_PROPOSED, Actor.MODEL, session, rs.to_json())
 
-    def link(self, record_id: str, event: Event, polarity: str = "support") -> Event:
+    def link(self, record_id: str, event: Event, polarity: str = "support", statement: dict | None = None) -> Event:
         payload = {"record_id": record_id, "event_id": event.id, "polarity": polarity}
+        if statement is not None:
+            payload["statement"] = statement
         return self._ev(Kind.EVIDENCE_LINKED, Actor.MODEL, event.session_id, payload)
 
     def deliver(self, session: str, *record_ids: str) -> Event:

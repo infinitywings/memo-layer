@@ -251,12 +251,12 @@ def test_first_prompt_delivers_the_records_its_task_class_unlocks(memory, proj, 
 
     s = base("s", proj, tmp_path)
     started = fire(capsys, "SessionStart", {**s, "source": "startup"})
-    assert "[r_any | L2 preference] Run uv run pytest -x first" in started["hookSpecificOutput"]["additionalContext"]
+    assert "[r_any | L2 fact] Run uv run pytest -x first" in started["hookSpecificOutput"]["additionalContext"]
     assert "r_dbg" not in started["hookSpecificOutput"]["additionalContext"]
 
     prompted = fire(capsys, "UserPromptSubmit", {**s, "prompt_id": "p1", "prompt": "fix the crash in the parser"})
     assert prompted["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-    assert "[r_dbg | L2 preference] Reproduce with a failing test before fixing" in prompted["hookSpecificOutput"]["additionalContext"]
+    assert "[r_dbg | L2 fact] Reproduce with a failing test before fixing" in prompted["hookSpecificOutput"]["additionalContext"]
     assert "r_any" not in prompted["hookSpecificOutput"]["additionalContext"]
 
     assert fire(capsys, "UserPromptSubmit", {**s, "prompt_id": "p2", "prompt": "now fix the next crash"}) is None

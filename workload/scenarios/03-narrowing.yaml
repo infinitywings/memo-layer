@@ -17,7 +17,7 @@ sessions:
       candidates:
         - &tests
           content: Run the test suite with pytest -q before finishing
-          kind: preference
+          kind: constraint
           broaden: [toolchain]
           evidence: [{kind: test_result, passed: true}]
     expect:

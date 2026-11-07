@@ -15,7 +15,7 @@ sessions:
     miner:
       candidates:
         - content: Run the test suite with pytest -q before finishing
-          kind: preference
+          kind: constraint
           evidence: [{kind: test_result, passed: true}]
     expect:
       - {record: Run the test suite with pytest -q before finishing, rung: L1}

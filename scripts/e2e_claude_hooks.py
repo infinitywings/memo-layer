@@ -59,7 +59,7 @@ def main() -> int:
         ok = Event.new(Kind.TEST_RESULT, Actor.TOOL, sid, {"passed": True, "command": "uv run pytest"}, ts=ts)
         seed.append(ok)
         if i == 0:
-            spec = RecordSpec("r_e2e", RecordKind.PREFERENCE, "Run tests with uv run pytest -q", Scope.exact(state, frozenset({"model_id", "task_class"})))
+            spec = RecordSpec("r_e2e", RecordKind.FACT, "Run tests with uv run pytest -q", Scope.exact(state, frozenset({"model_id", "task_class"})))
             seed.append(Event.new(Kind.RECORD_PROPOSED, Actor.MODEL, sid, spec.to_json(), ts=ts))
         seed.append(
             Event.new(Kind.EVIDENCE_LINKED, Actor.MODEL, sid, {"record_id": "r_e2e", "event_id": ok.id, "polarity": "support"}, ts=ts)

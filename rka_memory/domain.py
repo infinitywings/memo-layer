@@ -159,6 +159,17 @@ def canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def collapse(text: str) -> str:
+    """Whitespace runs collapsed to one space: how quotes are compared."""
+    return " ".join(str(text).split())
+
+
+def quotes(text: str, span: str) -> bool:
+    """`span` is a nonempty run of `text`, whitespace aside: the user wrote it."""
+    span = collapse(span)
+    return bool(span) and span in collapse(text)
+
+
 @dataclass(frozen=True)
 class Event:
     id: str

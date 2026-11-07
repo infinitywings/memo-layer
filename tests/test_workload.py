@@ -95,11 +95,12 @@ def test_stream_file_parses_into_typed_sessions(tmp_path):
         "counter_links": [{"record": "Other record", "event": {"kind": "user_undo"}, "reason": "undone"}],
         "support_links": [],
         "rules": [],
+        "withdrawn": [],
     }
     assert first.user == (Restore("calc.py"), Verdict(False, "Run pytest -q", "we use tox"), Verdict(True, "Other record"))
     assert first.expect == (Expect("rung", "L2", "Run pytest -q"), Expect("arm", "none"))
     assert second.drift == (Remove("uv.lock"), Write("requirements.txt", "pytest\n"))
-    assert (second.say, second.agent, second.miner) == ("Done.", (), {"candidates": [], "counter_links": [], "support_links": [], "rules": []})
+    assert (second.say, second.agent, second.miner) == ("Done.", (), {"candidates": [], "counter_links": [], "support_links": [], "rules": [], "withdrawn": []})
 
 
 @pytest.mark.parametrize(
@@ -255,20 +256,28 @@ def test_mock_rule_extractor_resolves_restated_records_by_content():
         "miner": {
             "rules": [
                 {"quote": "Always run ruff before committing", "kind": "preference", "restates": "Always run ruff before committing"},
-                {"quote": "Never push", "kind": "constraint", "restates": None},
+                {"quote": "Never push", "kind": "constraint", "standing": "Never", "restates": None},
                 {"quote": "Use tabs", "kind": "preference", "restates": "Use tabs everywhere"},
-            ]
+            ],
+            "withdrawn": [
+                {"quote": "no more ruff", "record": "Always run ruff before committing"},
+                {"quote": "tabs are over", "record": "Use tabs everywhere"},
+            ],
         }
     }
     kind, reply, problems = mock_llm.respond({"messages": [{"role": "user", "content": prompt}]}, script)
     assert kind == "rules"
     assert json.loads(reply["content"]) == {
         "rules": [
-            {"quote": "Always run ruff before committing", "kind": "preference", "restates": "r_ruff"},
-            {"quote": "Never push", "kind": "constraint", "restates": None},
-        ]
+            {"quote": "Always run ruff before committing", "kind": "preference", "standing": None, "restates": "r_ruff"},
+            {"quote": "Never push", "kind": "constraint", "standing": "Never", "restates": None},
+        ],
+        "withdrawn": [{"quote": "no more ruff", "record": "r_ruff"}],
     }
-    assert problems == ["rule 'Use tabs': no recorded rule with content 'Use tabs everywhere'"]
+    assert problems == [
+        "rule 'Use tabs': no recorded rule with content 'Use tabs everywhere'",
+        "withdrawal 'tabs are over': no recorded rule with content 'Use tabs everywhere'",
+    ]
 
 
 def test_mock_routes_requests_and_walks_agent_steps_by_tool_results():
@@ -432,7 +441,7 @@ def test_report_row_says_what_a_session_received_and_changed():
     assert lines[0] == "# Stream live-sample (live model)"
     assert "| s2 | 2027-01-05T12:00 | coding | uv | none | r_a | 900 | 400 | r_b | r_a: L1 -> L2; r_b: new -> L0D | no pytest cache: yes; changelog entry: no | 0 |" in lines
     assert "| no pytest cache | none | 1 | 1 |" in lines
-    assert "| L2 | preference | r_a | Run the tests | any state |" in lines
+    assert "| L2 | fact | r_a | Run the tests | any state |" in lines
     assert "| none | 1 | 400.0 | 400 |" in lines
     assert "Harness checks: 5 of 5 passed." in lines
 

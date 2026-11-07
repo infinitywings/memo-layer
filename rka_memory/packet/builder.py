@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from rka_memory.config import Config
-from rka_memory.domain import DELIVERABLE, Rung, State
+from rka_memory.domain import DELIVERABLE, Rung, State, parse_ts
 from rka_memory.validity.engine import assess, valid
 from rka_memory.world import RecordState, World
 
@@ -30,11 +30,15 @@ class PacketItem:
     grounding: float
     sessions: int
     unvalidated: bool = False
+    stated: str | None = None
 
     def line(self) -> str:
         tag = "unvalidated hint" if self.unvalidated else f"{self.rung} {self.kind}"
+        # A rule in the user's own words is shown as their quote, not as an
+        # order from the memory, so it reads as what the user asked for.
+        said = f'The user said on {self.stated}: "{flatten(self.content)}"' if self.stated else flatten(self.content)
         return (
-            f"- [{flatten(self.record_id)} | {tag}] {flatten(self.content)} "
+            f"- [{flatten(self.record_id)} | {tag}] {said} "
             f"(scope: {flatten(self.scope)}; grounding {self.grounding:.2f} across {self.sessions} sessions)"
         )
 
@@ -106,6 +110,7 @@ def session_arm(world: World, session_id: str, cfg: Config, today: date) -> str:
 
 def _item(rec: RecordState, world: World, cfg: Config, unvalidated: bool = False) -> PacketItem:
     support = assess(rec, world, cfg).support
+    statements = [g for g in support if g.affirms]
     return PacketItem(
         record_id=rec.id,
         rung=rec.rung.value if rec.rung else "-",
@@ -115,6 +120,7 @@ def _item(rec: RecordState, world: World, cfg: Config, unvalidated: bool = False
         grounding=round(sum(g.weight for g in support), 2),
         sessions=len({g.session_id for g in support}),
         unvalidated=unvalidated,
+        stated=parse_ts(statements[-1].event.ts).date().isoformat() if statements else None,
     )
 
 

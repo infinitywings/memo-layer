@@ -11,8 +11,8 @@ Requests come in three kinds:
   resolve to event ids from the prompt's event lines; record contents resolve
   to ids from its delivered and existing record rows.
 - rules: the prompt starts with EXTRACT_PREFIX. The reply lists the script's
-  `miner.rules` as given; a `restates` content resolves to the id of the
-  record row with that content.
+  `miner.rules` and `miner.withdrawn` as given; a `restates` or `record`
+  content resolves to the id of the recorded rule row with that content.
 - plain: anything else, such as session titles, gets short text.
 
 Every request is appended to the log as one JSON line with the script label,
@@ -155,21 +155,32 @@ def miner_reply(prompt: str, rules: dict[str, Any]) -> tuple[dict[str, Any], lis
     return doc, r.problems
 
 
-def rules_reply(prompt: str, rules: list[dict[str, Any]]) -> tuple[dict[str, Any], list[str]]:
-    """The extractor JSON: the scripted rules, with `restates` resolved to a record id."""
+def rules_reply(prompt: str, script: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The extractor JSON: the scripted rules and withdrawals, with record
+    contents resolved to ids from the prompt's recorded rule rows."""
     _, _, section = prompt.partition("Rules already recorded:")
     section, _, _ = section.partition("User messages")
     rows = {normalize(m.group(2)): m.group(1) for m in map(RULE_ROW.match, section.splitlines()) if m}
-    problems, out = [], []
-    for rule in rules:
-        rid = None
-        if rule.get("restates"):
-            rid = rows.get(normalize(rule["restates"]))
-            if rid is None:
-                problems.append(f"rule {rule['quote']!r}: no recorded rule with content {rule['restates']!r}")
-                continue
-        out.append({"quote": rule["quote"], "kind": rule["kind"], "restates": rid})
-    return {"rules": out}, problems
+    problems: list[str] = []
+
+    def resolve(content: str, label: str) -> str | None:
+        rid = rows.get(normalize(content))
+        if rid is None:
+            problems.append(f"{label}: no recorded rule with content {content!r}")
+        return rid
+
+    rules = []
+    for rule in script.get("rules") or ():
+        rid = resolve(rule["restates"], f"rule {rule['quote']!r}") if rule.get("restates") else None
+        if rule.get("restates") and rid is None:
+            continue
+        rules.append({"quote": rule["quote"], "kind": rule["kind"], "standing": rule.get("standing"), "restates": rid})
+    withdrawn = []
+    for w in script.get("withdrawn") or ():
+        rid = resolve(w["record"], f"withdrawal {w['quote']!r}")
+        if rid is not None:
+            withdrawn.append({"quote": w["quote"], "record": rid})
+    return {"rules": rules, "withdrawn": withdrawn}, problems
 
 
 def agent_reply(body: dict[str, Any], script: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -206,7 +217,7 @@ def respond(body: dict[str, Any], script: dict[str, Any]) -> tuple[str, dict[str
         doc, problems = miner_reply(prompt, script.get("miner") or {})
         return "miner", {"content": json.dumps(doc)}, problems
     if prompt.startswith(EXTRACT_PREFIX):
-        doc, problems = rules_reply(prompt, (script.get("miner") or {}).get("rules") or [])
+        doc, problems = rules_reply(prompt, script.get("miner") or {})
         return "rules", {"content": json.dumps(doc)}, problems
     return "plain", {"content": "rka-memory workload"}, []
 
