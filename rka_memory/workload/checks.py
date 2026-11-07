@@ -153,6 +153,18 @@ def _model_never_saw(obs: Observed, text: str) -> Outcome:
     return not hits, f"seen in requests {hits}" if hits else "never seen"
 
 
+def _record_contains(obs: Observed, text: str) -> Outcome:
+    """Some record's content holds `text`, case aside: the miner kept a rule
+    whose wording is not known in advance. Reports each match with its rung."""
+    want = normalize(text).lower()
+    found = sorted(
+        f"{r.id} {r.rung.value if r.rung else '-'}"
+        for r in obs.world.records.values()
+        if want in normalize(r.spec.content).lower()
+    )
+    return bool(found), found or "no record"
+
+
 def _file_absent(obs: Observed, path: str) -> Outcome:
     return not Path(path).exists(), "exists" if Path(path).exists() else "absent"
 
@@ -228,6 +240,7 @@ CHECKS: dict[str, Check] = {
     "file_absent": Check(_is_str, _file_absent, False),
     "file_contains": Check(_is_path_text, _file_contains, False),
     "model_never_saw": Check(_is_str, _model_never_saw, False),
+    "record_contains": Check(_is_str, _record_contains, False),
     "metrics": Check(_is_metric_conditions, _metrics, False),
 }
 

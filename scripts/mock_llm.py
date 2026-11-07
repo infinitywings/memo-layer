@@ -10,6 +10,9 @@ Requests come in three kinds:
   from the script's `miner` rules. Event selectors such as `{kind: test_result}`
   resolve to event ids from the prompt's event lines; record contents resolve
   to ids from its delivered and existing record rows.
+- rules: the prompt starts with EXTRACT_PREFIX. The reply lists the script's
+  `miner.rules` as given; a `restates` content resolves to the id of the
+  record row with that content.
 - plain: anything else, such as session titles, gets short text.
 
 Every request is appended to the log as one JSON line with the script label,
@@ -33,13 +36,16 @@ from pathlib import Path
 from typing import Any
 
 MINER_PREFIX = "You are the candidate miner for rka-memory"
+EXTRACT_PREFIX = "You are the rule extractor for rka-memory"
 USAGE = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
 SKILL_NAME = re.compile(r"\brka-r-[0-9a-z-]+")
 ROW = re.compile(r"^- (\S+) \[(\S+) (\S+)\] (.*)$")
 EVENT_LINE = re.compile(r"^(ev_\S+) (\S+) (\S+) (.*)$")
+RULE_ROW = re.compile(r"^- (\S+): (.*)$")
 SECTIONS = (
     ("Records delivered to the agent", "delivered"),
     ("Existing records that apply", "existing"),
+    ("Rules the user stated", "stated"),
     ("Events, oldest first", "events"),
 )
 
@@ -87,7 +93,7 @@ class MinerPrompt:
 
 
 def parse_miner_prompt(prompt: str) -> MinerPrompt:
-    found: dict[str, list[str]] = {"delivered": [], "existing": [], "events": []}
+    found: dict[str, list[str]] = {"delivered": [], "existing": [], "stated": [], "events": []}
     current: list[str] | None = None
     for line in prompt.splitlines():
         heading = next((name for prefix, name in SECTIONS if line.startswith(prefix)), None)
@@ -149,6 +155,23 @@ def miner_reply(prompt: str, rules: dict[str, Any]) -> tuple[dict[str, Any], lis
     return doc, r.problems
 
 
+def rules_reply(prompt: str, rules: list[dict[str, Any]]) -> tuple[dict[str, Any], list[str]]:
+    """The extractor JSON: the scripted rules, with `restates` resolved to a record id."""
+    _, _, section = prompt.partition("Rules already recorded:")
+    section, _, _ = section.partition("User messages")
+    rows = {normalize(m.group(2)): m.group(1) for m in map(RULE_ROW.match, section.splitlines()) if m}
+    problems, out = [], []
+    for rule in rules:
+        rid = None
+        if rule.get("restates"):
+            rid = rows.get(normalize(rule["restates"]))
+            if rid is None:
+                problems.append(f"rule {rule['quote']!r}: no recorded rule with content {rule['restates']!r}")
+                continue
+        out.append({"quote": rule["quote"], "kind": rule["kind"], "restates": rid})
+    return {"rules": out}, problems
+
+
 def agent_reply(body: dict[str, Any], script: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """The next scripted tool call, or the final text once every step has a result."""
     done = sum(1 for m in body.get("messages") or () if m.get("role") == "tool")
@@ -182,6 +205,9 @@ def respond(body: dict[str, Any], script: dict[str, Any]) -> tuple[str, dict[str
     if prompt.startswith(MINER_PREFIX):
         doc, problems = miner_reply(prompt, script.get("miner") or {})
         return "miner", {"content": json.dumps(doc)}, problems
+    if prompt.startswith(EXTRACT_PREFIX):
+        doc, problems = rules_reply(prompt, (script.get("miner") or {}).get("rules") or [])
+        return "rules", {"content": json.dumps(doc)}, problems
     return "plain", {"content": "rka-memory workload"}, []
 
 

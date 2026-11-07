@@ -47,5 +47,8 @@ $delivered
 Existing records that apply to this state:
 $existing
 
+Rules the user stated in this session, already recorded in the user's own words. Do not propose them again in any wording:
+$stated
+
 Events, oldest first, one per line as `id kind actor payload`:
 $events

@@ -53,6 +53,7 @@ class Config:
     miner_timeout_seconds: int
     miner_base_url: str
     miner_api_key_env: str | None
+    miner_extract_rules: bool
     hooks_background: str
     skills_dir: Path
     skills_export_files: bool
@@ -142,6 +143,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
         miner_timeout_seconds=int(raw["miner"].get("timeout_seconds", 240)),
         miner_base_url=os.environ.get("RKA_MEMORY_MINER_BASE_URL", raw["miner"].get("base_url", "")),
         miner_api_key_env=raw["miner"].get("api_key_env"),
+        miner_extract_rules=_flag(raw["miner"].get("extract_rules", True), "miner.extract_rules"),
         hooks_background=_choice(raw.get("hooks", {}).get("background", "spawn"), BACKGROUND, "hooks.background"),
         skills_dir=Path(raw["skills"]["dir"]).expanduser(),
         skills_export_files=_flag(raw["skills"].get("export_files", True), "skills.export_files"),

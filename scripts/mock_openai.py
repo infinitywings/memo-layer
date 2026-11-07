@@ -28,6 +28,8 @@ def script(body: dict) -> dict:
         prompt = " ".join(str(m.get("content", "")) for m in body.get("messages", []))
         if "candidate miner for rka-memory" in prompt:
             return {"content": json.dumps({"candidates": [], "counter_links": []})}
+        if "rule extractor for rka-memory" in prompt:
+            return {"content": json.dumps({"rules": []})}
         return {"content": "rka-memory dsh test"}
     done = sum(1 for m in body.get("messages", []) if m.get("role") == "tool")
     if done == 0:

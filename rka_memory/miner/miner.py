@@ -1,9 +1,12 @@
 """Session-end candidate miner.
 
 The model reads one session and proposes candidates; this module decides what
-reaches the ledger. The model's output is parsed at the boundary into typed
-candidates, then `plan` turns them into the only event kinds the miner may
-write: RECORD_PROPOSED, EVIDENCE_LINKED, a session JUDGMENT and one COST.
+reaches the ledger. First a narrow call lists the rules the user stated, each
+as a quote that code finds in a user message (see `extract`); then the full
+miner call proposes lessons in its own words. Both outputs are parsed at the
+boundary into typed values, then `plan` turns them into the only event kinds
+the miner may write: RECORD_PROPOSED, EVIDENCE_LINKED, a session JUDGMENT and
+one COST.
 Rungs stay with the validity engine, which runs right after.
 """
 
@@ -33,7 +36,7 @@ from rka_memory.domain import (
     canonical_json,
     new_id,
 )
-from rka_memory.miner import backends, dedup
+from rka_memory.miner import backends, dedup, extract
 from rka_memory.skills.export import export_skills
 from rka_memory.world import RecordState, World
 
@@ -62,6 +65,7 @@ SHOWN_KINDS = frozenset(
 EDIT_KINDS = (Kind.USER_EDIT, Kind.USER_UNDO)
 VERDICT_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT)
 EXISTING_RUNGS = (Rung.L1, Rung.L2, Rung.L3)
+RULE_KINDS = frozenset(k.value for k in extract.RULE_KINDS)
 
 
 @dataclass(frozen=True)
@@ -123,6 +127,9 @@ class MinerOutput:
     counter_links: tuple[RecordLink, ...]
     support_links: tuple[RecordLink, ...]
     dropped: tuple[Drop, ...]
+
+
+EMPTY = MinerOutput(task_class=None, candidates=(), counter_links=(), support_links=(), dropped=())
 
 
 class MineStatus(StrEnum):
@@ -224,13 +231,14 @@ def _rows(rows: tuple[RecordRow, ...]) -> str:
     return "\n".join(f"- {r.id} [{r.rung} {r.kind}] {r.content}" for r in rows) or "(none)"
 
 
-def build_prompt(view: MinerView) -> str:
+def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
     return PROMPT.substitute(
         task_classes=", ".join(view.task_classes),
         session_id=view.session_id,
         state=canonical_json(view.state.to_json()),
         delivered=_rows(view.delivered),
         existing=_rows(view.existing),
+        stated="\n".join(f"- {q}" for q in stated) or "(none)",
         events="\n".join(f"{e.id} {e.kind.value} {e.actor.value} {_short(dict(e.payload))}" for e in view.events)
         or "(none)",
     )
@@ -392,8 +400,7 @@ class _Planner:
         )
         return True
 
-    def candidate(self, index: int, c: Candidate) -> None:
-        label = f"candidate {index}"
+    def candidate(self, label: str, c: Candidate) -> None:
         evidence = self.cited(label, c.evidence, Polarity.SUPPORT)
         state = self.world.session(self.session_id).state
         dup = dedup.find_duplicate(c.content, c.kind, self.world, state, self.cfg.dedup_threshold)
@@ -443,9 +450,40 @@ class _Planner:
                 {"record_id": rl.record_id, "event_id": rl.event_id, "polarity": polarity.value, "reason": rl.reason}
             )
 
+    def rule(self, found: extract.Located, listed: set[str]) -> None:
+        """A rule in the user's own words: evidence for the record it restates,
+        or a new record citing the message that holds it."""
+        label, rule, event_id = f"rule {found.rule.index}", found.rule, found.message.event_id
+        if rule.restates:
+            link = RecordLink(rule.restates, event_id, "the user stated this rule again")
+            self.record_link(label, link, Polarity.SUPPORT, listed, "restates a record that was not listed")
+            return
+        self.candidate(
+            label,
+            Candidate(
+                content=rule.quote,
+                kind=rule.kind,
+                broaden=extract.BROADEN,
+                evidence=(event_id,),
+                falsifier="the user asks for something else",
+                confidence=1.0,
+                steps=(),
+                acceptance_check=None,
+                depends_on=(),
+            ),
+        )
 
-def plan(out: MinerOutput, world: World, session_id: str, cfg: Config, result: MineResult) -> list[Event]:
+
+def plan(
+    out: MinerOutput,
+    world: World,
+    session_id: str,
+    cfg: Config,
+    result: MineResult,
+    rules: tuple[extract.Located, ...] = (),
+) -> list[Event]:
     """Validate parsed output against the ledger and return the events to append.
+    Stated rules go first, so a miner candidate that repeats one merges into it.
 
     Mutates `world` (the events are folded in) and fills `result`.
     """
@@ -455,8 +493,11 @@ def plan(out: MinerOutput, world: World, session_id: str, cfg: Config, result: M
     delivered = {r.id for r in view.delivered}
     listed = delivered | {r.id for r in view.existing}
     planner.judge_task_class(out.task_class)
+    rule_records = {r.id for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS}
+    for found in rules:
+        planner.rule(found, rule_records)
     for i, c in enumerate(out.candidates):
-        planner.candidate(i, c)
+        planner.candidate(f"candidate {i}", c)
     for i, rl in enumerate(out.counter_links):
         planner.record_link(
             f"counter_link {i}", rl, Polarity.COUNTER, delivered, "record was not delivered in this session or a session it edited"
@@ -466,14 +507,32 @@ def plan(out: MinerOutput, world: World, session_id: str, cfg: Config, result: M
     return planner.events
 
 
-def _cost(session_id: str, completion: backends.Completion) -> Event:
-    payload = {
-        "component": "miner",
-        "session_id": session_id,
-        "tokens": completion.tokens,
-        "seconds": completion.seconds,
-    }
+def _cost(session_id: str, tokens: int, seconds: float) -> Event:
+    payload = {"component": "miner", "session_id": session_id, "tokens": tokens, "seconds": seconds}
     return Event.new(Kind.COST, Actor.RUNNER, session_id, payload)
+
+
+def stated_rules(
+    world: World, view: MinerView, backend: backends.Backend, result: MineResult
+) -> tuple[tuple[extract.Located, ...], backends.Completion | None]:
+    """Ask which rules the user stated in the session and keep those whose
+    quote is in a user message. Returns them with the completion to bill.
+    The rule records the extractor sees are the ones the miner prompt lists."""
+    messages = extract.user_messages(world, view.session_id)
+    if not messages:
+        return (), None
+    records = [(r.id, r.content) for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS]
+    completion = backend(extract.build_prompt(messages, records))
+    if not completion.text.strip():
+        return (), completion
+    try:
+        rules, dropped = extract.parse_output(completion.text)
+    except ValueError as exc:
+        result.dropped.append(Drop("rule extractor", str(exc)))
+        return (), completion
+    found, missing = extract.locate(rules, messages)
+    result.dropped.extend(Drop(item, reason) for item, reason in (*dropped, *missing))
+    return tuple(found), completion
 
 
 def mine_session(
@@ -488,22 +547,30 @@ def mine_session(
             return MineResult(session_id, MineStatus.UNKNOWN_SESSION, "no events for this session")
         if sess.mined and not force:
             return MineResult(session_id, MineStatus.ALREADY_MINED, "session was mined before; use --force")
-        prompt = build_prompt(view_of(world, session_id, memory.cfg))
+        view = view_of(world, session_id, memory.cfg)
+        result = MineResult(session_id, MineStatus.MINED)
+        rules: tuple[extract.Located, ...] = ()
+        spent: list[backends.Completion] = []
         try:
-            completion = backend(prompt)
+            if memory.cfg.miner_extract_rules:
+                rules, extraction = stated_rules(world, view, backend, result)
+                if extraction is not None:
+                    spent.append(extraction)
+            completion = backend(build_prompt(view, tuple(f.rule.quote for f in rules)))
         except backends.BackendError as exc:
             return MineResult(session_id, MineStatus.BACKEND_ERROR, str(exc))
         if not completion.text.strip():
             return MineResult(session_id, MineStatus.NO_OUTPUT, "backend returned no output")
-        result = MineResult(session_id, MineStatus.MINED, tokens=completion.tokens, seconds=completion.seconds)
-        cost = _cost(session_id, completion)
+        spent.append(completion)
+        result.tokens = sum(c.tokens for c in spent)
+        result.seconds = sum(c.seconds for c in spent)
         try:
             out = parse_output(completion.text)
         except ValueError as exc:
-            memory.append(cost)
-            result.status, result.detail, result.appended = MineStatus.PARSE_ERROR, str(exc), [cost.id]
-            return result
-        events = plan(out, memory.world(), session_id, memory.cfg, result)
+            out = EMPTY
+            result.status, result.detail = MineStatus.PARSE_ERROR, str(exc)
+        events = plan(out, world, session_id, memory.cfg, result, rules)
+        cost = _cost(session_id, result.tokens, result.seconds)
         memory.append(*events, cost)
         result.appended = [e.id for e in (*events, cost)]
     moves = memory.gate(session_id=session_id)

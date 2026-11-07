@@ -216,11 +216,12 @@ def _selector(raw: Any, where: str) -> dict[str, Any]:
 
 
 LINK_KEYS = ("counter_links", "support_links")
+RULE_KINDS = ("preference", "constraint")
 CANDIDATE_KEYS = {"broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on"}
 
 
 def _miner(raw: Any, where: str) -> dict[str, Any]:
-    d = _keys(raw or {}, where, set(), {"task_class", "candidates", *LINK_KEYS})
+    d = _keys(raw or {}, where, set(), {"task_class", "candidates", "rules", *LINK_KEYS})
     candidates = []
     for i, c in enumerate(_list(d.get("candidates"), f"{where}.candidates")):
         cw = f"{where}.candidates[{i}]"
@@ -240,6 +241,15 @@ def _miner(raw: Any, where: str) -> dict[str, Any]:
             link = _keys(link, lw, {"record", "event"}, {"reason"})
             links.append({"record": _str(link["record"], lw), "event": _selector(link["event"], lw), "reason": link.get("reason", "")})
         out[key] = links
+    rules = []
+    for i, rule in enumerate(_list(d.get("rules"), f"{where}.rules")):
+        rw = f"{where}.rules[{i}]"
+        rule = _keys(rule, rw, {"quote", "kind"}, {"restates"})
+        if rule["kind"] not in RULE_KINDS:
+            raise StreamError(f"{rw}: kind must be one of {list(RULE_KINDS)}")
+        restates = rule.get("restates")
+        rules.append({"quote": _str(rule["quote"], rw), "kind": rule["kind"], "restates": _str(restates, rw) if restates else None})
+    out["rules"] = rules
     if d.get("task_class"):
         out["task_class"] = _str(d["task_class"], where)
     return out
@@ -344,7 +354,7 @@ def parse(doc: Any, source: Path) -> Stream:
     for s in sessions if model == "live" else ():
         scripted = {
             "agent": s.agent,
-            "miner": any(s.miner[k] for k in ("candidates", *LINK_KEYS)) or "task_class" in s.miner,
+            "miner": any(s.miner[k] for k in ("candidates", "rules", *LINK_KEYS)) or "task_class" in s.miner,
             "expect": s.expect,
             "typed verdicts": any(isinstance(a, Verdict) for a in s.user),
         }

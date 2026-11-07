@@ -121,11 +121,17 @@ miner:
     - record: <content of a delivered or existing record>
       event: {kind: test_result, passed: true}
       reason: the suite passed again
+  rules:                              # the answer to the rule-extractor prompt
+    - quote: end every reply with a final line that starts with `Summary:`
+      kind: preference                # preference | constraint
+      restates: <content of a listed preference or constraint record>   # optional
 ```
 
 An event selector names a `kind` and optionally an `actor` and payload fields, such as `{kind: test_result, passed: false}` or `{kind: exit_code, command: pytest -q}`. The model resolves it to every matching event in the prompt's event lines. A candidate cites them all as evidence. A counter or support link becomes one link per matching event.
 
 `depends_on` contents resolve to ids from the prompt's delivered and existing record rows. A counter link's `record` resolves from the delivered rows only, because the miner may only counter a record delivered in the session or in a session whose file the user edited or undid in it. A support link's `record` resolves from the delivered and existing rows, because support has to reach L1 records, which are never delivered.
+
+`rules` answer the rule-extractor prompt, which rka-memory sends before the miner prompt when the session has user messages. The model returns them as written, with a `restates` content resolved to the id of the record row with that content. rka-memory keeps a quote only if it appears in one of the session's user messages, so a scripted quote must be copied from the session's `prompt` (scenario `stated-rule`).
 
 A selector that matches nothing, or a content with no row, is logged as a problem. The session's `scripted model resolved every rule` check then fails.
 
@@ -149,6 +155,7 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{file_absent: <path>}` | The path does not exist. Placeholders work here. |
 | `{file_contains: {path, text}}` | The file exists and contains the text. Placeholders work in `path`. |
 | `{model_never_saw: <text>}` | No request the model received in this session contained the text, in a prompt or a tool result. With the canaries, a read-leak check. |
+| `{record_contains: <text>}` | Some record's content contains the text, ignoring case. The result lists each match with its rung. As an observation in a live stream, it measures the miner's recall, since a live record's wording is not known in advance. |
 | `{metrics: {<dotted path>: <value or {op: value}>}}` | `rka-memory metrics` reports these values. Operators are `==`, `!=`, `>=`, `>`, `<=` and `<`. |
 
 The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.

@@ -6,7 +6,7 @@ import pytest
 
 from ledger_builder import Ledger
 from rka_memory.domain import Actor, Kind, RecordKind, Scope, State, Step
-from rka_memory.miner import backends
+from rka_memory.miner import backends, extract
 from rka_memory.miner.backends import BackendError, Completion
 from rka_memory.miner.miner import mine_session
 
@@ -14,11 +14,22 @@ STATE = dict(project="/p/app", toolchain="uv", model_id="m1", user_context="defa
 
 
 class FakeBackend:
-    def __init__(self, *replies):
+    """Answers miner prompts from `replies` in order and rule-extractor
+    prompts with `rules` (none stated, and free, by default)."""
+
+    def __init__(self, *replies, rules=None):
         self.replies = list(replies)
+        self.rules = rules
         self.prompts = []
+        self.rule_prompts = []
 
     def __call__(self, prompt):
+        if prompt.startswith(extract.PREFIX):
+            self.rule_prompts.append(prompt)
+            if self.rules is None:
+                return Completion('{"rules": []}', tokens=0, seconds=0.0)
+            reply = self.rules
+            return Completion(reply if isinstance(reply, str) else json.dumps(reply), tokens=300, seconds=1.0)
         self.prompts.append(prompt)
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
@@ -449,3 +460,120 @@ def test_support_link_names_only_listed_records_and_cites_by_the_evidence_rules(
         Drop(f"support_link 4 evidence {call.id}", "model-authored event never grounds"),
         Drop(f"support_link 5 evidence {bad.id}", "test_result cannot carry support"),
     ]
+
+
+SUMMARY_RULE = "end every reply with a final line that starts with `Summary:`"
+
+
+def stated_session(memory, lg, session, text):
+    lg.start(session, **STATE)
+    msg = lg.user_msg(session, text)
+    lg.end(session)
+    sync(memory, lg)
+    return msg
+
+
+def test_a_stated_rule_becomes_a_record_in_the_users_own_words_cited_to_the_message(memory):
+    from rka_memory.miner.miner import Drop
+
+    lg = Ledger()
+    msg = stated_session(
+        memory, lg, "s1", "Add multiply. House rule:\n  end every reply with a final line\nthat starts with `Summary:`."
+    )
+    rules = {
+        "rules": [
+            {"quote": SUMMARY_RULE, "kind": "preference", "restates": None},
+            {"quote": "Always write docstrings in French", "kind": "preference"},
+            {"quote": "House rule:", "kind": "constraint"},
+            {"quote": "end every reply", "kind": "fact"},
+        ]
+    }
+    miner_reply = {"candidates": [{"content": SUMMARY_RULE, "kind": "preference", "evidence": [msg.id]}]}
+    backend = FakeBackend(miner_reply, rules=rules)
+    result = mine_session(memory, "s1", backend=backend)
+
+    (proposed,) = result.proposed
+    rid = proposed["record_id"]
+    assert proposed == {"record_id": rid, "kind": "preference", "content": SUMMARY_RULE, "evidence": [msg.id]}
+    assert result.merged == [{"record_id": rid, "content": SUMMARY_RULE, "evidence": []}]
+    assert result.dropped == [
+        Drop("rule 3: end every reply", "a stated rule is a preference or a constraint, not a fact"),
+        Drop("rule 1: Always write docstrings in French", "quote is not in any user message of the session"),
+        Drop("rule 2: House rule:", "a quote holds 12 to 400 characters"),
+    ]
+    rec = memory.world().records[rid]
+    assert rec.rung.value == "L1"
+    assert rec.scope.describe() == "project=/p/app, user_context=default"
+    assert f"{msg.id}: Add multiply. House rule: {SUMMARY_RULE}." in backend.rule_prompts[0]
+    assert f"- {SUMMARY_RULE}\n" in backend.prompts[0]
+    assert (result.tokens, result.seconds) == (1800, 3.0)
+    assert [(e.kind, e.payload.get("tokens")) for e in appended(memory, result)][-1] == (Kind.COST, 1800)
+
+
+def test_a_restated_rule_adds_evidence_to_the_record_it_names_and_nothing_else(memory):
+    from rka_memory.miner.miner import Drop
+
+    lg = Ledger()
+    stated_session(memory, lg, "s1", f"Please {SUMMARY_RULE} from now on.")
+    first = mine_session(memory, "s1", backend=FakeBackend({}, rules={"rules": [{"quote": SUMMARY_RULE, "kind": "preference"}]}))
+    rid = first.proposed[0]["record_id"]
+
+    again = stated_session(memory, lg, "s2", f"Remember: {SUMMARY_RULE}.")
+    restated = [
+        {"quote": SUMMARY_RULE, "kind": "preference", "restates": rid},
+        {"quote": f"Remember: {SUMMARY_RULE}", "kind": "preference", "restates": "r_nope"},
+    ]
+    backend = FakeBackend({}, rules={"rules": restated})
+    second = mine_session(memory, "s2", backend=backend)
+
+    assert f"- {rid}: {SUMMARY_RULE}" in backend.rule_prompts[0]
+    assert second.proposed == []
+    assert second.links == [
+        {"record_id": rid, "event_id": again.id, "polarity": "support", "reason": "the user stated this rule again"}
+    ]
+    assert second.dropped == [Drop("rule 1 r_nope", "restates a record that was not listed")]
+    assert len(memory.world().records[rid].links) == 2
+
+
+def test_rules_survive_a_miner_reply_that_does_not_parse(memory):
+    lg = Ledger()
+    stated_session(memory, lg, "s1", f"House rule: {SUMMARY_RULE}.")
+    rules = {"rules": [{"quote": SUMMARY_RULE, "kind": "preference"}]}
+    result = mine_session(memory, "s1", backend=FakeBackend("no JSON here", rules=rules))
+
+    assert (result.status, result.detail) == ("parse_error", "miner output holds no JSON object")
+    assert [p["content"] for p in result.proposed] == [SUMMARY_RULE]
+    assert [r.rung.value for r in memory.world().records.values()] == ["L1"]
+
+
+def test_an_extractor_reply_that_does_not_parse_leaves_the_miner_to_run(memory):
+    from rka_memory.miner.miner import Drop
+
+    lg = Ledger()
+    stated_session(memory, lg, "s1", f"House rule: {SUMMARY_RULE}.")
+    reply = {"candidates": [{"content": "Reply with a Summary line", "kind": "preference"}]}
+    result = mine_session(memory, "s1", backend=FakeBackend(reply, rules="none to report"))
+
+    assert result.status == "mined"
+    assert result.dropped == [Drop("rule extractor", "extractor output holds no JSON object")]
+    assert [p["content"] for p in result.proposed] == ["Reply with a Summary line"]
+
+
+def test_the_extractor_is_not_asked_without_user_messages_or_when_switched_off(memory):
+    from dataclasses import replace
+
+    from rka_memory.service import Memory
+
+    lg = Ledger()
+    lg.start("s1", **STATE)
+    lg.test("s1", True)
+    lg.end("s1")
+    stated_session(memory, lg, "s2", f"House rule: {SUMMARY_RULE}.")
+    silent = FakeBackend({})
+    mine_session(memory, "s1", backend=silent)
+    off = FakeBackend({}, rules={"rules": [{"quote": SUMMARY_RULE, "kind": "preference"}]})
+    result = mine_session(Memory.open(replace(memory.cfg, miner_extract_rules=False)), "s2", backend=off)
+
+    assert (silent.rule_prompts, off.rule_prompts) == ([], [])
+    assert (len(silent.prompts), len(off.prompts)) == (1, 1)
+    assert result.proposed == []

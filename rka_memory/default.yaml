@@ -50,6 +50,7 @@ miner:
   timeout_seconds: 240
   base_url: ""                # openai_compat: e.g. https://api.deepseek.com/v1 (env RKA_MEMORY_MINER_BASE_URL)
   api_key_env: null           # openai_compat: name of the env var holding the key
+  extract_rules: true         # also ask for the rules the user stated, as verbatim quotes
 
 hooks:
   background: spawn           # spawn: mine and sync in a detached process; inline: before SessionEnd returns; off

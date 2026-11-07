@@ -94,11 +94,12 @@ def test_stream_file_parses_into_typed_sessions(tmp_path):
         ],
         "counter_links": [{"record": "Other record", "event": {"kind": "user_undo"}, "reason": "undone"}],
         "support_links": [],
+        "rules": [],
     }
     assert first.user == (Restore("calc.py"), Verdict(False, "Run pytest -q", "we use tox"), Verdict(True, "Other record"))
     assert first.expect == (Expect("rung", "L2", "Run pytest -q"), Expect("arm", "none"))
     assert second.drift == (Remove("uv.lock"), Write("requirements.txt", "pytest\n"))
-    assert (second.say, second.agent, second.miner) == ("Done.", (), {"candidates": [], "counter_links": [], "support_links": []})
+    assert (second.say, second.agent, second.miner) == ("Done.", (), {"candidates": [], "counter_links": [], "support_links": [], "rules": []})
 
 
 @pytest.mark.parametrize(
@@ -245,6 +246,31 @@ def test_mock_miner_reports_rules_it_cannot_resolve():
     ]
 
 
+def test_mock_rule_extractor_resolves_restated_records_by_content():
+    from rka_memory.miner import extract
+
+    messages = [extract.Message("ev_1", "Always run ruff before committing.")]
+    prompt = extract.build_prompt(messages, [("r_ruff", "Always run ruff before committing")])
+    script = {
+        "miner": {
+            "rules": [
+                {"quote": "Always run ruff before committing", "kind": "preference", "restates": "Always run ruff before committing"},
+                {"quote": "Never push", "kind": "constraint", "restates": None},
+                {"quote": "Use tabs", "kind": "preference", "restates": "Use tabs everywhere"},
+            ]
+        }
+    }
+    kind, reply, problems = mock_llm.respond({"messages": [{"role": "user", "content": prompt}]}, script)
+    assert kind == "rules"
+    assert json.loads(reply["content"]) == {
+        "rules": [
+            {"quote": "Always run ruff before committing", "kind": "preference", "restates": "r_ruff"},
+            {"quote": "Never push", "kind": "constraint", "restates": None},
+        ]
+    }
+    assert problems == ["rule 'Use tabs': no recorded rule with content 'Use tabs everywhere'"]
+
+
 def test_mock_routes_requests_and_walks_agent_steps_by_tool_results():
     script = {
         "agent": [{"tool": "bash", "args": {"command": "ls"}}, {"skill": "offered"}],
@@ -295,7 +321,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule"]
 
 
 LIVE = """
@@ -415,7 +441,9 @@ def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
     assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live")]
     rules = streams[1]
-    assert [o.label for s in rules.sessions for o in s.observe] == ["no .pytest_cache left", "reply ends with Summary"] * 12
+    held = ["no .pytest_cache left", "reply ends with Summary"]
+    recorded = [*held, "cache rule recorded", "Summary rule recorded"]
+    assert [[o.label for o in s.observe] for s in rules.sessions] == [recorded, held, recorded, *[held] * 8, recorded]
     assert [s.observe[1].expect.value["path"] for s in rules.sessions] == [f"{{run}}/logs/s{i}.out" for i in range(1, 13)]
 
 

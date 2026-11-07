@@ -1,0 +1,59 @@
+name: stated-rule
+description: >-
+  The user states a reply-format rule that nothing in the project or in a
+  tool result can show, then repeats it in the next two sessions. The rule
+  extractor quotes it from the user's messages, so it is recorded in the
+  user's own words, and each repetition adds evidence to that record instead
+  of starting another. A quote the user never wrote is dropped. With k lowered
+  to 1, three statements of weight 1/3 promote the rule to L2, and the fourth
+  session receives it.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  gate: {k: 1.0}
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a multiply function to calc.py. House rule for this project: end
+      every reply to me with a final line that starts with `Summary:`.
+    miner:
+      rules:
+        - quote: "end every reply to me with a final line that starts with `Summary:`"
+          kind: preference
+        - quote: Always reply to me in French
+          kind: preference
+    expect:
+      - {record: "end every reply to me with a final line that starts with `Summary:`", rung: L1}
+      - {metrics: {records_by_rung.L1: 1}}
+
+  - at: +1d
+    prompt: >-
+      Add a divide function to calc.py, and remember to end every reply to me
+      with a final line that starts with `Summary:`.
+    miner:
+      rules:
+        - quote: "end every reply to me with a final line that starts with `Summary:`"
+          kind: preference
+          restates: "end every reply to me with a final line that starts with `Summary:`"
+    expect:
+      - {record: "end every reply to me with a final line that starts with `Summary:`", rung: L1}
+      - {metrics: {records_by_rung.L1: 1}}
+
+  - at: +2d
+    prompt: >-
+      Add a power function to calc.py. As always, end every reply to me with a
+      final line that starts with `Summary:`.
+    miner:
+      rules:
+        - quote: "end every reply to me with a final line that starts with `Summary:`"
+          kind: preference
+          restates: "end every reply to me with a final line that starts with `Summary:`"
+    expect:
+      - {record: "end every reply to me with a final line that starts with `Summary:`", rung: L2}
+      - {metrics: {records_by_rung.L1: 0, records_by_rung.L2: 1}}
+
+  - at: +4d
+    prompt: Add a modulo function to calc.py.
+    expect:
+      - {record: "end every reply to me with a final line that starts with `Summary:`", delivered: true}
+      - {record: "end every reply to me with a final line that starts with `Summary:`", in_prompt: true}
