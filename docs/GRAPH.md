@@ -1,6 +1,6 @@
 # The memory as a knowledge graph
 
-Status: proposal, not built (2026-11-07). The open questions at the end are for the PI.
+Status: proposal, not built (2026-11-07). The PI settled the four design questions on 2026-11-07; see the decisions at the end.
 
 The direction is to treat rka-memory as one graph of typed nodes and typed edges, instead of a list of separate records, and to derive what the agent receives (packets, skills, hints) from that graph on demand, with provenance. This document argues for a specific version of that idea. In short, the ledger already is a graph. The work is to make it explicit, add the few node and edge types that code can check, and render every view from it. It does not add a model-built entity graph.
 
@@ -51,7 +51,7 @@ An anchor is a thing in the project that events touch and records can be about. 
 - A command: the program and its first subcommand from a `tool_call` input or an `exit_code` command, such as `pytest` or `git status`.
 - A tool: the agent tool name of a `tool_call`, such as `edit` or `bash`.
 
-Anchors come from payloads by code, so the same file always gets the same anchor and no model call is spent. A function anchor (`calc.divide`) would need a parser for each language. It is left to an open question.
+Anchors come from payloads by code, so the same file always gets the same anchor and no model call is spent. A function anchor (`calc.divide`) would need a parser for each language, so there is none (decision 2).
 
 ## Edges
 
@@ -117,9 +117,11 @@ Each phase ends with unit tests, a scenario and a live run, and lands only if th
 3. **Render skills from the graph.** Render SKILL.md from the procedure and its L2 dependencies. Add procedure versions through `supersedes`, and the rule extractor's "replaces" for a user's changed rule. Done when a scenario shows a withdrawn rule leaving the rendered SKILL.md at the next export, and a replaced rule delivered alone.
 4. **Add `refines` and staleness flags.** Done when a longer live stream (`workload/live/1-calc-weeks.yaml`) shows qualifications delivered with the rule they qualify.
 
-## Open questions for the PI
+## Decisions
 
-1. Should a user's rule be replaceable only in the user's own words, through the rule extractor, or may the miner propose that one rule replaces another?
-2. Are files, commands and tools enough as anchors, or are function anchors worth a parser for each language?
-3. When the agent stops a step that came from a withdrawn rule, is a new procedure version the right fix, or should the exporter remove the step from the text?
-4. Should the graph reach RKA Core's research map as nodes and edges, or stay in the ledger with Core holding only the events?
+The PI settled these on 2026-11-07.
+
+1. **Only the user's own words replace a user's rule.** The rule extractor may mark a stated rule as replaced by quoting the user's new wording and naming the old record, under the same statement check as a withdrawal. The miner may propose `supersedes` for procedure versions and other records, never for a user's rule.
+2. **Anchors are files, commands and tools.** Code derives them from event payloads. There are no function anchors, so a fact about `calc.divide` attaches to `calc.py`.
+3. **Skills change through their rules section and through new versions.** At export, a dependency below L2 leaves the SKILL.md rules section. The exporter never edits steps. A step changes only when the miner proposes a new procedure version that supersedes the old one.
+4. **The graph stays in the ledger.** It is a projection of the ledger, and RKA Core keeps receiving the ledger events, relations included, as it does now. Core's research map does not mirror it.
