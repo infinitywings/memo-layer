@@ -293,3 +293,111 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
     assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery"]
+
+
+LIVE = """
+name: live-sample
+model: live
+start: 2027-01-04T12:00:00
+project: tiny
+sessions:
+  - at: +0d
+    prompt: Add a multiply function
+    user:
+      - append: {path: calc.py, text: "# reviewed\\n"}
+  - at: +1d
+    drift:
+      - remove: uv.lock
+    prompt: Add a divide function
+"""
+
+
+def test_live_stream_loads_without_scripts_or_expectations(tmp_path):
+    stream = load(write_stream(tmp_path, LIVE))
+    assert (stream.name, stream.model, len(stream.sessions)) == ("live-sample", "live", 2)
+    assert stream.sessions[0].user == (Append("calc.py", "# reviewed\n"),)
+    assert load(write_stream(tmp_path / "s", STREAM)).model == "scripted"
+
+
+@pytest.mark.parametrize(
+    ("addition", "message"),
+    [
+        ("    agent:\n      - bash: pytest -q\n", "cannot use agent"),
+        ("    miner:\n      candidates: []\n      task_class: coding\n", "cannot use miner"),
+        ("    expect:\n      - {packet_empty: true}\n", "cannot use expect"),
+        ("    user:\n      - confirm: Run the tests\n", "cannot use typed verdicts"),
+    ],
+)
+def test_live_stream_refuses_what_only_a_scripted_model_can_honor(tmp_path, addition, message):
+    text = LIVE.replace("    prompt: Add a divide function\n", "    prompt: Add a divide function\n" + addition)
+    with pytest.raises(StreamError) as err:
+        load(write_stream(tmp_path, text))
+    assert message in str(err.value)
+    assert "sessions[2]" in str(err.value)
+
+
+def test_stream_model_must_be_scripted_or_live(tmp_path):
+    with pytest.raises(StreamError) as err:
+        load(write_stream(tmp_path, LIVE.replace("model: live", "model: gpt")))
+    assert "model must be one of ['scripted', 'live']" in str(err.value)
+
+
+def test_report_row_says_what_a_session_received_and_changed():
+    from rka_memory.domain import Actor, Kind
+    from rka_memory.workload import report
+
+    lg = Ledger()
+    lg.start("s1", project="/p", task_class="coding")
+    lg.propose("s1", "r_a", content="Run the tests")
+    lg.link("r_a", lg.test("s1", True))
+    lg.end("s1")
+    lg.advance(days=1)
+    before = lg.gate()
+    lg.start("s2", project="/p", task_class="coding", toolchain="uv")
+    lg._ev(Kind.PACKET_DELIVERED, Actor.RUNNER, "s2", {"record_ids": ["r_a"], "arm": "none", "channel": "session_start"})
+    lg.propose("s2", "r_b", content="Use type hints")
+    lg.link("r_a", lg.test("s2", True))
+    lg._ev(Kind.SESSION_END, Actor.RUNNER, "s2", {"tokens_total": 900, "tokens_before_first_write": 400, "first_write_seen": True})
+    lg.gate()
+    after = project(lg.events)
+
+    row = report.session_row("s2", "2027-01-05T12:00", "s2", before, after)
+    assert row == {
+        "session": "s2",
+        "at": "2027-01-05T12:00",
+        "session_id": "s2",
+        "task_class": "coding",
+        "toolchain": "uv",
+        "arm": "none",
+        "delivered": ["r_a"],
+        "tokens_total": 900,
+        "tokens_before_first_write": 400,
+        "proposed": ["r_b"],
+        "rung_changes": {"r_a": "L1 -> L2", "r_b": "new -> L0D"},
+    }
+    assert report.session_row("s3", "", None, before, after) == {"session": "s3", "at": "", "session_id": None}
+
+    text = report.render(
+        {
+            "stream": "live-sample",
+            "model": "live",
+            "route": "dsh's default DeepSeek model",
+            "miner": "deepseek-flash at https://api.deepseek.com",
+            "sessions": [row],
+            "records": report.records(after),
+            "metrics": {"records_by_rung": {"L0D": 1, "L2": 1}, "rediscovery_tokens": {"none": {"count": 1, "mean": 400.0, "median": 400}}},
+            "checks": 5,
+            "checks_passed": 5,
+        }
+    )
+    lines = text.splitlines()
+    assert lines[0] == "# Stream live-sample (live model)"
+    assert "| s2 | 2027-01-05T12:00 | coding | uv | none | r_a | 900 | 400 | r_b | r_a: L1 -> L2; r_b: new -> L0D |" in lines
+    assert "| L2 | preference | r_a | Run the tests | any state |" in lines
+    assert "| none | 1 | 400.0 | 400 |" in lines
+    assert "Harness checks: 5 of 5 passed." in lines
+
+
+def test_every_shipped_live_stream_loads_as_live():
+    streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
+    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live")]

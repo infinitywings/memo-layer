@@ -8,7 +8,7 @@ TEST_COMPOSE := RKA_STACK_CORE_PORT= $(DOCKER) compose -p rka-memory-test
 RKA_CORE_SRC ?= /Volumes/FuSpace/Projects/rka-projects/rka
 export RKA_CORE_SRC
 
-.PHONY: test test-inner build pull scenarios up url check-up down clean
+.PHONY: test test-inner build pull scenarios live up url check-up down clean
 
 # T0 + T1 inside containers: unit tests, plugin tests and Core sync in `dev`,
 # then the real-dsh plugin check and the agent-forgery check in `dsh-e2e`.
@@ -34,6 +34,14 @@ pull:
 scenarios: pull
 	$(TEST_COMPOSE) --profile workload build workload
 	$(TEST_COMPOSE) --profile workload run --rm workload
+
+# T4: the live streams in workload/live, with dsh's default DeepSeek model and
+# the DeepSeek miner. Needs DEEPSEEK_API_KEY (in the shell or .env). Each
+# stream's report.md lands under workload-runs/ on the host.
+live: pull
+	@[ -n "$$DEEPSEEK_API_KEY" ] || grep -q '^DEEPSEEK_API_KEY=.' .env 2>/dev/null || { echo "make live needs DEEPSEEK_API_KEY in the shell or in .env" >&2; exit 2; }
+	$(TEST_COMPOSE) --profile workload build workload
+	$(TEST_COMPOSE) --profile workload run --rm -v "$(CURDIR)/workload-runs:/out" workload /opt/rka-memory/workload/live --out /out
 
 # Interactive: dsh's web UI on 127.0.0.1:$${DSH_HOST_PORT:-3080} with the
 # memory service and the stack's Core. The model is the mock unless

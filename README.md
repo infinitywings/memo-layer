@@ -131,6 +131,12 @@ RKM_MODEL=deepseek
 DEEPSEEK_API_KEY=...
 ```
 
+`make live` runs the live streams in `workload/live/` with DeepSeek, the same way `make scenarios` runs the scripted ones, and writes each stream's `report.md` (sessions, records, rungs, metrics) under `workload-runs/`. It needs the same key.
+
+```bash
+make live
+```
+
 `make check-up` checks a running stack: dsh web sign-in, one dsh session through the plugin, then a memory round that syncs to Core and pulls the ledger back. `make url` prints the sign-in URL again, `make down` stops everything, and `make clean` also deletes the volumes.
 
 On the host:

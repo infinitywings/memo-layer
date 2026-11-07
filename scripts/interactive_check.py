@@ -89,7 +89,9 @@ def main() -> int:
     before = set(probe()["sessions"])
     run = compose(
         "exec", "-T", "dsh", "sh", "-c",
-        'cd /workspaces && /opt/rka-memory/docker/dsh/entrypoint.sh headless --approval-policy never "check the stack"',
+        # bounded for a real model; the mock ignores the prompt and runs its fixed script
+        'cd /workspaces && /opt/rka-memory/docker/dsh/entrypoint.sh headless --approval-policy never '
+        '"Reply with the single word ready. Do not use any tools."',
     )
     check("headless dsh session in the dsh container", run.returncode == 0, run.stderr[-300:])
 

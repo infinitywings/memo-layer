@@ -28,7 +28,8 @@ import rka_memory
 from rka_memory import config as config_mod
 from rka_memory.domain import Kind, clock_file_now
 from rka_memory.ledger.jsonl import JsonlLedger
-from rka_memory.workload import files
+from rka_memory.miner.backends import DEEPSEEK, deepseek_miner
+from rka_memory.workload import files, report
 from rka_memory.workload.checks import Observed, evaluate, find_record
 from rka_memory.workload.stream import Session, Stream, Verdict, load_all
 from rka_memory.world import World, project
@@ -155,6 +156,26 @@ class MockModel:
         self.proc.wait(timeout=10)
 
 
+class LiveModel:
+    """dsh's own default route (DeepSeek) for the agent and DeepSeek for the
+    miner. Nothing to script, and no request log to read."""
+
+    port = None
+
+    def __init__(self) -> None:
+        if not os.environ.get(DEEPSEEK["api_key_env"]):
+            raise ValueError(f"a live stream needs {DEEPSEEK['api_key_env']} in the environment")
+
+    def script(self, **_: Any) -> None:
+        pass
+
+    def requests(self, label: str) -> list[dict[str, Any]]:
+        return []
+
+    def stop(self) -> None:
+        pass
+
+
 def _wait_for_group(pgid: int) -> None:
     """Checks read the ledger, so wait until no hook process dsh started is
     still writing it. A zombie counts as alive, so run the runner under an
@@ -176,6 +197,7 @@ class StreamRun:
         self.dsh = dsh
         self.results: list[CheckResult] = []
         self.before: files.Snapshot = {}
+        self.rows: list[dict[str, Any]] = []
 
     def check(self, session: str, name: str, ok: bool, detail: Any = "") -> None:
         result = CheckResult(session, name, bool(ok), detail)
@@ -196,12 +218,13 @@ class StreamRun:
         )
         return env
 
-    def _setup(self, port: int) -> None:
+    def _setup(self, port: int | None) -> None:
         p = self.paths
+        miner = deepseek_miner() if port is None else {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
         base = {
             "ledger": {"dir": str(p.ledger_dir)},
             "core": {"sync_on_session_end": False},
-            "miner": {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"},
+            "miner": miner,
             "hooks": {"background": "inline"},
             "skills": {"dir": str(p.skills)},
             "packet": {"arms": ["gated"]},
@@ -232,11 +255,13 @@ class StreamRun:
             },
             {"id": "agent-default-model", "name": "@deepseek-ai/dsh-agent-default-model", "config": {"provider": "mock", "model": "mock-model"}},
         ]
-        p.route_overlay.write_text(yaml.safe_dump(route, sort_keys=False))
+        if port is not None:
+            p.route_overlay.write_text(yaml.safe_dump(route, sort_keys=False))
         (p.root / "manifest.json").write_text(
             json.dumps(
                 {
                     "stream": self.stream.name,
+                    "model": self.stream.model,
                     "source": str(self.stream.source),
                     "start": self.stream.start.isoformat(),
                     "config": yaml.safe_load(p.config.read_text()),
@@ -257,9 +282,9 @@ class StreamRun:
         os.replace(tmp, self.paths.clock)
 
     def _run_dsh(self, prompt: str, log: str) -> tuple[int, str]:
+        route = ["--patch", str(self.paths.route_overlay)] if self.paths.route_overlay.exists() else []
         cmd = [
-            self.dsh, "--profile", "headless",
-            "--patch", str(self.paths.rka_overlay), "--patch", str(self.paths.route_overlay),
+            self.dsh, "--profile", "headless", "--patch", str(self.paths.rka_overlay), *route,
             "--approval-policy", "never", "--permission-mode", "workspace-write",
             prompt,
         ]
@@ -282,7 +307,7 @@ class StreamRun:
         out = subprocess.run([str(rka_bin()), "metrics"], env=self._env(), capture_output=True, text=True, check=True)
         return json.loads(out.stdout)
 
-    def _verdict(self, s: Session, n: int, v: Verdict, mock: MockModel) -> None:
+    def _verdict(self, s: Session, n: int, v: Verdict, mock: MockModel | LiveModel) -> None:
         verb = "confirm" if v.confirm else "reject"
         name = f"rkm {verb} {v.record!r}"
         try:
@@ -298,14 +323,15 @@ class StreamRun:
         recorded = [e for e in self.world().events.values() if e.kind is kind and e.payload.get("record_id") == rid]
         self.check(s.label, f"{name} recorded as {kind.value}", len(recorded) == 1, f"{len(recorded)} events")
 
-    def _session(self, s: Session, mock: MockModel) -> None:
+    def _session(self, s: Session, mock: MockModel | LiveModel) -> None:
         p = self.paths
         self._set_clock(self.stream.start + s.at)
         for action in s.drift:
             files.apply(action, p.project, self.before)
         self.before = files.snapshot(p.project)
         mock.script(label=s.label, agent=files.substitute(s.agent, p.placeholders()), say=s.say, miner=s.miner)
-        known = set(self.world().sessions)
+        before = self.world()
+        known = set(before.sessions)
         errors = self._hook_errors()
         code, stderr = self._run_dsh(s.prompt, s.label)
         world = self.world()
@@ -316,8 +342,9 @@ class StreamRun:
         self.check(s.label, "no plugin warnings", not warnings, warnings[:3])
         self.check(s.label, "one session recorded", sid is not None, new)
         self.check(s.label, "session mined", sid is not None and world.sessions[sid].mined)
-        problems = [msg for r in mock.requests(s.label) for msg in r.get("problems") or ()]
-        self.check(s.label, "scripted model resolved every rule", not problems, problems[:3])
+        if self.stream.model == "scripted":
+            problems = [msg for r in mock.requests(s.label) for msg in r.get("problems") or ()]
+            self.check(s.label, "scripted model resolved every rule", not problems, problems[:3])
         verdicts = 0
         for action in s.user:
             if isinstance(action, Verdict):
@@ -327,6 +354,8 @@ class StreamRun:
                 files.apply(action, p.project, self.before)
         new_errors = self._hook_errors()[len(errors):]
         self.check(s.label, "no hook errors", not new_errors.strip(), new_errors[-400:])
+        at = (self.stream.start + s.at).isoformat(timespec="minutes")
+        self.rows.append(report.session_row(s.label, at, sid, before, self.world()))
         obs = Observed(
             world=self.world(),
             session_id=sid,
@@ -344,8 +373,12 @@ class StreamRun:
         for d in (p.root, p.ledger_dir, p.dsh_home, p.logs):
             d.mkdir(parents=True, exist_ok=True)
         files.create_project(self.stream.fixture, p.project)
-        mock = MockModel(p)
         label = "-"
+        try:
+            mock = MockModel(p) if self.stream.model == "scripted" else LiveModel()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.check(label, "model started", False, str(exc))
+            return self._finish()
         try:
             self._setup(mock.port)
             for s in self.stream.sessions:
@@ -355,7 +388,26 @@ class StreamRun:
             self.check(label, "stream ran to the end", False, f"{type(exc).__name__}: {exc}")
         finally:
             mock.stop()
+        return self._finish()
+
+    def _finish(self) -> list[CheckResult]:
+        p = self.paths
         (p.root / "result.json").write_text(json.dumps([r.to_json() for r in self.results], indent=2, default=str))
+        live = self.stream.model == "live"
+        doc = {
+            "stream": self.stream.name,
+            "model": self.stream.model,
+            "description": self.stream.description,
+            "route": "dsh's default DeepSeek model" if live else "scripted model",
+            "miner": f"{deepseek_miner()['model']} at {DEEPSEEK['base_url']}" if live else "scripted model",
+            "sessions": self.rows,
+            "records": report.records(self.world()) if p.ledger.exists() else [],
+            "metrics": self._metrics() if p.ledger.exists() else {},
+            "checks": len(self.results),
+            "checks_passed": sum(r.ok for r in self.results),
+        }
+        (p.root / "report.json").write_text(json.dumps(doc, indent=2, default=str))
+        (p.root / "report.md").write_text(report.render(doc))
         return self.results
 
 
@@ -378,7 +430,7 @@ def run_all(path: Path, out: Path, dsh: str | None = None) -> int:
         results = StreamRun(st, root / st.name, binary).run()
         failed = sum(not r.ok for r in results)
         summary[st.name] = {"checks": len(results), "failed": failed}
-        print(f"== {st.name}: {len(results) - failed}/{len(results)} checks passed\n", flush=True)
+        print(f"== {st.name}: {len(results) - failed}/{len(results)} checks passed; report in {root / st.name / 'report.md'}\n", flush=True)
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
     bad = [name for name, s in summary.items() if s["failed"]]
     checks = sum(s["checks"] for s in summary.values())

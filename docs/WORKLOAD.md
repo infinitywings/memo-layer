@@ -1,12 +1,13 @@
 # Workload streams
 
-A stream is a YAML file that drives real dsh sessions against a scripted model and checks how the rka-memory ladder responds. `rka-memory workload run` executes streams. The eight scenario streams in `workload/scenarios/` are tier T2 and T3 of [DEV_ENV_PLAN.md](DEV_ENV_PLAN.md).
+A stream is a YAML file that drives real dsh sessions, against a scripted model or a real one, and records how the rka-memory ladder responds. `rka-memory workload run` executes streams. The eight scenario streams in `workload/scenarios/` are tiers T2 and T3 of [DEV_ENV_PLAN.md](DEV_ENV_PLAN.md); the live streams in `workload/live/` are tier T4.
 
 ## Commands
 
 | Command | What it runs |
 |---|---|
 | `make scenarios` | Builds the `rka-memory-dsh` image and runs every stream in `workload/scenarios/` in the `workload` compose service. Results go to the `runs` volume under `/runs/workload/<UTC timestamp>/`. |
+| `make live` | Runs every stream in `workload/live/` with a real model (see [Live streams](#live-streams)). Needs `DEEPSEEK_API_KEY` in the shell or in `.env`. Results go to `workload-runs/<UTC timestamp>/` on the host. |
 | `rka-memory workload run <file-or-dir> [--out DIR] [--dsh PATH]` | Runs one stream file, or every `*.yaml` in a directory in file-name order. Exits 1 if any check fails, and 2 if it cannot start, for example when a stream file does not load. |
 
 `--out` defaults to `workload-runs`. Each invocation creates a new timestamped directory inside it. The runner refuses an `--out` inside `/tmp` or the system temp directory, because dsh's `workspace-write` sandbox lets the agent write there, and the ledger would no longer be out of the agent's reach.
@@ -142,6 +143,18 @@ Each item is one check, with `record` naming the record by its content when the 
 
 The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.
 
+## Live streams
+
+A stream with `model: live` runs against a real model. dsh uses its own default DeepSeek model, and the miner calls DeepSeek's OpenAI-compatible endpoint (`deepseek-flash`; set `RKM_MINER_MODEL` to change it). Both read the key from `DEEPSEEK_API_KEY`.
+
+A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `drift`, `prompt` and the user's file actions.
+
+The runner still checks the harness for every session: dsh exited 0, the plugin printed no warnings, one new session was recorded and mined, and the hooks logged no errors. What the model and the ladder did is the stream's report, not a pass or fail.
+
+`report.md` and `report.json` in the stream's run directory list, per session, the simulated time, task class, toolchain, packet arm, delivered records, tokens in total and before the first write, records proposed, and rung changes. Then come the records at the end with their rungs and scopes, and the metrics: records by rung, tokens before the first write per arm, misapplication, regressions and validation cost. Scripted streams get the same report.
+
+`workload/live/1-calc-weeks.yaml` covers three simulated weeks on `calc-uv`. The user states the house rules once (type hints, one-line docstrings, `pytest -q` before finishing) and never repeats them. Packets alternate by day between the gated arm and no packet. The user adds a test by hand after the fourth session, and the project moves from uv to pip in the second week.
+
 ## Run directory
 
 Each stream gets its own directory under the run, with its own scripted model on a free localhost port:
@@ -153,11 +166,12 @@ Each stream gets its own directory under the run, with its own scripted model on
 | `config.yaml` | `RKA_MEMORY_CONFIG`: the `openai_compat` miner pointed at the scripted model, `hooks.background: inline`, `core.sync_on_session_end: false`, and the stream's overrides. |
 | `clock` | `RKA_MEMORY_CLOCK_FILE`. |
 | `dsh-home/` | `DSH_HOME`. |
-| `rka-memory.yml`, `mock-route.yml` | The dsh overlays: the plugin with a 600-second call timeout, and the route to the scripted model. |
-| `session-script.json` | The script the scripted model reads on every request. |
-| `mock-requests.jsonl` | Every request the model received, with its session label, kind, reply and problems. |
+| `rka-memory.yml`, `mock-route.yml` | The dsh overlays: the plugin with a 600-second call timeout, and the route to the scripted model (scripted streams only). |
+| `session-script.json` | The script the scripted model reads on every request (scripted streams only). |
+| `mock-requests.jsonl` | Every request the scripted model received, with its session label, kind, reply and problems. |
 | `logs/` | dsh stdout and stderr per session (`s3.err`) and per verdict (`s2-reject1.err`). |
 | `manifest.json`, `result.json` | The stream, its merged config, and every check with its outcome. |
+| `report.md`, `report.json` | What each session received and changed, the records at the end, and the metrics. |
 
 `summary.json` in the run directory has the check counts per stream.
 

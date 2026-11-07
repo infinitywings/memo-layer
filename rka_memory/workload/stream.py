@@ -20,6 +20,9 @@ from rka_memory.workload.checks import CHECKS, Expect
 
 OFFSET = re.compile(r"\+?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?")
 RUNNER_OWNED_CONFIG = frozenset({"ledger", "core", "miner", "hooks", "skills"})
+# A live model's output is not known in advance, so a live stream cannot
+# script the agent or the miner, name records by content, or assert on them.
+MODELS = ("scripted", "live")
 
 
 class StreamError(ValueError):
@@ -87,6 +90,7 @@ class Session:
 class Stream:
     name: str
     description: str
+    model: str
     start: datetime
     config: dict[str, Any]
     fixture: Path
@@ -285,7 +289,10 @@ def find_fixture(source: Path, name: str) -> Path:
 
 def parse(doc: Any, source: Path) -> Stream:
     where = str(source)
-    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config"})
+    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config", "model"})
+    model = d.get("model", "scripted")
+    if model not in MODELS:
+        raise StreamError(f"{where}: model must be one of {list(MODELS)}, got {model!r}")
     config = _keys(d.get("config") or {}, f"{where}.config", set(), set(d.get("config") or {}))
     if RUNNER_OWNED_CONFIG & set(config):
         raise StreamError(f"{where}.config: the runner sets {sorted(RUNNER_OWNED_CONFIG & set(config))}")
@@ -294,9 +301,20 @@ def parse(doc: Any, source: Path) -> Stream:
         raise StreamError(f"{where}: a stream needs at least one session")
     if any(b.at < a.at for a, b in zip(sessions, sessions[1:])):
         raise StreamError(f"{where}: session offsets must not go back in time")
+    for s in sessions if model == "live" else ():
+        scripted = {
+            "agent": s.agent,
+            "miner": s.miner["candidates"] or s.miner["counter_links"] or "task_class" in s.miner,
+            "expect": s.expect,
+            "typed verdicts": any(isinstance(a, Verdict) for a in s.user),
+        }
+        used = [k for k, v in scripted.items() if v]
+        if used:
+            raise StreamError(f"{where}.sessions[{s.label[1:]}]: a live stream cannot use {', '.join(used)}")
     return Stream(
         name=_str(d["name"], where),
         description=str(d.get("description") or ""),
+        model=model,
         start=_start(d["start"], where),
         config=dict(config),
         fixture=find_fixture(source, _str(d["project"], where)),

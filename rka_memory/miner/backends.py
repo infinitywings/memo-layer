@@ -96,6 +96,15 @@ def claude_cli(cfg: Config) -> Backend:
     return run
 
 
+# The miner settings for DeepSeek's OpenAI-compatible endpoint. dsh's own
+# default model is deepseek-flash too; RKM_MINER_MODEL overrides the model.
+DEEPSEEK = {"base_url": "https://api.deepseek.com", "model": "deepseek-flash", "api_key_env": "DEEPSEEK_API_KEY"}
+
+
+def deepseek_miner() -> dict[str, str]:
+    return {"backend": "openai_compat", **DEEPSEEK, "model": os.environ.get("RKM_MINER_MODEL") or DEEPSEEK["model"]}
+
+
 def openai_compat(cfg: Config, transport: httpx.BaseTransport | None = None) -> Backend:
     """Any OpenAI-compatible chat endpoint: the stack's mock model in tests,
     DeepSeek or another provider in live runs."""

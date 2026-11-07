@@ -1,6 +1,6 @@
 # Plan: a Docker Compose environment for developing and testing rka-memory
 
-Status (2026-11-06): M1 to M3 are built, and so is M4's interactive profile (`make up`). M3 drives dsh headless rather than through ACP (see [WORKLOAD.md](WORKLOAD.md)). M4's live stream waits on a model key (decision 2). Elsewhere, "exists" marks what was built before this plan.
+Status (2026-11-06): M1 to M3 are built, and so is M4's interactive profile (`make up`). M3 drives dsh headless rather than through ACP (see [WORKLOAD.md](WORKLOAD.md)). Live streams are built (`make live`, `workload/live/`); the first live run waits on a model key (decision 2). Elsewhere, "exists" marks what was built before this plan.
 
 ## Goal
 
@@ -99,7 +99,7 @@ Each run writes a manifest (image digests, config, model ids, seed), the ledger 
 | T1 integration | `dev`, `dsh` | Core sync and pull against `core`; the real-dsh plugin check (exists) |
 | T2 scenarios | `workload` | the eight scenario suites above, mock model, assertions on rung transitions |
 | T3 security | `workload` | forgery attempts by the agent inside the stack |
-| T4 live | `workload` | real-model streams; metrics, no assertions |
+| T4 live | `workload` | real-model streams (`make live`); harness checks, then a report of rungs and metrics instead of assertions |
 
 `make test` runs T0, T1 and the forgery check under the `test` profile. `make scenarios` runs T2 and T3 under the `workload` profile. T0 and T1 then also run where the host sandbox blocks them today (local ports, the Docker socket).
 
@@ -110,7 +110,7 @@ Each run writes a manifest (image digests, config, model ids, seed), the ledger 
 | M1 | compose file, `core` from source, `dev` toolbox, `mock-llm`, `make test` for T0 and T1 | `make test` passes in containers |
 | M2 | simulated clock, `openai_compat` miner, inline background mode | unit tests; the miner runs against `mock-llm` |
 | M3 | workload runner, headless dsh driver (ACP later), task and stream format, the eight scenario suites, T3 | all scenarios pass on the mock model |
-| M4 | `interactive` profile (built: `make up`, checked by `make check-up`); live streams with a real model (waits on decision 2) | one live stream with a metrics report |
+| M4 | `interactive` profile (built: `make up`, checked by `make check-up`); live streams with a real model (built: `make live`; first run waits on decision 2) | one live stream with a metrics report |
 
 ## Decisions needed
 

@@ -72,6 +72,10 @@ services:
     init: true
     entrypoint: ["rka-memory", "workload", "run"]
     command: ["/opt/rka-memory/workload/scenarios", "--out", "/runs/workload"]
+    environment:
+      # live streams only (`make live`); scripted streams never read them
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      RKM_MINER_MODEL: ${RKM_MINER_MODEL:-}
     volumes:
       - runs:/runs
 

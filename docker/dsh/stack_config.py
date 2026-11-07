@@ -14,27 +14,22 @@ from pathlib import Path
 import yaml
 
 from rka_memory.config import load, merge, user_config_path
+from rka_memory.miner.backends import deepseek_miner
 
-MINERS = {
-    "mock": {"base_url": "http://mock-llm:8000/v1", "model": "mock-model", "api_key_env": "MOCK_LLM_KEY"},
-    "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-flash", "api_key_env": "DEEPSEEK_API_KEY"},
-}
+MOCK_MINER = {"backend": "openai_compat", "base_url": "http://mock-llm:8000/v1", "model": "mock-model", "api_key_env": "MOCK_LLM_KEY"}
 
 
 def main() -> int:
     model = os.environ.get("RKM_MODEL", "mock")
-    if model not in MINERS:
-        print(f"RKM_MODEL must be one of {sorted(MINERS)}, not {model!r}", file=sys.stderr)
+    if model not in ("mock", "deepseek"):
+        print(f"RKM_MODEL must be mock or deepseek, not {model!r}", file=sys.stderr)
         return 2
-    miner = {"backend": "openai_compat", **MINERS[model]}
-    if os.environ.get("RKM_MINER_MODEL"):
-        miner["model"] = os.environ["RKM_MINER_MODEL"]
     path = user_config_path()
     raw = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
     stack = {
         # the memory service is the only syncer; session ends only record
         "core": {"sync_on_session_end": False},
-        "miner": miner,
+        "miner": MOCK_MINER if model == "mock" else deepseek_miner(),
         "skills": {"dir": str(Path(os.environ["RKA_MEMORY_DIR"]) / "skills")},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
