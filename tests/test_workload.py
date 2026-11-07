@@ -269,8 +269,8 @@ def test_mock_rule_extractor_resolves_restated_records_by_content():
     assert kind == "rules"
     assert json.loads(reply["content"]) == {
         "rules": [
-            {"quote": "Always run ruff before committing", "kind": "preference", "standing": None, "restates": "r_ruff"},
-            {"quote": "Never push", "kind": "constraint", "standing": "Never", "restates": None},
+            {"quote": "Always run ruff before committing", "kind": "preference", "standing": None, "restates": "r_ruff", "replaces": None},
+            {"quote": "Never push", "kind": "constraint", "standing": "Never", "restates": None, "replaces": None},
         ],
         "withdrawn": [{"quote": "no more ruff", "record": "r_ruff"}],
     }
@@ -330,7 +330,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule"]
 
 
 LIVE = """

@@ -43,6 +43,7 @@ def test_the_graph_holds_evidence_relations_and_deliveries_as_typed_edges():
         ("supersedes", "r_proc2", "r_proc"),
         ("delivered", delivery.id, "r_rule"),
         ("delivered", delivery.id, "r_proc"),
+        ("touches", ok.id, "command:pytest"),
     }
     (stated,) = [e for e in g.edges if e.source == msg.id]
     assert {k: stated.attrs[k] for k in ("polarity", "grounds", "weight", "confirms", "statement")} == {

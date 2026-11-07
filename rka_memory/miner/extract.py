@@ -46,6 +46,7 @@ class Rule:
     kind: RecordKind
     standing: str | None
     restates: str | None
+    replaces: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,8 +117,10 @@ def _rule(i: int, raw: Any) -> Rule | tuple[str, str]:
         return (label, f"unknown kind {raw.get('kind')!r}")
     if kind not in RULE_KINDS:
         return (label, f"a stated rule is a preference or a constraint, not a {kind.value}")
-    restates = raw.get("restates")
-    return Rule(i, quote, kind, _text(raw.get("standing")), str(restates) if restates else None)
+    restates, replaces = raw.get("restates"), raw.get("replaces")
+    return Rule(
+        i, quote, kind, _text(raw.get("standing")), str(restates) if restates else None, str(replaces) if replaces else None
+    )
 
 
 def _withdrawal(i: int, raw: Any) -> Withdrawal | tuple[str, str]:

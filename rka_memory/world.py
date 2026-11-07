@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from rka_memory import anchors
 from rka_memory.domain import (
     DELIVERABLE,
     FUZZY_FIELDS,
@@ -72,6 +73,8 @@ class Session:
     started: Event | None = None
     ended: Event | None = None
     mined: bool = False
+    # Anchors this session's events touched or its user messages named.
+    anchors: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -105,6 +108,10 @@ class World:
     deliveries: list[Delivery] = field(default_factory=list)
     judgments: dict[tuple[str, str, str], bool] = field(default_factory=dict)
     anomalies: list[tuple[str, str]] = field(default_factory=list)
+    # Event id -> the anchors it touched (or, for a user message, named).
+    touches: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Project -> every anchor its events have touched so far.
+    known: dict[str, set[str]] = field(default_factory=dict)
 
     @property
     def revision(self) -> int:
@@ -135,6 +142,19 @@ class World:
         sess = self.session(ev.session_id)
         sess.events.append(ev)
         _FOLD.get(ev.kind, _ignore)(self, ev)
+        self._anchor(ev, sess)
+
+    def _anchor(self, ev: Event, sess: Session) -> None:
+        project = sess.state.project
+        if ev.kind is Kind.USER_MSG:
+            found = anchors.named(str(ev.payload.get("text") or ""), project, self.known.get(project or "", ()))
+        else:
+            found = anchors.touched(ev, project)
+            if found and project:
+                self.known.setdefault(project, set()).update(found)
+        if found:
+            self.touches[ev.id] = frozenset(found)
+            sess.anchors.update(found)
 
 
 def _ignore(world: World, ev: Event) -> None:

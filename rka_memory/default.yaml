@@ -58,6 +58,9 @@ miner:
   api_key_env: null           # openai_compat: name of the env var holding the key
   extract_rules: true         # also ask for the rules the user stated, as verbatim quotes
 
+graph:
+  anchors: true               # the miner may say which files, commands and tools a record is about; packets put those first
+
 hooks:
   background: spawn           # spawn: mine and sync in a detached process; inline: before SessionEnd returns; off
 

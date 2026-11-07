@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from rka_memory.config import Config
-from rka_memory.domain import DELIVERABLE, Rung, State, parse_ts
-from rka_memory.validity.engine import assess, valid
+from rka_memory.domain import DELIVERABLE, Polarity, Rung, State, parse_ts
+from rka_memory.validity.engine import assess, statement, valid
 from rka_memory.world import RecordState, World
 
 
@@ -34,9 +34,7 @@ class PacketItem:
 
     def line(self) -> str:
         tag = "unvalidated hint" if self.unvalidated else f"{self.rung} {self.kind}"
-        # A rule in the user's own words is shown as their quote, not as an
-        # order from the memory, so it reads as what the user asked for.
-        said = f'The user said on {self.stated}: "{flatten(self.content)}"' if self.stated else flatten(self.content)
+        said = attributed(self.content, self.stated)
         return (
             f"- [{flatten(self.record_id)} | {tag}] {said} "
             f"(scope: {flatten(self.scope)}; grounding {self.grounding:.2f} across {self.sessions} sessions)"
@@ -77,6 +75,40 @@ class Packet:
         }
 
 
+def attributed(content: str, stated: str | None) -> str:
+    """A rule in the user's own words is shown as their dated quote, not as an
+    order from the memory, so it reads as what the user asked for."""
+    return f'The user said on {stated}: "{flatten(content)}"' if stated else flatten(content)
+
+
+def stated(rec: RecordState, world: World, cfg: Config) -> bool:
+    """The record holds a user's own words: a support link quotes a user
+    message, as the engine checks it."""
+    return any(
+        statement(world.events.get(link.via), world.events[link.event_id], cfg) is not None
+        for link in rec.links
+        if link.polarity is Polarity.SUPPORT and link.event_id in world.events
+    )
+
+
+def superseded(world: World, cfg: Config, state: State | None = None) -> set[str]:
+    """Records a newer version hides from every view. The newer record must be
+    at L2 or above and, given a state, valid in it, so a superseder that falls
+    returns the old record by itself. A user's stated rule is hidden only by
+    a record that quotes the user too (docs/GRAPH.md, decision 1)."""
+    out = set()
+    for new in world.records.values():
+        old = world.records.get(new.spec.supersedes or "")
+        if old is None or new.rung not in DELIVERABLE:
+            continue
+        if state is not None and not valid(new, state, world, cfg):
+            continue
+        if stated(old, world, cfg) and not stated(new, world, cfg):
+            continue
+        out.add(old.id)
+    return out
+
+
 def header(channel: str) -> str:
     if channel == "hints":
         return (
@@ -106,6 +138,12 @@ def session_arm(world: World, session_id: str, cfg: Config, today: date) -> str:
         if d.event.session_id == session_id and d.channel == "session_start":
             return d.arm
     return arm_for(today, cfg)
+
+
+def rule_text(rec: RecordState, world: World, cfg: Config) -> str:
+    """One record as a line of text for a skill's rules section."""
+    item = _item(rec, world, cfg)
+    return attributed(item.content, item.stated)
 
 
 def _item(rec: RecordState, world: World, cfg: Config, unvalidated: bool = False) -> PacketItem:
@@ -153,6 +191,7 @@ def _recency(rec: RecordState, world: World) -> int:
 def _select(world: World, cfg: Config, state: State, arm: str, exclude: frozenset[str]) -> list[RecordState]:
     if arm == "none":
         return []
+    exclude = exclude | superseded(world, cfg, state)
     if arm == "ungated":
         pool = [r for r in world.records.values() if r.rung in (Rung.L1, Rung.L2, Rung.L3)]
         return [r for r in pool if r.id not in exclude and r.scope.covers(state)]
@@ -168,12 +207,19 @@ def build(
     channel: str,
     budget_tokens: int | None = None,
     exclude: frozenset[str] = frozenset(),
+    anchors: frozenset[str] = frozenset(),
 ) -> Packet:
+    """`anchors` are the files, commands and tools the session has touched or
+    named so far: groups about one of them come first, so the budget keeps them."""
     budget = cfg.budget_tokens if budget_tokens is None else budget_tokens
     chosen = _select(world, cfg, state, arm, exclude)
     groups = _groups(chosen)
     groups.sort(
-        key=lambda g: (max(r.rung.order for r in g), max(_recency(r, world) for r in g)),
+        key=lambda g: (
+            any(_about(r, anchors) for r in g),
+            max(r.rung.order for r in g),
+            max(_recency(r, world) for r in g),
+        ),
         reverse=True,
     )
     items: list[PacketItem] = []
@@ -191,10 +237,22 @@ def build(
     return Packet(arm, channel, tuple(items), omitted, world.revision, budget)
 
 
-def hints(world: World, cfg: Config, state: State, *, exclude: frozenset[str] = frozenset()) -> Packet:
-    pool = [r for r in world.records.values() if r.rung is Rung.L1 and r.id not in exclude]
+def _about(rec: RecordState, anchors: frozenset[str]) -> bool:
+    return not anchors.isdisjoint(rec.spec.about)
+
+
+def hints(
+    world: World,
+    cfg: Config,
+    state: State,
+    *,
+    exclude: frozenset[str] = frozenset(),
+    anchors: frozenset[str] = frozenset(),
+) -> Packet:
+    hidden = exclude | superseded(world, cfg, state)
+    pool = [r for r in world.records.values() if r.rung is Rung.L1 and r.id not in hidden]
     pool = [r for r in pool if r.scope.covers(state) and not assess(r, world, cfg).counters]
-    pool.sort(key=lambda r: _recency(r, world), reverse=True)
+    pool.sort(key=lambda r: (_about(r, anchors), _recency(r, world)), reverse=True)
     items, used, omitted = [], estimate_tokens(header("hints")), 0
     for r in pool:
         item = _item(r, world, cfg, unvalidated=True)

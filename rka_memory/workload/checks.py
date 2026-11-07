@@ -94,6 +94,12 @@ def _in_prompt(obs: Observed, rec: RecordState, want: bool) -> Outcome:
     return got == want, got
 
 
+def _first_in_packet(obs: Observed, rec: RecordState, want: bool) -> Outcome:
+    """The record opened a packet delivered in this session."""
+    got = any(d.record_ids[:1] == (rec.id,) for d in obs.deliveries())
+    return got == want, [list(d.record_ids) for d in obs.deliveries() if d.record_ids]
+
+
 def _narrowed(obs: Observed, rec: RecordState, want: dict[str, str]) -> Outcome:
     got = {(n.field, n.value) for n in rec.narrowings}
     return set(want.items()) <= got, sorted(got)
@@ -237,6 +243,7 @@ CHECKS: dict[str, Check] = {
     "rung": Check(_is_rung, _rung, True),
     "delivered": Check(_is_bool, _delivered, True),
     "in_prompt": Check(_is_bool, _in_prompt, True),
+    "first_in_packet": Check(_is_bool, _first_in_packet, True),
     "narrowed": Check(_is_scope_values, _narrowed, True),
     "skill_offered": Check(_is_bool, _skill_offered, True),
     "arm": Check(_is_arm, _arm, False),

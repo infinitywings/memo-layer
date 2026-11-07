@@ -1,0 +1,94 @@
+name: skill-rules
+description: >-
+  A skill shows the rules its procedure depends on by reference, as the
+  user's dated words, not as copied text. The user states a house rule; a
+  procedure that depends on it is confirmed and reaches L3; the model loads
+  the skill and sees the rule in it. When the user withdraws the rule, the
+  next session's skill no longer shows it, and the procedure keeps L3.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a multiply function to calc.py. House rule from now on: run git
+      status --short before every test run.
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    miner:
+      rules:
+        - quote: run git status --short before every test run
+          kind: constraint
+          standing: House rule from now on
+    expect:
+      - {record: run git status --short before every test run, rung: L2}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Before finishing a calc.py change, check git status --short and then run pytest -q
+          kind: procedure
+          steps:
+            - {tool: Bash, match: git status --short}
+            - {tool: Bash, match: pytest -q}
+          acceptance_check: pytest -q
+          evidence: [{kind: test_result, passed: true}]
+          depends_on: [run git status --short before every test run]
+    user:
+      - confirm: Before finishing a calc.py change, check git status --short and then run pytest -q
+    expect:
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+
+  - at: +3d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    expect:
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L3}
+
+  - at: +4d
+    prompt: >-
+      Add a negate function to calc.py. You can stop running git status
+      before the tests now.
+    agent:
+      - skill: offered
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      withdrawn:
+        - quote: You can stop running git status before the tests now
+          record: run git status --short before every test run
+    expect:
+      - {model_saw: "Rules this procedure follows"}
+      - {model_saw: "The user said on 2027-01-04: "}
+      - {record: run git status --short before every test run, rung: L1}
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L3}
+
+  - at: +5d
+    prompt: Add an absolute function to calc.py
+    agent:
+      - skill: offered
+      - edit: {path: calc.py, old: "def subtract", new: "def absolute(a):\n    return abs(a)\n\n\ndef subtract"}
+      - bash: git status --short
+      - bash: pytest -q
+    expect:
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", skill_offered: true}
+      - {model_never_saw: "Rules this procedure follows"}
+      - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L3}

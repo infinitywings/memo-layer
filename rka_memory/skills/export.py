@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from rka_memory.config import Config
-from rka_memory.domain import SCOPE_FIELDS, RecordKind, Rung, State
-from rka_memory.packet.builder import flatten
+from rka_memory.domain import DELIVERABLE, SCOPE_FIELDS, RecordKind, Rung, State
+from rka_memory.packet.builder import flatten, rule_text, superseded
 from rka_memory.skills.gate import skill_name
 from rka_memory.validity.engine import assess
 from rka_memory.world import RecordState, World
@@ -56,8 +56,23 @@ class ExportResult:
         }
 
 
-def exportable(world: World) -> list[RecordState]:
-    return [r for r in world.records.values() if r.spec.kind is RecordKind.PROCEDURE and r.rung in EXPORTED_RUNGS]
+def exportable(world: World, cfg: Config, state: State | None = None) -> list[RecordState]:
+    """Procedures at L2 or L3 that no valid newer version supersedes."""
+    hidden = superseded(world, cfg, state)
+    return [
+        r
+        for r in world.records.values()
+        if r.spec.kind is RecordKind.PROCEDURE and r.rung in EXPORTED_RUNGS and r.id not in hidden
+    ]
+
+
+def rules_followed(rec: RecordState, world: World, cfg: Config) -> list[str]:
+    """The procedure's dependencies at L2 or above, as the skill shows them.
+    One that drops below L2 leaves the skill at the next export, while the
+    procedure keeps its own rung (docs/GRAPH.md, decision 3)."""
+    hidden = superseded(world, cfg)
+    deps = [world.records[d] for d in rec.spec.depends_on if d in world.records]
+    return [rule_text(d, world, cfg) for d in deps if d.rung in DELIVERABLE and d.id not in hidden]
 
 
 def version(rec: RecordState, world: World) -> int:
@@ -155,6 +170,10 @@ def render(rec: RecordState, world: World, cfg: Config, placement: Placement) ->
             f"{i}. Tool `{_code(s.tool)}`, with input containing `{_code(s.match)}`."
             for i, s in enumerate(rec.spec.steps, 1)
         ]
+    rules = rules_followed(rec, world, cfg)
+    if rules:
+        body += ["", "## Rules this procedure follows", ""]
+        body += [f"- {line}" for line in rules]
     body.append("")
     if rec.rung is Rung.L3 and rec.acceptance_check:
         body += [f"Before finishing, run `{_code(rec.acceptance_check)}`; rka-memory records the result.", ""]
@@ -172,7 +191,7 @@ def session_skills(world: World, cfg: Config, state: State, arm: str) -> list[di
     if arm == "none":
         return []
     out = []
-    for rec in sorted(exportable(world), key=lambda r: r.id):
+    for rec in sorted(exportable(world, cfg, state), key=lambda r: r.id):
         if rec.rung is not Rung.L3 or not valid(rec, state, world, cfg):
             continue
         text = render(rec, world, cfg, Placement(cfg.skills_dir, None, ()))
@@ -212,7 +231,7 @@ def export_skills(memory: Memory) -> ExportResult:
     world = memory.world()
     result = ExportResult()
     wanted: dict[Path, tuple[RecordState, str, Placement]] = {}
-    for rec in sorted(exportable(world), key=lambda r: r.id) if cfg.skills_export_files else ():
+    for rec in sorted(exportable(world, cfg), key=lambda r: r.id) if cfg.skills_export_files else ():
         name = skill_name(rec.id)
         if not NAME_PATTERN.fullmatch(name):
             result.skipped.append({"record_id": rec.id, "reason": f"skill name {name!r} is not a valid skill name"})

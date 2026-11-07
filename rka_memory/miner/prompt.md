@@ -14,7 +14,9 @@ Reply with one JSON object and nothing else. No prose, no Markdown fences.
       "confidence": 0.0,
       "steps": [{"tool": "<tool name>", "match": "<substring of the tool input>"}],
       "acceptance_check": "<shell or test command that shows the procedure worked>",
-      "depends_on": ["<record ids this candidate relies on>"]
+      "depends_on": ["<record ids this candidate relies on>"],
+      "about": ["<anchors from the list below that this lesson is specifically about>"],
+      "supersedes": "<id of a delivered or existing procedure this procedure replaces, or null>"
     }
   ],
   "support_links": [
@@ -37,6 +39,8 @@ Rules:
 8. `counter_links`: when an event in this session shows that a delivered record below was wrong here (a failing check after following it, a user undo or correction), link that record to the event. Only records in the delivered list may be named.
 9. `support_links`: when an event in this session shows that a record listed below, delivered or existing, held here (a passing check after doing what it says, the user stating or relying on it), link that record to the event. Cite events by rule 1 and rule 2, exactly as for candidate evidence. Link only when the event bears on what the record says; a passing test unrelated to it is not support.
 10. `task_class`: the class that best describes the session's main work.
+11. `about`: the anchors listed below that the lesson is specifically about, such as the file a fact describes or the command a procedure runs. Leave it empty for a lesson about the whole project. Name only anchors from the list below.
+12. `supersedes`: only for a procedure that replaces a procedure listed below, because the agent now does that work in a different way. The old procedure stays on record, and the new one is shown instead once it is validated. Never use it for other kinds.
 
 Session: $session_id
 State: $state
@@ -49,6 +53,9 @@ $existing
 
 Rules the user stated in this session, already recorded in the user's own words. Do not propose them again in any wording:
 $stated
+
+Anchors this session touched or its user named (files, commands, tools):
+$anchors
 
 Events, oldest first, one per line as `id kind actor payload`:
 $events

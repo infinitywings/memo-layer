@@ -1,0 +1,50 @@
+name: replaced-rule
+description: >-
+  The user replaces a house rule in their own words. The new rule is
+  confirmed at once and delivered; the old one stays on record at L2 but
+  leaves the packet. A miner candidate that tries to replace the user's rule
+  is refused the replacement.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a multiply function to calc.py. From now on, end every reply to me
+      with a line that starts with `Summary:`.
+    miner:
+      rules:
+        - quote: "end every reply to me with a line that starts with `Summary:`"
+          kind: preference
+          standing: From now on
+    expect:
+      - {record: "end every reply to me with a line that starts with `Summary:`", rung: L2}
+
+  - at: +1d
+    prompt: >-
+      Add a divide function to calc.py. From now on, end every reply to me
+      with a line that starts with `TL;DR:` instead.
+    miner:
+      rules:
+        - quote: "end every reply to me with a line that starts with `TL;DR:`"
+          kind: preference
+          standing: From now on
+          replaces: "end every reply to me with a line that starts with `Summary:`"
+      candidates:
+        - content: Replies to this user need no closing line
+          kind: preference
+          evidence: [{kind: user_msg}]
+          supersedes: "end every reply to me with a line that starts with `Summary:`"
+    expect:
+      - {record: "end every reply to me with a line that starts with `Summary:`", delivered: true}
+      - {record: "end every reply to me with a line that starts with `TL;DR:`", rung: L2}
+      - {record: "end every reply to me with a line that starts with `Summary:`", rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py.
+    expect:
+      - {record: "end every reply to me with a line that starts with `TL;DR:`", delivered: true}
+      - {record: "end every reply to me with a line that starts with `Summary:`", delivered: false}
+      - {record: Replies to this user need no closing line, rung: L1}
+      - {packet_empty: false}

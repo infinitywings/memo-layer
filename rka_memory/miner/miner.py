@@ -86,6 +86,7 @@ class MinerView:
     events: tuple[Event, ...]
     delivered: tuple[RecordRow, ...]
     existing: tuple[RecordRow, ...]
+    anchors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,8 @@ class Candidate:
     steps: tuple[Step, ...]
     acceptance_check: str | None
     depends_on: tuple[str, ...]
+    about: tuple[str, ...] = ()
+    supersedes: str | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +222,7 @@ def view_of(world: World, session_id: str, cfg: Config) -> MinerView:
         events=tuple(e for e in sess.events if e.kind in SHOWN_KINDS),
         delivered=tuple(_row(r) for r in delivered),
         existing=tuple(_row(r) for r in existing),
+        anchors=tuple(sorted(sess.anchors)) if cfg.graph_anchors else (),
     )
 
 
@@ -239,6 +243,7 @@ def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
         delivered=_rows(view.delivered),
         existing=_rows(view.existing),
         stated="\n".join(f"- {q}" for q in stated) or "(none)",
+        anchors=", ".join(view.anchors) or "(none)",
         events="\n".join(f"{e.id} {e.kind.value} {e.actor.value} {_short(dict(e.payload))}" for e in view.events)
         or "(none)",
     )
@@ -283,6 +288,8 @@ def _candidate(raw: Any, index: int) -> Candidate | Drop:
         steps=steps if procedure else (),
         acceptance_check=check if procedure else None,
         depends_on=_strings(raw.get("depends_on")),
+        about=_strings(raw.get("about")),
+        supersedes=str(raw["supersedes"]) if raw.get("supersedes") else None,
     )
 
 
@@ -350,6 +357,27 @@ class _Planner:
         self.cfg = cfg
         self.result = result
         self.events: list[Event] = []
+        # Records the prompts listed: the only ones a new record may supersede.
+        self.listed: set[str] = set()
+        self.rule_records: set[str] = set()
+
+    def supersedes(self, label: str, c: Candidate, by_user: bool) -> str | None:
+        """The listed record `c` replaces, or None. The miner may supersede only
+        a procedure with a procedure; a user's rule is replaced only through
+        the user's own words (docs/GRAPH.md, decision 1)."""
+        old = c.supersedes
+        if old is None:
+            return None
+        if by_user:
+            ok, why = old in self.rule_records, "replaces a record that was not listed as a rule"
+        else:
+            rec = self.world.records.get(old)
+            ok = old in self.listed and rec is not None and rec.spec.kind is c.kind is RecordKind.PROCEDURE
+            why = "only a procedure supersedes a listed procedure"
+        if not ok:
+            self.result.dropped.append(Drop(f"{label} supersedes {old}", why))
+            return None
+        return old
 
     def emit(self, kind: Kind, payload: dict[str, Any]) -> Event:
         state = self.world.session(self.session_id).state
@@ -402,10 +430,15 @@ class _Planner:
         self.emit(Kind.EVIDENCE_LINKED, {**payload, "statement": statement} if statement else payload)
         return True
 
-    def candidate(self, label: str, c: Candidate, statement: dict[str, str] | None = None) -> None:
+    def candidate(
+        self, label: str, c: Candidate, statement: dict[str, str] | None = None, by_user: bool = False
+    ) -> None:
         evidence = self.cited(label, c.evidence, Polarity.SUPPORT)
         state = self.world.session(self.session_id).state
-        dup = dedup.find_duplicate(c.content, c.kind, self.world, state, self.cfg.dedup_threshold)
+        replaces = self.supersedes(label, c, by_user)
+        # A replacement differs from what it replaces by definition, however
+        # close the wording ("starts with `TL;DR:`" for "starts with `Summary:`").
+        dup = None if replaces else dedup.find_duplicate(c.content, c.kind, self.world, state, self.cfg.dedup_threshold)
         if dup is not None:
             linked = [e for e in evidence if self.link(dup, e, Polarity.SUPPORT, "duplicate candidate cited it", statement)]
             self.result.merged.append({"record_id": dup.id, "content": c.content, "evidence": linked})
@@ -416,6 +449,16 @@ class _Planner:
                 depends_on.append(d)
             else:
                 self.result.dropped.append(Drop(f"{label} depends_on {d}", "no such record"))
+        # A record may be about only what this session touched or its user named.
+        # File writes and tool calls never ground, so the cited evidence itself
+        # rarely touches the file a fact describes.
+        reached = self.world.session(self.session_id).anchors
+        about = []
+        for a in c.about if self.cfg.graph_anchors else ():
+            if a in reached:
+                about.append(a)
+            else:
+                self.result.dropped.append(Drop(f"{label} about {a}", "the session did not touch or name it"))
         spec = RecordSpec(
             record_id=new_id("r"),
             kind=c.kind,
@@ -426,6 +469,8 @@ class _Planner:
             steps=c.steps,
             acceptance_check=c.acceptance_check,
             depends_on=tuple(depends_on),
+            about=tuple(about),
+            supersedes=replaces,
         )
         self.emit(Kind.RECORD_PROPOSED, {**spec.to_json(), "mined_from_session": self.session_id})
         rec = self.world.records[spec.record_id]
@@ -481,8 +526,10 @@ class _Planner:
                 steps=(),
                 acceptance_check=None,
                 depends_on=(),
+                supersedes=rule.replaces,
             ),
             statement,
+            by_user=True,
         )
 
     def withdraw(self, gone: extract.Withdrawn, listed: set[str]) -> None:
@@ -520,6 +567,7 @@ def plan(
     listed = delivered | {r.id for r in view.existing}
     planner.judge_task_class(out.task_class)
     rule_records = {r.id for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS}
+    planner.listed, planner.rule_records = listed, rule_records
     for found in extraction.rules if extraction else ():
         planner.rule(found, rule_records)
     for gone in extraction.withdrawn if extraction else ():

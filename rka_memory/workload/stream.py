@@ -217,7 +217,9 @@ def _selector(raw: Any, where: str) -> dict[str, Any]:
 
 LINK_KEYS = ("counter_links", "support_links")
 RULE_KINDS = ("preference", "constraint")
-CANDIDATE_KEYS = {"broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on"}
+CANDIDATE_KEYS = {
+    "broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on", "about", "supersedes"
+}
 
 
 def _miner(raw: Any, where: str) -> dict[str, Any]:
@@ -244,10 +246,10 @@ def _miner(raw: Any, where: str) -> dict[str, Any]:
     rules = []
     for i, rule in enumerate(_list(d.get("rules"), f"{where}.rules")):
         rw = f"{where}.rules[{i}]"
-        rule = _keys(rule, rw, {"quote", "kind"}, {"standing", "restates"})
+        rule = _keys(rule, rw, {"quote", "kind"}, {"standing", "restates", "replaces"})
         if rule["kind"] not in RULE_KINDS:
             raise StreamError(f"{rw}: kind must be one of {list(RULE_KINDS)}")
-        optional = {k: _str(rule[k], rw) if rule.get(k) else None for k in ("standing", "restates")}
+        optional = {k: _str(rule[k], rw) if rule.get(k) else None for k in ("standing", "restates", "replaces")}
         rules.append({"quote": _str(rule["quote"], rw), "kind": rule["kind"], **optional})
     out["rules"] = rules
     withdrawn = []

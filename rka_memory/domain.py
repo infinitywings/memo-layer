@@ -451,9 +451,11 @@ class RecordSpec:
     acceptance_check: str | None = None
     depends_on: tuple[str, ...] = ()
     supersedes: str | None = None
+    # Anchor keys (rka_memory/anchors.py) the record is about.
+    about: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        out = {
             "record_id": self.record_id,
             "kind": self.kind.value,
             "content": self.content,
@@ -465,6 +467,9 @@ class RecordSpec:
             "depends_on": list(self.depends_on),
             "supersedes": self.supersedes,
         }
+        if self.about:
+            out["about"] = list(self.about)
+        return out
 
     @classmethod
     def from_json(cls, d: Mapping[str, Any]) -> RecordSpec:
@@ -479,4 +484,5 @@ class RecordSpec:
             acceptance_check=d.get("acceptance_check"),
             depends_on=tuple(d.get("depends_on") or ()),
             supersedes=d.get("supersedes"),
+            about=tuple(str(a) for a in d.get("about") or ()),
         )

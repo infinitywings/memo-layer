@@ -134,10 +134,12 @@ def miner_reply(prompt: str, rules: dict[str, Any]) -> tuple[dict[str, Any], lis
     candidates = []
     for c in rules.get("candidates") or ():
         label = f"candidate {c['content']!r}"
-        out = {k: v for k, v in c.items() if k not in ("evidence", "depends_on")}
+        out = {k: v for k, v in c.items() if k not in ("evidence", "depends_on", "supersedes")}
         out["evidence"] = [eid for sel in c.get("evidence") or () for eid in r.events(sel, f"{label} evidence")]
         deps = [r.record(dep, known, f"{label} depends_on") for dep in c.get("depends_on") or ()]
         out["depends_on"] = [d for d in deps if d]
+        if c.get("supersedes"):
+            out["supersedes"] = r.record(c["supersedes"], known, f"{label} supersedes")
         candidates.append(out)
     doc: dict[str, Any] = {"candidates": candidates}
     # a counter link names a delivered record; a support link any listed one
@@ -171,10 +173,10 @@ def rules_reply(prompt: str, script: dict[str, Any]) -> tuple[dict[str, Any], li
 
     rules = []
     for rule in script.get("rules") or ():
-        rid = resolve(rule["restates"], f"rule {rule['quote']!r}") if rule.get("restates") else None
-        if rule.get("restates") and rid is None:
+        ids = {k: resolve(rule[k], f"rule {rule['quote']!r}") if rule.get(k) else None for k in ("restates", "replaces")}
+        if any(rule.get(k) and ids[k] is None for k in ids):
             continue
-        rules.append({"quote": rule["quote"], "kind": rule["kind"], "standing": rule.get("standing"), "restates": rid})
+        rules.append({"quote": rule["quote"], "kind": rule["kind"], "standing": rule.get("standing"), **ids})
     withdrawn = []
     for w in script.get("withdrawn") or ():
         rid = resolve(w["record"], f"withdrawal {w['quote']!r}")

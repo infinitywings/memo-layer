@@ -72,12 +72,20 @@ class Memory:
         """Build a packet for `state` and log exactly which records were delivered."""
         now = now or clock_now()
         world = world or self.world()
+        anchors = frozenset(world.session(session_id).anchors) if self.cfg.graph_anchors else frozenset()
         if channel == "hints":
-            packet = builder.hints(world, self.cfg, state, exclude=exclude)
+            packet = builder.hints(world, self.cfg, state, exclude=exclude, anchors=anchors)
         else:
             arm = arm or builder.arm_for(now.astimezone().date(), self.cfg)
             packet = builder.build(
-                world, self.cfg, state, arm=arm, channel=channel, budget_tokens=budget_tokens, exclude=exclude
+                world,
+                self.cfg,
+                state,
+                arm=arm,
+                channel=channel,
+                budget_tokens=budget_tokens,
+                exclude=exclude,
+                anchors=anchors,
             )
         self.append(
             Event.new(

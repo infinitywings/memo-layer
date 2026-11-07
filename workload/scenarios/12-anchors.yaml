@@ -1,0 +1,60 @@
+name: anchors
+description: >-
+  Records can say which files and commands they are about, but only ones the
+  mined session touched or the user named; an anchor the session never went
+  near is dropped. Two facts reach L2: one about calc.py, proposed first, and
+  one about pytest, promoted last, which the default order puts first. When a
+  prompt names calc.py, the packet opens with the calc.py fact instead. A
+  prompt that names nothing gets the default order.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: Add a divide function to calc.py that raises ValueError when b is zero
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    if b == 0:\n        raise ValueError(\"b is zero\")\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: calc.divide raises ValueError when b is zero
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+          about: [file:calc.py, file:README.md]
+        - content: The test suite runs with pytest -q
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+          about: [command:pytest]
+    expect:
+      - {record: calc.divide raises ValueError when b is zero, rung: L1}
+      - {record: The test suite runs with pytest -q, rung: L1}
+
+  - at: +1d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links:
+        - record: calc.divide raises ValueError when b is zero
+          event: {kind: test_result, passed: true}
+          reason: the suite with divide passed again
+        - record: The test suite runs with pytest -q
+          event: {kind: test_result, passed: true}
+          reason: the suite passed again
+    expect:
+      - {record: calc.divide raises ValueError when b is zero, rung: L2}
+      - {record: The test suite runs with pytest -q, rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    expect:
+      - {record: calc.divide raises ValueError when b is zero, first_in_packet: true}
+      - {record: The test suite runs with pytest -q, delivered: true}
+
+  - at: +3d
+    prompt: Add a negate function
+    expect:
+      - {record: The test suite runs with pytest -q, first_in_packet: true}
+      - {record: calc.divide raises ValueError when b is zero, first_in_packet: false}

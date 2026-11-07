@@ -21,6 +21,7 @@ from rka_memory.world import RecordState, World
 class NodeType(StrEnum):
     RECORD = "record"
     EVENT = "event"
+    ANCHOR = "anchor"
 
 
 class EdgeType(StrEnum):
@@ -28,6 +29,8 @@ class EdgeType(StrEnum):
     DEPENDS_ON = "depends_on"  # record -> record
     SUPERSEDES = "supersedes"  # record -> record
     DELIVERED = "delivered"  # delivery event -> record
+    TOUCHES = "touches"  # event -> anchor (a user message names it)
+    ABOUT = "about"  # record -> anchor
 
 
 @dataclass(frozen=True)
@@ -118,10 +121,14 @@ def project(world: World, cfg: Config) -> Graph:
         edges += [Edge(EdgeType.DEPENDS_ON, rec.id, d) for d in rec.spec.depends_on if d in world.records]
         if rec.spec.supersedes in world.records:
             edges.append(Edge(EdgeType.SUPERSEDES, rec.id, rec.spec.supersedes))
+        edges += [Edge(EdgeType.ABOUT, rec.id, a) for a in rec.spec.about]
     for d in world.deliveries:
         attrs = {"session_id": d.event.session_id, "channel": d.channel, "arm": d.arm, "ts": d.event.ts}
         edges += [Edge(EdgeType.DELIVERED, d.event.id, rid, attrs) for rid in d.record_ids if rid in world.records]
+    for event_id, found in sorted(world.touches.items(), key=lambda kv: world.position[kv[0]]):
+        edges += [Edge(EdgeType.TOUCHES, event_id, a) for a in sorted(found)]
     event_ids = {e.source for e in edges if e.source in world.events}
+    anchor_ids = sorted({e.target for e in edges if e.type in (EdgeType.TOUCHES, EdgeType.ABOUT)})
     events = [
         Node(
             ev.id,
@@ -130,7 +137,8 @@ def project(world: World, cfg: Config) -> Graph:
         )
         for ev in sorted((world.events[i] for i in event_ids), key=lambda e: world.position[e.id])
     ]
-    return Graph(tuple(_record_node(r) for r in records) + tuple(events), tuple(edges))
+    anchor_nodes = tuple(Node(a, NodeType.ANCHOR, {"anchor_type": a.partition(":")[0]}) for a in anchor_ids)
+    return Graph(tuple(_record_node(r) for r in records) + tuple(events) + anchor_nodes, tuple(edges))
 
 
 @dataclass(frozen=True)
