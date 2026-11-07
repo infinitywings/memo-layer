@@ -7,7 +7,7 @@ A stream is a YAML file that drives real dsh sessions, against a scripted model 
 | Command | What it runs |
 |---|---|
 | `make scenarios` | Builds the `rka-memory-dsh` image and runs every stream in `workload/scenarios/` in the `workload` compose service. Results go to the `runs` volume under `/runs/workload/<UTC timestamp>/`. |
-| `make live` | Runs every stream in `workload/live/` with a real model (see [Live streams](#live-streams)). Needs `DEEPSEEK_API_KEY` in the shell or in `.env`. Results go to `workload-runs/<UTC timestamp>/` on the host. |
+| `make live` | Runs every stream in `workload/live/` with a real model (see [Live streams](#live-streams)). Needs `DEEPSEEK_API_KEY` in the shell or in `.env`. The run itself happens on the `runs` volume, where file modes hold, and its results are copied to `workload-runs/<UTC timestamp>/` on the host. |
 | `rka-memory workload run <file-or-dir> [--out DIR] [--dsh PATH]` | Runs one stream file, or every `*.yaml` in a directory in file-name order. Exits 1 if any check fails, and 2 if it cannot start, for example when a stream file does not load. |
 
 `--out` defaults to `workload-runs`. Each invocation creates a new timestamped directory inside it. The runner refuses an `--out` inside `/tmp` or the system temp directory, because dsh's `workspace-write` sandbox lets the agent write there, and the ledger would no longer be out of the agent's reach.
@@ -163,7 +163,7 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{record_contains: <text>}` | Some record's content contains the text, ignoring case. The result lists each match with its rung. As an observation in a live stream, it measures the miner's recall, since a live record's wording is not known in advance. |
 | `{metrics: {<dotted path>: <value or {op: value}>}}` | `rka-memory metrics` reports these values. Operators are `==`, `!=`, `>=`, `>`, `<=` and `<`. |
 
-The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, every record delivered in the session traces to grounding evidence linked before the delivery (`rka_memory/graph.py`), the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.
+Before the first session, when the agent's tools are confined, the runner checks as the agent user that it cannot read the ledger, and stops the stream if it can. The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, every record delivered in the session traces to grounding evidence linked before the delivery (`rka_memory/graph.py`), the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.
 
 ## Live streams
 

@@ -133,6 +133,14 @@ def confinement() -> tuple[int, int] | None:
     return user.pw_uid, user.pw_gid
 
 
+def agent_can_read(path: Path, uid: int, gid: int) -> bool:
+    """Whether a process running as the agent user can read `path`."""
+    proc = subprocess.run(
+        ["cat", str(path)], user=uid, group=gid, extra_groups=[], capture_output=True, check=False
+    )
+    return proc.returncode == 0
+
+
 def chown_tree(path: Path, uid: int, gid: int) -> None:
     os.chown(path, uid, gid, follow_symlinks=False)
     for sub in path.rglob("*"):
@@ -441,6 +449,14 @@ class StreamRun:
         self._plant_canaries()
         self._own()
         label = "-"
+        if self.confine is not None:
+            leaked = agent_can_read(p.ledger_dir / "canary.txt", *self.confine)
+            # On a macOS bind mount, Docker Desktop ignores ownership and mode
+            # for container users, so the agent could read the ledger and an
+            # arm comparison would mean nothing. Stop before spending a token.
+            self.check(label, "the agent user cannot read the ledger", not leaked, str(p.ledger_dir))
+            if leaked:
+                return self._finish()
         try:
             mock = MockModel(p) if self.stream.model == "scripted" else LiveModel()
         except (OSError, ValueError, RuntimeError) as exc:
@@ -485,7 +501,7 @@ def find_dsh(explicit: str | None) -> str:
     return dsh
 
 
-def run_all(path: Path, out: Path, dsh: str | None = None) -> int:
+def run_all(path: Path, out: Path, dsh: str | None = None, copy_to: Path | None = None) -> int:
     streams = load_all(path)
     refuse_temp_dir(out)
     root = out / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -499,6 +515,11 @@ def run_all(path: Path, out: Path, dsh: str | None = None) -> int:
         summary[st.name] = {"checks": len(results), "failed": failed}
         print(f"== {st.name}: {len(results) - failed}/{len(results)} checks passed; report in {root / st.name / 'report.md'}\n", flush=True)
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
+    if copy_to is not None:
+        # The run itself stays on `out`, where file modes hold; only the
+        # finished results go to `copy_to`, such as a host bind mount.
+        shutil.copytree(root, copy_to / root.name, symlinks=True)
+        root = copy_to / root.name
     bad = [name for name, s in summary.items() if s["failed"]]
     checks = sum(s["checks"] for s in summary.values())
     failed = sum(s["failed"] for s in summary.values())
