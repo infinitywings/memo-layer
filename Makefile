@@ -29,7 +29,7 @@ pull:
 	done | grep -E '[:@/]' | sort -u | while read -r img; do $(DOCKER) pull -q "$$img"; done
 	$(TEST_COMPOSE) --profile test pull --ignore-buildable -q
 
-# T2 + T3: the eight scenario streams through real dsh with the scripted
+# T2 + T3: the scenario streams through real dsh with the scripted
 # model. Results go to the test project's `runs` volume under /runs/workload.
 scenarios: pull
 	$(TEST_COMPOSE) --profile workload build workload
@@ -37,11 +37,13 @@ scenarios: pull
 
 # T4: the live streams in workload/live, with dsh's default DeepSeek model and
 # the DeepSeek miner. Needs DEEPSEEK_API_KEY (in the shell or .env). Each
-# stream's report.md lands under workload-runs/ on the host.
+# stream's report.md lands under workload-runs/ on the host. One stream:
+#   make live LIVE=workload/live/2-house-rules.yaml
+LIVE ?= workload/live
 live: pull
 	@[ -n "$$DEEPSEEK_API_KEY" ] || grep -q '^DEEPSEEK_API_KEY=.' .env 2>/dev/null || { echo "make live needs DEEPSEEK_API_KEY in the shell or in .env" >&2; exit 2; }
 	$(TEST_COMPOSE) --profile workload build workload
-	$(TEST_COMPOSE) --profile workload run --rm -v "$(CURDIR)/workload-runs:/out" workload /opt/rka-memory/workload/live --out /out
+	$(TEST_COMPOSE) --profile workload run --rm -v "$(CURDIR)/workload-runs:/out" workload /opt/rka-memory/$(LIVE) --out /out
 
 # Interactive: dsh's web UI on 127.0.0.1:$${DSH_HOST_PORT:-3080} with the
 # memory service and the stack's Core. The model is the mock unless

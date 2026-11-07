@@ -132,6 +132,19 @@ def _raw_line_absent(obs: Observed, line: str) -> Outcome:
     return not hits, f"found at lines {hits}" if hits else "absent"
 
 
+def _is_path_text(value: Any) -> None:
+    if not isinstance(value, dict) or set(value) != {"path", "text"} or not all(isinstance(v, str) for v in value.values()):
+        raise ValueError("expected {path, text}")
+
+
+def _file_contains(obs: Observed, want: dict[str, str]) -> Outcome:
+    path = Path(want["path"])
+    if not path.is_file():
+        return False, "no such file"
+    found = want["text"] in path.read_text(encoding="utf-8", errors="replace")
+    return found, "found" if found else "not found"
+
+
 def _file_absent(obs: Observed, path: str) -> Outcome:
     return not Path(path).exists(), "exists" if Path(path).exists() else "absent"
 
@@ -205,6 +218,7 @@ CHECKS: dict[str, Check] = {
     "ledger_parses": Check(_is_bool, _ledger_parses, False),
     "raw_line_absent": Check(_is_str, _raw_line_absent, False),
     "file_absent": Check(_is_str, _file_absent, False),
+    "file_contains": Check(_is_path_text, _file_contains, False),
     "metrics": Check(_is_metric_conditions, _metrics, False),
 }
 

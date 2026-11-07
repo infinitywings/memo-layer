@@ -354,8 +354,6 @@ class StreamRun:
                 files.apply(action, p.project, self.before)
         new_errors = self._hook_errors()[len(errors):]
         self.check(s.label, "no hook errors", not new_errors.strip(), new_errors[-400:])
-        at = (self.stream.start + s.at).isoformat(timespec="minutes")
-        self.rows.append(report.session_row(s.label, at, sid, before, self.world()))
         obs = Observed(
             world=self.world(),
             session_id=sid,
@@ -367,6 +365,12 @@ class StreamRun:
             expect = replace(expect, value=files.substitute(expect.value, p.placeholders()))
             ok, detail = evaluate(obs, expect)
             self.check(s.label, expect.describe(), ok, detail)
+        row = report.session_row(s.label, (self.stream.start + s.at).isoformat(timespec="minutes"), sid, before, obs.world)
+        row["observed"] = {
+            o.label: evaluate(obs, replace(o.expect, value=files.substitute(o.expect.value, p.placeholders())))[0]
+            for o in s.observe
+        }
+        self.rows.append(row)
 
     def run(self) -> list[CheckResult]:
         p = self.paths

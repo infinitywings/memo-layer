@@ -52,6 +52,16 @@ def records(world: World) -> list[dict[str, Any]]:
     ]
 
 
+def by_arm(sessions: list[dict[str, Any]]) -> dict[tuple[str, str], tuple[int, int]]:
+    """(observation, arm) -> (sessions observed, sessions in which it held)."""
+    out: dict[tuple[str, str], tuple[int, int]] = {}
+    for s in sessions:
+        for label, held in (s.get("observed") or {}).items():
+            n, k = out.get((label, s.get("arm") or "none"), (0, 0))
+            out[(label, s.get("arm") or "none")] = (n + 1, k + int(bool(held)))
+    return dict(sorted(out.items()))
+
+
 def _cell(value: Any) -> str:
     if value is None or value == [] or value == {}:
         return ""
@@ -75,13 +85,18 @@ def render(report: dict[str, Any]) -> str:
         lines += [report["description"], ""]
     lines += [f"Model route: {report['route']}. Miner: {report['miner']}.", "", "## Sessions", ""]
     lines += _table(
-        ["session", "simulated time", "task", "toolchain", "arm", "delivered", "tokens", "tokens before first write", "proposed", "rung changes"],
+        ["session", "simulated time", "task", "toolchain", "arm", "delivered", "tokens", "tokens before first write", "proposed", "rung changes", "observed"],
         [
             [s["session"], s["at"], s.get("task_class"), s.get("toolchain"), s.get("arm"), s.get("delivered"),
-             s.get("tokens_total"), s.get("tokens_before_first_write"), s.get("proposed"), s.get("rung_changes")]
+             s.get("tokens_total"), s.get("tokens_before_first_write"), s.get("proposed"), s.get("rung_changes"),
+             {k: "yes" if v else "no" for k, v in (s.get("observed") or {}).items()}]
             for s in report["sessions"]
         ],
     )
+    rules = by_arm(report["sessions"])
+    if rules:
+        lines += ["", "## Observations by arm", "", "How often each observation held, by the arm of the session's packet.", ""]
+        lines += _table(["observation", "arm", "sessions", "held"], [[label, arm, n, held] for (label, arm), (n, held) in rules.items()])
     lines += ["", "## Records at the end", ""]
     lines += _table(["rung", "kind", "id", "content", "scope"], [[r["rung"], r["kind"], r["id"], r["content"], r["scope"]] for r in report["records"]])
     lines += ["", "## Metrics", ""]

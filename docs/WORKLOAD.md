@@ -66,6 +66,7 @@ Both lists take the same file actions. Paths are relative to the project and mus
 | `append: {path, text}` | Appends text. |
 | `replace: {path, old, new}` | Replaces the first occurrence of `old`; fails if it is missing. |
 | `restore: <path>` | Puts the file back as it was before the latest agent session, or deletes it if it did not exist then. |
+| `clean: <path>` | Deletes the file or directory if it exists, such as a cache the agent left behind. |
 
 rka-memory detects a changed file when the next session starts. A file the agent wrote that now differs from what it wrote is a `user_edit`; one that is back to its content before the agent wrote it is a `user_undo`. The event belongs to that next session, so the miner rule that links it belongs there too.
 
@@ -145,6 +146,7 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{ledger_parses: true}` | Every line of the ledger parses as an event. |
 | `{raw_line_absent: <line>}` | No ledger line equals the given text. |
 | `{file_absent: <path>}` | The path does not exist. Placeholders work here. |
+| `{file_contains: {path, text}}` | The file exists and contains the text. Placeholders work in `path`. |
 | `{metrics: {<dotted path>: <value or {op: value}>}}` | `rka-memory metrics` reports these values. Operators are `==`, `!=`, `>=`, `>`, `<=` and `<`. |
 
 The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.
@@ -155,11 +157,15 @@ A stream with `model: live` runs against a real model. dsh uses its own default 
 
 A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `drift`, `prompt` and the user's file actions.
 
+Any stream can add `observe` items: a `label` plus one check from the `expect` table that names no record, such as `{label: CHANGELOG entry, file_contains: {path: "{project}/CHANGELOG.md", text: "add divide("}}`. An observation never fails a run. The report records whether it held in each session, and counts how often each label held per packet arm, which is how a live stream measures whether delivered memory changed what the agent did.
+
 The runner still checks the harness for every session: dsh exited 0, the plugin printed no warnings, one new session was recorded and mined, and the hooks logged no errors. What the model and the ladder did is the stream's report, not a pass or fail.
 
-`report.md` and `report.json` in the stream's run directory list, per session, the simulated time, task class, toolchain, packet arm, delivered records, tokens in total and before the first write, records proposed, and rung changes. Then come the records at the end with their rungs and scopes, and the metrics: records by rung, tokens before the first write per arm, misapplication, regressions and validation cost. Scripted streams get the same report.
+`report.md` and `report.json` in the stream's run directory list, per session, the simulated time, task class, toolchain, packet arm, delivered records, tokens in total and before the first write, records proposed, rung changes and observations. Then come the observations by arm, the records at the end with their rungs and scopes, and the metrics: records by rung, tokens before the first write per arm, misapplication, regressions and validation cost. Scripted streams get the same report.
 
 `workload/live/1-calc-weeks.yaml` covers three simulated weeks on `calc-uv`. The user states the house rules once (type hints, one-line docstrings, `pytest -q` before finishing) and never repeats them. Packets alternate by day between the gated arm and no packet. The user adds a test by hand after the fourth session, and the project moves from uv to pip in the second week.
+
+`workload/live/2-house-rules.yaml` covers twelve simulated days. In the first session the user states two rules the code never shows: run the tests as `pytest -q -p no:cacheprovider` so no `.pytest_cache` is left behind, and log every new function in `CHANGELOG.md` as `- add <name>()`. The user repeats them once, in the third session, and never again. Each session observes whether both rules held; `clean: .pytest_cache` runs before every session so each observation covers one session. The cache rule can be grounded by a passing test run, the changelog rule only by the user's words (1/3 each), so the stream also shows how the ladder treats a preference without strong evidence. Run it alone with `make live LIVE=workload/live/2-house-rules.yaml`.
 
 ## Run directory
 

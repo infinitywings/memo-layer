@@ -379,6 +379,14 @@ def test_report_row_says_what_a_session_received_and_changed():
         "rung_changes": {"r_a": "L1 -> L2", "r_b": "new -> L0D"},
     }
     assert report.session_row("s3", "", None, before, after) == {"session": "s3", "at": "", "session_id": None}
+    row["observed"] = {"no pytest cache": True, "changelog entry": False}
+    other = {"session": "s3", "at": "", "session_id": "s3", "arm": "gated", "observed": {"no pytest cache": False, "changelog entry": False}}
+    assert report.by_arm([row, other, {**other, "observed": {"no pytest cache": True}}]) == {
+        ("changelog entry", "gated"): (1, 0),
+        ("changelog entry", "none"): (1, 0),
+        ("no pytest cache", "gated"): (2, 1),
+        ("no pytest cache", "none"): (1, 1),
+    }
 
     text = report.render(
         {
@@ -395,7 +403,8 @@ def test_report_row_says_what_a_session_received_and_changed():
     )
     lines = text.splitlines()
     assert lines[0] == "# Stream live-sample (live model)"
-    assert "| s2 | 2027-01-05T12:00 | coding | uv | none | r_a | 900 | 400 | r_b | r_a: L1 -> L2; r_b: new -> L0D |" in lines
+    assert "| s2 | 2027-01-05T12:00 | coding | uv | none | r_a | 900 | 400 | r_b | r_a: L1 -> L2; r_b: new -> L0D | no pytest cache: yes; changelog entry: no |" in lines
+    assert "| no pytest cache | none | 1 | 1 |" in lines
     assert "| L2 | preference | r_a | Run the tests | any state |" in lines
     assert "| none | 1 | 400.0 | 400 |" in lines
     assert "Harness checks: 5 of 5 passed." in lines
@@ -403,4 +412,51 @@ def test_report_row_says_what_a_session_received_and_changed():
 
 def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
-    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live")]
+    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live")]
+    rules = streams[1]
+    assert [o.label for s in rules.sessions for o in s.observe] == ["no .pytest_cache left", "CHANGELOG entry"] * 12
+
+
+def test_clean_removes_a_file_or_directory_if_present(tmp_path):
+    from rka_memory.workload.stream import Clean
+
+    proj = tmp_path / "proj"
+    (proj / ".pytest_cache" / "v").mkdir(parents=True)
+    (proj / ".pytest_cache" / "v" / "x").write_text("1")
+    (proj / "notes.txt").write_text("n")
+    for path in (".pytest_cache", "notes.txt", "never-there"):
+        files.apply(Clean(path), proj, {})
+    assert sorted(p.name for p in proj.iterdir()) == []
+    with pytest.raises(ValueError):
+        files.apply(Clean("../outside"), proj, {})
+
+
+def test_observations_take_a_label_and_no_record(tmp_path):
+    from rka_memory.workload.stream import Observe
+
+    text = LIVE.replace(
+        "    prompt: Add a divide function\n",
+        "    prompt: Add a divide function\n    observe:\n      - {label: no cache, file_absent: \"{project}/.pytest_cache\"}\n"
+        "      - {label: changelog, file_contains: {path: \"{project}/CHANGELOG.md\", text: \"add divide(\"}}\n",
+    )
+    stream = load(write_stream(tmp_path, text))
+    assert stream.sessions[1].observe == (
+        Observe("no cache", Expect("file_absent", "{project}/.pytest_cache")),
+        Observe("changelog", Expect("file_contains", {"path": "{project}/CHANGELOG.md", "text": "add divide("})),
+    )
+    for i, (bad, message) in enumerate((
+        ("      - {file_absent: x}\n", "needs a `label`"),
+        ("      - {label: r, record: Run the tests, rung: L2}\n", "cannot name a record"),
+        ("      - {label: c, file_contains: {path: x}}\n", "expected {path, text}"),
+    )):
+        with pytest.raises(StreamError) as err:
+            load(write_stream(tmp_path / f"bad{i}", LIVE.replace("    prompt: Add a divide function\n", "    prompt: Add a divide function\n    observe:\n" + bad)))
+        assert message in str(err.value)
+
+
+def test_file_contains_reads_the_file_at_the_substituted_path(tmp_path):
+    (tmp_path / "CHANGELOG.md").write_text("## Unreleased\n- add divide()\n")
+    obs = Observed(project([]), None, [], [], metrics=dict)
+    assert evaluate(obs, Expect("file_contains", {"path": str(tmp_path / "CHANGELOG.md"), "text": "- add divide()"})) == (True, "found")
+    assert evaluate(obs, Expect("file_contains", {"path": str(tmp_path / "CHANGELOG.md"), "text": "add mode("})) == (False, "not found")
+    assert evaluate(obs, Expect("file_contains", {"path": str(tmp_path / "nope.md"), "text": "x"})) == (False, "no such file")

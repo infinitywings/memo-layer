@@ -54,6 +54,13 @@ class Replace:
 
 
 @dataclass(frozen=True)
+class Clean:
+    """Delete the file or directory if it exists, such as a cache the agent left."""
+
+    path: str
+
+
+@dataclass(frozen=True)
 class Restore:
     """Put the file back as it was before the latest agent session; delete it if it did not exist."""
 
@@ -69,7 +76,7 @@ class Verdict:
     reason: str = ""
 
 
-FileAction = Write | Remove | Append | Replace | Restore
+FileAction = Write | Remove | Append | Replace | Restore | Clean
 UserAction = FileAction | Verdict
 
 
@@ -84,6 +91,7 @@ class Session:
     miner: dict[str, Any]
     user: tuple[UserAction, ...]
     expect: tuple[Expect, ...]
+    observe: tuple[Observe, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -149,10 +157,12 @@ def _file_action(key: str, value: Any, where: str) -> FileAction:
     if key == "replace":
         d = _keys(value, where, {"path", "old", "new"})
         return Replace(_str(d["path"], where), _str(d["old"], where), _str(d["new"], where))
+    if key == "clean":
+        return Clean(_str(value, where))
     return Restore(_str(value, where))
 
 
-FILE_ACTIONS = {"write", "remove", "append", "replace", "restore"}
+FILE_ACTIONS = {"write", "remove", "append", "replace", "restore", "clean"}
 
 
 def _user_action(raw: Any, where: str) -> UserAction:
@@ -244,7 +254,24 @@ def _expect(raw: Any, where: str) -> Expect:
     return Expect(name, raw[name], _str(record, where) if record is not None else None)
 
 
-SESSION_KEYS = {"drift", "agent", "miner", "user", "expect"}
+@dataclass(frozen=True)
+class Observe:
+    """A check the report records per session under `label` and never fails on."""
+
+    label: str
+    expect: Expect
+
+
+def _observe(raw: Any, where: str) -> Observe:
+    if not isinstance(raw, dict) or not isinstance(raw.get("label"), str) or not raw["label"].strip():
+        raise StreamError(f"{where}: an observation needs a `label`")
+    expect = _expect({k: v for k, v in raw.items() if k != "label"}, where)
+    if expect.record is not None:
+        raise StreamError(f"{where}: an observation cannot name a record; its content is not known in advance")
+    return Observe(raw["label"].strip(), expect)
+
+
+SESSION_KEYS = {"drift", "agent", "miner", "user", "expect", "observe"}
 
 
 def _session(raw: Any, index: int, where: str) -> Session:
@@ -267,6 +294,7 @@ def _session(raw: Any, index: int, where: str) -> Session:
         miner=_miner(d.get("miner"), f"{where}.miner"),
         user=tuple(_user_action(a, f"{where}.user[{i}]") for i, a in enumerate(_list(d.get("user"), where))),
         expect=tuple(_expect(e, f"{where}.expect[{i}]") for i, e in enumerate(_list(d.get("expect"), where))),
+        observe=tuple(_observe(o, f"{where}.observe[{i}]") for i, o in enumerate(_list(d.get("observe"), where))),
     )
 
 
