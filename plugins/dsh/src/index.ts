@@ -8,6 +8,7 @@
 
 import { spawn } from 'node:child_process'
 import { closeSync, constants, existsSync, fchmodSync, fchownSync, fstatSync, lstatSync, openSync, readlinkSync, realpathSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
@@ -108,15 +109,29 @@ function stringsIn(value: unknown, depth = 0): string[] {
   return values.flatMap(v => stringsIn(v, depth + 1))
 }
 
+/** A path as a tool may also spell it: a file:// URL, or a leading `~`. */
+function spellings(text: string): string[] {
+  const out = [text]
+  if (text.startsWith('file://')) {
+    try {
+      out.push(decodeURIComponent(new URL(text).pathname))
+    } catch {
+      out.push(text.slice('file://'.length))
+    }
+  }
+  if (text === '~' || text.startsWith('~/')) out.push(homedir() + text.slice(1))
+  return out
+}
+
 /** The paths one argument string may name: itself, its glob-free prefix, and any path-like token in it (a patch names files inside its text). */
-function pathCandidates(text: string): string[] {
+export function pathCandidates(text: string): string[] {
   const out = new Set<string>()
   const glob = text.search(/[*?[{]/)
   for (const candidate of [text, glob >= 0 ? text.slice(0, glob) : '']) {
-    if (candidate !== '' && candidate.length < 4096) out.add(candidate)
+    if (candidate !== '' && candidate.length < 4096) for (const spelled of spellings(candidate)) out.add(spelled)
   }
   for (const token of text.split(/[\s"'`]+/)) {
-    if (/^(\/|\.\.?\/)/.test(token) && token.length < 4096) out.add(token)
+    if (/^(\/|\.\.?\/|~\/|file:\/\/)/.test(token) && token.length < 4096) for (const spelled of spellings(token)) out.add(spelled)
   }
   return [...out]
 }
@@ -139,21 +154,47 @@ export function writtenPaths(name: string, args: unknown): string[] {
 }
 
 /**
+ * Hand one root-created path under `workspace` to the workspace owner. Each
+ * component is opened relative to the directory descriptor of the one before
+ * it, through /proc/self/fd (Node has no openat), with O_NOFOLLOW: a symlink
+ * anywhere stops the walk, and swapping a directory for a symlink after the
+ * check cannot redirect it, because no path is resolved twice. Only regular
+ * files with one link and directories change owner; O_NONBLOCK keeps a FIFO
+ * from blocking the open.
+ */
+function handOver(workspace: string, written: string, owner: { uid: number; gid: number; mode: number }): void {
+  const rel = relative(workspace, resolve(workspace, written))
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return
+  const parts = rel.split(sep)
+  let dirFd = openSync(workspace, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  try {
+    for (let i = 0; i < parts.length; i++) {
+      const last = i === parts.length - 1
+      const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (last ? 0 : constants.O_DIRECTORY)
+      const fd = openSync(`/proc/self/fd/${dirFd}/${parts[i]}`, flags)
+      closeSync(dirFd)
+      dirFd = fd
+      const stat = fstatSync(fd)
+      const isDir = stat.isDirectory()
+      if (stat.uid !== 0 || !(isDir || (stat.isFile() && stat.nlink === 1))) continue
+      fchownSync(fd, owner.uid, owner.gid)
+      fchmodSync(fd, isDir ? owner.mode & 0o777 : owner.mode & 0o666)
+    }
+  } finally {
+    closeSync(dirFd)
+  }
+}
+
+/**
  * dsh's file tools run inside dsh, so under confinement (docker/dsh/confine.sh)
  * they write as root while the agent's shell runs as the workspace owner. A
  * file they create would then be unreadable to the agent's own commands. Give
  * such files, and any directories the write created, to the workspace owner
- * and open their mode to the workspace's. A no-op unless this process is root.
- *
- * Root changing ownership of agent-named paths is an escalation target: the
- * agent's shell could replace the written file with a symlink or a hard link
- * to the ledger between the write and this call. So every component from the
- * file up to the workspace is inspected without following links, a symlink
- * anywhere abandons the path, a file with more than one link is left alone,
- * and the change goes through a descriptor opened with O_NOFOLLOW.
+ * and open their mode to the workspace's. A no-op unless this process is root
+ * on Linux.
  */
 function ownWrites(name: string, args: unknown, cwd: string): void {
-  if (process.getuid?.() !== 0) return
+  if (process.getuid?.() !== 0 || !existsSync('/proc/self/fd')) return
   let workspace: string
   try {
     workspace = realpathSync(cwd)
@@ -163,41 +204,10 @@ function ownWrites(name: string, args: unknown, cwd: string): void {
   const owner = statSync(workspace)
   if (owner.uid === 0) return
   for (const written of writtenPaths(name, args)) {
-    const target = resolve(workspace, written)
-    if (!within(target, workspace) || target === workspace) continue
-    const chain: string[] = []
-    let clean = true
-    for (let path = target; path !== workspace; path = dirname(path)) {
-      let stat
-      try {
-        stat = lstatSync(path)
-      } catch {
-        if (path === target) break // deleted, nothing to own
-        clean = false
-        break
-      }
-      if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink !== 1)) {
-        clean = false
-        break
-      }
-      if (stat.uid !== 0) break // already the owner's; so is everything above it
-      chain.push(path)
-    }
-    if (!clean) continue
-    for (const path of chain) {
-      let fd: number | undefined
-      try {
-        const isDir = lstatSync(path).isDirectory()
-        fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | (isDir ? constants.O_DIRECTORY : 0))
-        const open = fstatSync(fd)
-        if (open.uid !== 0 || (!isDir && open.nlink !== 1)) continue
-        fchownSync(fd, owner.uid, owner.gid)
-        fchmodSync(fd, isDir ? owner.mode & 0o777 : owner.mode & 0o666)
-      } catch {
-        // replaced or removed since the write; leave it
-      } finally {
-        if (fd !== undefined) closeSync(fd)
-      }
+    try {
+      handOver(workspace, written, owner)
+    } catch {
+      // a symlink, a missing path or a swapped component: leave it as it is
     }
   }
 }

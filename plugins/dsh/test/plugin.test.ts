@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { Config, protectedTarget, realPathOf, writtenPaths } from '../src/index.ts'
+import { homedir } from 'node:os'
+import { Config, pathCandidates, protectedTarget, realPathOf, writtenPaths } from '../src/index.ts'
 import { captureStderr, fakeAgent, fakeHost, fakeRkaMemory, until, userMessage } from './fakes.ts'
 
 const CWD = '/work/app'
@@ -342,4 +343,13 @@ test('paths resolve through symlink chains without the kernel following them', (
   }
   assert.equal(protectedTarget({ file_path: 'loop-a/x' }, scratch, roots), undefined)
   assert.equal(protectedTarget({ file_path: join(root, 'scratch', 'notes.txt') }, scratch, roots), undefined)
+})
+
+
+test('a path spelled as a file:// URL or with ~ is checked as the path it names', () => {
+  assert.deepEqual(pathCandidates('file:///runs/x/ledger%20dir/a.txt'), ['file:///runs/x/ledger%20dir/a.txt', '/runs/x/ledger dir/a.txt'])
+  assert.deepEqual(pathCandidates('~/.rka-memory/ledger.jsonl'), ['~/.rka-memory/ledger.jsonl', `${homedir()}/.rka-memory/ledger.jsonl`])
+  assert.ok(pathCandidates('see file:///runs/x/l.txt now').includes('/runs/x/l.txt'))
+  const roots = [realPathOf(homedir())]
+  assert.deepEqual(protectedTarget({ path: '~/notes.txt' }, '/', roots), { named: `${homedir()}/notes.txt`, root: roots[0] })
 })
