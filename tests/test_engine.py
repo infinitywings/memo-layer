@@ -419,17 +419,26 @@ def test_a_standing_statement_of_the_records_own_words_confirms_it_at_once():
     "said",
     [
         {"quote": SUMMARY},
+        {"quote": SUMMARY, "marker": "every time"},
+        {"quote": "end every reply with a Summary line", "marker": "from now on"},
+        {"quote": SUMMARY, "marker": "Please note"},
         {"quote": SUMMARY, "marker": "always"},
-        {"quote": "end every reply with a Summary line", "marker": "From now on"},
     ],
-    ids=["no standing words", "standing words not in the message", "quote not in the message"],
+    ids=[
+        "no standing words",
+        "standing words not in the message",
+        "quote not in the message",
+        "words without a standing phrase",
+        "standing phrase far from the rule",
+    ],
 )
 def test_a_statement_the_message_does_not_bear_out_weighs_as_a_plain_message(said):
     lg = Ledger()
     lg.start("s0", **UV)
     lg.propose("s0", "r_sum", kind=RecordKind.PREFERENCE, content=SUMMARY)
     lg.end("s0")
-    stated(lg, "s1", f"From now on, {SUMMARY}.", "r_sum", **said)
+    far = " ".join(["The deploy notes are long."] * 10)
+    stated(lg, "s1", f"Please note: from now on, {SUMMARY}. {far} I always check them.", "r_sum", **said)
     world = lg.gate()
 
     assert moves(world, "r_sum") == [(None, "L1", "proposed with non-model grounding")]

@@ -598,7 +598,7 @@ def test_standing_words_confirm_a_stated_rule_and_the_users_withdrawal_demotes_i
         (other, "L1", "proposed with non-model grounding"),
         (rid, "L2", "the user stated it as a standing rule"),
     ]
-    assert first.dropped == [Drop("rule 1: keep the tests green standing 'always'", "standing words are not in the rule's message")]
+    assert first.dropped == [Drop("rule 1: keep the tests green standing 'always'", "no standing phrase next to the rule in its message")]
     links = [e.payload for e in appended(memory, first) if e.kind is Kind.EVIDENCE_LINKED]
     assert [link.get("statement") for link in links] == [
         {"quote": SUMMARY_RULE, "marker": "from now on"},

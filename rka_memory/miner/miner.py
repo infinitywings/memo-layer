@@ -541,7 +541,7 @@ def _cost(session_id: str, tokens: int, seconds: float) -> Event:
 
 
 def stated_rules(
-    world: World, view: MinerView, backend: backends.Backend, result: MineResult
+    world: World, view: MinerView, cfg: Config, backend: backends.Backend, result: MineResult
 ) -> tuple[extract.Extraction | None, backends.Completion | None]:
     """Ask which rules the user stated or withdrew in the session and keep
     what quotes a user message. Returns that with the completion to bill.
@@ -558,7 +558,7 @@ def stated_rules(
     except ValueError as exc:
         result.dropped.append(Drop("rule extractor", str(exc)))
         return None, completion
-    extraction = extract.locate(rules, withdrawals, messages)
+    extraction = extract.locate(rules, withdrawals, messages, cfg.gate.standing_phrases)
     result.dropped.extend(Drop(item, reason) for item, reason in (*dropped, *extraction.dropped))
     return extraction, completion
 
@@ -581,7 +581,7 @@ def mine_session(
         spent: list[backends.Completion] = []
         try:
             if memory.cfg.miner_extract_rules:
-                extraction, asked = stated_rules(world, view, backend, result)
+                extraction, asked = stated_rules(world, view, memory.cfg, backend, result)
                 if asked is not None:
                     spent.append(asked)
             stated = tuple(f.rule.quote for f in extraction.rules) if extraction else ()

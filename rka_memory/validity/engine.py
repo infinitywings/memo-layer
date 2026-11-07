@@ -27,7 +27,8 @@ from rka_memory.domain import (
     collapse,
     derived_id,
     parse_ts,
-    quotes,
+    quoted,
+    standing,
 )
 from rka_memory.skills.gate import check_passed, sessions_following, skill_failure
 from rka_memory.validity import propagate
@@ -58,19 +59,20 @@ class Assessment:
     unbacked: bool = False
 
 
-def statement(made_by: Event | None, ev: Event) -> tuple[str, bool] | None:
+def statement(made_by: Event | None, ev: Event, cfg: Config) -> tuple[str, bool] | None:
     """The user's words a link quotes from the user message it cites, checked
-    here against the logged message: (quote, standing), or None when the link
-    quotes nothing or misquotes. Standing means the words that make the rule
-    standing, such as "from now on", are in the same message too."""
+    here against the logged message with the extractor's own check:
+    (quote, standing), or None when the link quotes nothing or misquotes.
+    Standing means the link also quotes words next to the rule that hold one
+    of the configured standing phrases, such as "from now on"."""
     if made_by is None or ev.kind is not Kind.USER_MSG or ev.actor is not Actor.USER:
         return None
     said = made_by.payload.get("statement")
     text = str(ev.payload.get("text") or "")
-    if not isinstance(said, dict) or not isinstance(said.get("quote"), str) or not quotes(text, said["quote"]):
+    if not isinstance(said, dict) or not isinstance(said.get("quote"), str) or not quoted(text, said["quote"]):
         return None
     marker = said.get("marker")
-    return said["quote"], isinstance(marker, str) and quotes(text, marker)
+    return said["quote"], isinstance(marker, str) and standing(text, said["quote"], marker, cfg.gate.standing_phrases)
 
 
 def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> list[Grounding]:
@@ -97,7 +99,7 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
         if ev.id != link.via and not world.before(ev.id, link.via):
             continue
         weight, targeted, affirms = cfg.weight(ev.kind), is_targeted(ev, rec.id), False
-        said = statement(made_by, ev)
+        said = statement(made_by, ev, cfg)
         if said is not None and polarity is Polarity.SUPPORT and said[1]:
             # A standing rule in the user's words weighs like a confirm, and
             # confirms the record outright when the record is those words.

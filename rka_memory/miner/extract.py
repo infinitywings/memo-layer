@@ -22,15 +22,12 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-from rka_memory.domain import Actor, Kind, RecordKind, collapse, quotes
+from rka_memory.domain import QUOTE_CHARS, Actor, Kind, RecordKind, collapse, quoted, standing
 from rka_memory.world import World
 
 PROMPT = Template(Path(__file__).with_name("extract_prompt.md").read_text(encoding="utf-8"))
 PREFIX = "You are the rule extractor for rka-memory"
 RULE_KINDS = (RecordKind.PREFERENCE, RecordKind.CONSTRAINT)
-# Long enough to be a rule, short enough to be one rule.
-MIN_QUOTE, MAX_QUOTE = 12, 400
-MAX_MARKER = 80
 # A rule the user states holds wherever they work in this project and context,
 # whatever the task, toolchain or model.
 BROADEN = frozenset({"task_class", "toolchain", "model_id"})
@@ -153,15 +150,19 @@ def parse_output(text: str) -> tuple[list[Rule], list[Withdrawal], list[tuple[st
 
 def _source(quote: str, messages: list[Message]) -> Message | str:
     """The message that holds `quote`, or why there is none."""
-    if not MIN_QUOTE <= len(quote) <= MAX_QUOTE:
-        return f"a quote holds {MIN_QUOTE} to {MAX_QUOTE} characters"
-    found = next((m for m in messages if quotes(m.text, quote)), None)
+    low, high = QUOTE_CHARS
+    if not low <= len(quote) <= high:
+        return f"a quote holds {low} to {high} characters"
+    found = next((m for m in messages if quoted(m.text, quote)), None)
     return found if found is not None else "quote is not in any user message of the session"
 
 
-def locate(rules: list[Rule], withdrawals: list[Withdrawal], messages: list[Message]) -> Extraction:
-    """Keep what quotes a user message. Standing words that are not in the
-    rule's own message are dropped, and the rule is kept without them."""
+def locate(
+    rules: list[Rule], withdrawals: list[Withdrawal], messages: list[Message], phrases: tuple[str, ...]
+) -> Extraction:
+    """Keep what quotes a user message. Standing words that fail the engine's
+    own check (a configured phrase next to the rule in its message) are
+    dropped, and the rule is kept without them."""
     kept: list[Located] = []
     gone: list[Withdrawn] = []
     dropped: list[tuple[str, str]] = []
@@ -171,11 +172,11 @@ def locate(rules: list[Rule], withdrawals: list[Withdrawal], messages: list[Mess
         if isinstance(source, str):
             dropped.append((label, source))
             continue
-        standing = rule.standing
-        if standing and (len(standing) > MAX_MARKER or not quotes(source.text, standing)):
-            dropped.append((f"{label} standing {standing[:40]!r}", "standing words are not in the rule's message"))
-            standing = None
-        kept.append(Located(rule, source, standing))
+        words = rule.standing
+        if words and not standing(source.text, rule.quote, words, phrases):
+            dropped.append((f"{label} standing {words[:40]!r}", "no standing phrase next to the rule in its message"))
+            words = None
+        kept.append(Located(rule, source, words))
     for w in withdrawals:
         source = _source(w.quote, messages)
         if isinstance(source, str):

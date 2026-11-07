@@ -28,6 +28,7 @@ class GateConfig:
     retire_after_days: float = 60
     confirm_overrides: bool = True
     narrow_priority: tuple[str, ...] = ("user_context", "task_class", "toolchain", "model_id", "project")
+    standing_phrases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
             retire_after_days=float(gate_raw.get("retire_after_days", 60)),
             confirm_overrides=bool(gate_raw.get("confirm_overrides", True)),
             narrow_priority=narrow,
+            standing_phrases=tuple(str(p) for p in gate_raw.get("standing_phrases") or ()),
         ),
         weights={Kind(k): _number(v) for k, v in raw.get("weights", {}).items()},
         budget_tokens=int(raw["packet"]["budget_tokens"]),

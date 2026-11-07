@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from enum import StrEnum
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 
 class Actor(StrEnum):
@@ -164,10 +164,36 @@ def collapse(text: str) -> str:
     return " ".join(str(text).split())
 
 
-def quotes(text: str, span: str) -> bool:
-    """`span` is a nonempty run of `text`, whitespace aside: the user wrote it."""
-    span = collapse(span)
-    return bool(span) and span in collapse(text)
+# The one check of a statement quoted from a user message, shared by the rule
+# extractor and the validity engine so the two cannot disagree.
+QUOTE_CHARS = (12, 400)
+MAX_STANDING_CHARS = 80
+STANDING_WINDOW = 200
+
+
+def quoted(text: str, quote: str) -> bool:
+    """The user wrote `quote`: a run of `text`, whitespace aside, of rule length."""
+    q = collapse(quote)
+    return QUOTE_CHARS[0] <= len(q) <= QUOTE_CHARS[1] and q in collapse(text)
+
+
+def standing(text: str, quote: str, words: str, phrases: Sequence[str]) -> bool:
+    """`words` mark the quoted rule as standing: a short run of `text` that
+    holds one of `phrases` (case aside) and lies within STANDING_WINDOW
+    characters of the quote. Which words govern which rule stays a judgment;
+    this bounds it to a known phrase next to the rule."""
+    t, q, w = collapse(text), collapse(quote), collapse(words)
+    if not w or len(w) > MAX_STANDING_CHARS or not any(p.lower() in w.lower() for p in phrases):
+        return False
+    q_at = t.find(q)
+    if q_at < 0:
+        return False
+    at = t.find(w)
+    while at >= 0:
+        if max(at - (q_at + len(q)), q_at - (at + len(w)), 0) <= STANDING_WINDOW:
+            return True
+        at = t.find(w, at + 1)
+    return False
 
 
 @dataclass(frozen=True)

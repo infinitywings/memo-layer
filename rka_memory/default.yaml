@@ -16,6 +16,12 @@ gate:
   retire_after_days: 60       # untouched L1 records retire to L4
   confirm_overrides: true     # a user confirm promotes straight to L2
   narrow_priority: [user_context, task_class, toolchain, model_id, project]
+  # A user's quoted rule confirms its record only when the words the extractor
+  # quotes as making it standing hold one of these phrases (case aside) and lie
+  # within 200 characters of the rule in the same message.
+  standing_phrases: [from now on, going forward, from here on, always, never, every time, each time, whenever,
+                     house rule, remember, in future, in the future, by default, as a rule,
+                     以后, 今后, 从现在起, 从现在开始, 往后, 每次, 总是, 始终, 一直, 永远, 记住, 默认, 规矩]
 
 weights:                      # grounding weight per event kind (absent kinds never ground)
   exit_code: 1.0
