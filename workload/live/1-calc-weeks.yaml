@@ -7,24 +7,41 @@ description: >-
   arm and no packet, so tokens spent before the first write can be compared
   per arm. The user adds a test by hand after the fourth session, and the
   project moves from uv to pip in the second week.
+  The agent may write the rules into an AGENTS.md, which dsh loads into every
+  session whatever the arm, so the file is cleaned before each session and each
+  session records whether the agent wrote one.
 start: 2027-03-01T09:00:00+00:00
 project: calc-uv
 config:
   packet: {arms: [gated, none]}
 sessions:
   - at: +0d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
     prompt: >-
       Build a small feature: add a multiply(a, b) function to calc.py, with a
       test. House rules for this project: every function gets type hints and a
       one-line docstring, and you run pytest -q before you finish.
 
   - at: +1d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+    drift:
+      - clean: AGENTS.md
     prompt: Add a divide(a, b) function to calc.py that raises ValueError when b is zero, with tests.
 
   - at: +2d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+    drift:
+      - clean: AGENTS.md
     prompt: Add a power(base, exponent) function to calc.py, with a test.
 
   - at: +3d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+    drift:
+      - clean: AGENTS.md
     prompt: Add a mean(values) function to calc.py that averages a list of numbers, with a test.
     user:
       - append:
@@ -32,16 +49,31 @@ sessions:
           text: "\n\ndef test_mean_of_one_value():\n    assert calc.mean([4]) == 4\n"
 
   - at: +7d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+    drift:
+      - clean: AGENTS.md
     prompt: Add a median(values) function to calc.py, with tests.
 
   - at: +8d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
     drift:
+      - clean: AGENTS.md
       - remove: uv.lock
       - write: {path: requirements.txt, content: "pytest\n"}
     prompt: Add a mode(values) function to calc.py that returns the most common value, with tests.
 
   - at: +9d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+    drift:
+      - clean: AGENTS.md
     prompt: Add a clamp(value, low, high) function to calc.py, with tests.
 
   - at: +14d
+    observe:
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+    drift:
+      - clean: AGENTS.md
     prompt: Add a percentage(part, whole) function to calc.py that raises ValueError when whole is zero, with tests.

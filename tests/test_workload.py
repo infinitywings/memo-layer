@@ -364,6 +364,8 @@ def test_live_stream_loads_without_scripts_or_expectations(tmp_path):
         ("    miner:\n      candidates: []\n      task_class: coding\n", "cannot use miner"),
         ("    expect:\n      - {packet_empty: true}\n", "cannot use expect"),
         ("    user:\n      - confirm: Run the tests\n", "cannot use typed verdicts"),
+        ("    observe:\n      - {label: saw it, model_saw: Summary}\n", "cannot observe model_saw"),
+        ("    observe:\n      - {label: never saw it, model_never_saw: CANARY}\n", "cannot observe model_never_saw"),
     ],
 )
 def test_live_stream_refuses_what_only_a_scripted_model_can_honor(tmp_path, addition, message):
@@ -450,7 +452,7 @@ def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
     assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live")]
     rules = streams[1]
-    held = ["no .pytest_cache left", "reply ends with Summary"]
+    held = ["no .pytest_cache left", "reply ends with Summary", "agent wrote no AGENTS.md"]
     recorded = [*held, "cache rule recorded", "Summary rule recorded"]
     assert [[o.label for o in s.observe] for s in rules.sessions] == [recorded, held, recorded, *[held] * 8, recorded]
     assert [s.observe[1].expect.value["path"] for s in rules.sessions] == [f"{{run}}/logs/s{i}.out" for i in range(1, 13)]

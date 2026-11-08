@@ -272,6 +272,9 @@ def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
     return None
 
 
+MINER_ERRORS = "miner-errors.log"
+
+
 def _mine_inline(memory: Memory, session_id: str, sync: bool) -> None:
     """Mine (which gates and exports) and sync before the hook returns, so a
     workload's ledger order follows its stream exactly."""
@@ -279,7 +282,11 @@ def _mine_inline(memory: Memory, session_id: str, sync: bool) -> None:
     from rka_memory.miner import miner
 
     with contextlib.redirect_stdout(io.StringIO()):
-        miner.mine_session(memory, session_id)
+        result = miner.mine_session(memory, session_id)
+        if result.status in (miner.MineStatus.BACKEND_ERROR, miner.MineStatus.NO_OUTPUT):
+            # The session stays unmined; say why, where a run can find it.
+            with open(memory.cfg.ledger_dir / MINER_ERRORS, "a") as fh:
+                fh.write(f"{session_id} {result.status.value}: {result.detail}\n")
         if sync:
             core.sync(memory)
 

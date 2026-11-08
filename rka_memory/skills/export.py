@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from rka_memory import relations
 from rka_memory.config import Config
 from rka_memory.domain import DELIVERABLE, SCOPE_FIELDS, RecordKind, Rung, State
 from rka_memory.packet.builder import flatten, rule_text, superseded
@@ -67,11 +68,13 @@ def exportable(world: World, cfg: Config, state: State | None = None) -> list[Re
 
 
 def rules_followed(rec: RecordState, world: World, cfg: Config) -> list[str]:
-    """The procedure's dependencies at L2 or above, as the skill shows them.
-    One that drops below L2 leaves the skill at the next export, while the
+    """The procedure's dependencies and the rules that govern it
+    (`relations.governing`), at L2 or above, as the skill shows them. One
+    that drops below L2 leaves the skill at the next export, while the
     procedure keeps its own rung (docs/GRAPH.md, decision 3)."""
     hidden = superseded(world, cfg)
-    deps = [world.records[d] for d in rec.spec.depends_on if d in world.records]
+    ids = dict.fromkeys((*rec.spec.depends_on, *relations.governing(rec, world)))
+    deps = [world.records[d] for d in ids if d in world.records]
     return [rule_text(d, world, cfg) for d in deps if d.rung in DELIVERABLE and d.id not in hidden]
 
 

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from rka_memory import config as config_mod
+from rka_memory import relations
 from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, State, clock_now
 from rka_memory.ledger.jsonl import JsonlLedger
@@ -191,6 +192,8 @@ class Memory:
                 "superseded_by": [ref(r.id) for r in world.records.values() if r.spec.supersedes == record_id],
                 "refines": [ref(r) for r in rec.spec.refines],
                 "refined_by": [ref(r.id) for r in world.records.values() if record_id in r.spec.refines],
+                "governed_by": [ref(r) for r in relations.governing(rec, world)],
+                "governs": [ref(r.id) for r in world.records.values() if record_id in relations.governing(r, world)],
             },
             "deliveries": [
                 {"event_id": d.event.id, "session_id": d.event.session_id, "ts": d.event.ts, "arm": d.arm, "channel": d.channel}

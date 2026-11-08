@@ -105,8 +105,9 @@ def parse_miner_prompt(prompt: str) -> MinerPrompt:
         name: {normalize(m.group(4)): m.group(1) for m in map(ROW.match, found[name]) if m}
         for name in ("delivered", "existing")
     }
+    stated = {normalize(m.group(2)): m.group(1) for m in map(RULE_ROW.match, found["stated"]) if m}
     events = tuple(EventLine(*m.groups()) for m in map(EVENT_LINE.match, found["events"]) if m)
-    return MinerPrompt(rows["delivered"], rows["existing"], events)
+    return MinerPrompt(rows["delivered"], {**stated, **rows["existing"]}, events)
 
 
 @dataclass

@@ -28,7 +28,8 @@ SUBCOMMANDED = frozenset(
 # Prefixes that only run the command after them.
 WRAPPERS = frozenset({"sudo", "env", "time", "nohup", "exec", "command"})
 SHELL_BUILTINS = frozenset(
-    {"cd", "echo", "printf", "true", "false", "export", "set", "test", "[", ":", "source", ".", "exit", "return"}
+    {"cd", "echo", "printf", "true", "false", "export", "set", "test", "[", ":", "source", ".", "exit", "return",
+     "for", "do", "done", "while", "until", "if", "then", "else", "elif", "fi", "case", "esac", "{", "}", "(", ")"}
 )
 SEPARATORS = re.compile(r"&&|\|\||[;|\n]")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")

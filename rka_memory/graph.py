@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from rka_memory import relations
 from rka_memory.config import Config
 from rka_memory.domain import Polarity
 from rka_memory.validity.engine import counted, statement
@@ -29,6 +30,7 @@ class EdgeType(StrEnum):
     DEPENDS_ON = "depends_on"  # record -> record
     SUPERSEDES = "supersedes"  # record -> record
     REFINES = "refines"  # record -> record it qualifies
+    GOVERNS = "governs"  # rule -> procedure that runs a command it names (derived)
     DELIVERED = "delivered"  # delivery event -> record
     TOUCHES = "touches"  # event -> anchor (a user message names it)
     ABOUT = "about"  # record -> anchor
@@ -124,6 +126,7 @@ def project(world: World, cfg: Config) -> Graph:
             edges.append(Edge(EdgeType.SUPERSEDES, rec.id, rec.spec.supersedes))
         edges += [Edge(EdgeType.ABOUT, rec.id, a) for a in rec.spec.about]
         edges += [Edge(EdgeType.REFINES, rec.id, r) for r in rec.spec.refines if r in world.records]
+        edges += [Edge(EdgeType.GOVERNS, rule, rec.id, {"derived": True}) for rule in relations.governing(rec, world)]
     for d in world.deliveries:
         attrs = {"session_id": d.event.session_id, "channel": d.channel, "arm": d.arm, "ts": d.event.ts}
         edges += [Edge(EdgeType.DELIVERED, d.event.id, rid, attrs) for rid in d.record_ids if rid in world.records]

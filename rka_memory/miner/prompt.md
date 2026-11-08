@@ -17,7 +17,7 @@ Reply with one JSON object and nothing else. No prose, no Markdown fences.
       "depends_on": ["<record ids this candidate relies on>"],
       "about": ["<anchors from the list below that this lesson is specifically about>"],
       "supersedes": "<id of a delivered or existing procedure this procedure replaces, or null>",
-      "refines": ["<ids of delivered or existing records this lesson qualifies or narrows>"]
+      "refines": ["<ids of listed records, or stated-<n> rules, this lesson qualifies or narrows>"]
     }
   ],
   "support_links": [
@@ -36,13 +36,15 @@ Rules:
 4. `kind`: fact (how this project or toolchain is), preference (how the user wants work done), procedure (an ordered way to get something done), constraint (something that must or must not happen).
 5. `broaden`: the scope fields the lesson holds regardless of. Scope fields are task_class, project, toolchain, model_id, user_context. A preference that holds in every project lists "project". Leave a field out when unsure; narrow scope is safe. A procedure becomes an auto-loading skill only if model_id, task_class and user_context are all broadened, so broaden those only when the steps truly do not depend on them.
 6. `steps` and `acceptance_check` are only for procedures. Each step is a tool call the agent made, as the tool name plus a short substring of its input. The acceptance_check is the exact command whose success showed the procedure worked. Leave both empty for other kinds.
-7. `depends_on`: when a candidate only holds because a delivered record below was followed, list that record's id.
+7. Relations. First decide by rule 3 whether a candidate is worth proposing at all; a link to a listed record never makes it so. Then, for each candidate you keep, check the records listed below (delivered, existing, and the rules stated in this session) and fill these fields where they apply, using the records' ids:
+   - `refines`: the candidate qualifies or narrows that record: an exception to it, a limit or a side effect of doing what it says, or a condition it needs. A candidate that only shares a topic with a record does not refine it.
+   - `depends_on`: the candidate only holds because the agent followed that record; if the record were wrong, the candidate would be wrong too.
+   - `supersedes`: only for a procedure that replaces a listed procedure, because the agent now does that work in a different way. The old procedure stays on record, and the new one is shown instead once it is validated.
+   Leave a field empty when nothing applies.
 8. `counter_links`: when an event in this session shows that a delivered record below was wrong here (a failing check after following it, a user undo or correction), link that record to the event. Only records in the delivered list may be named.
 9. `support_links`: when an event in this session shows that a record listed below, delivered or existing, held here (a passing check after doing what it says, the user stating or relying on it), link that record to the event. Cite events by rule 1 and rule 2, exactly as for candidate evidence. Link only when the event bears on what the record says; a passing test unrelated to it is not support.
 10. `task_class`: the class that best describes the session's main work.
 11. `about`: the anchors listed below that the lesson is specifically about, such as the file a fact describes or the command a procedure runs. Leave it empty for a lesson about the whole project. Name only anchors from the list below.
-12. `supersedes`: only for a procedure that replaces a procedure listed below, because the agent now does that work in a different way. The old procedure stays on record, and the new one is shown instead once it is validated. Never use it for other kinds.
-13. `refines`: when the lesson qualifies or narrows a record listed below, such as an exception or a side effect of what that record says, list that record's id. The two are then shown together. Do not use it for a lesson that only shares a topic.
 
 Session: $session_id
 State: $state
@@ -53,7 +55,7 @@ $delivered
 Existing records that apply to this state:
 $existing
 
-Rules the user stated in this session, already recorded in the user's own words. Do not propose them again in any wording:
+Rules the user stated in this session, already recorded in the user's own words. Do not propose them again in any wording, but refer to one by its id (such as stated-0) in `refines` or `depends_on`:
 $stated
 
 Anchors this session touched or its user named (files, commands, tools):

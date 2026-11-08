@@ -89,6 +89,8 @@ def test_explain_shows_relations_and_the_users_quoted_words(memory):
         "superseded_by": [{"record_id": "r_proc2", "rung": None}],
         "refines": [],
         "refined_by": [],
+        "governed_by": [],
+        "governs": [],
     }
     assert [d["event_id"] for d in proc["deliveries"]] == [delivery.id]
     rule = memory.explain("r_rule")

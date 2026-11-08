@@ -407,7 +407,9 @@ class StreamRun:
         warnings = [line for line in stderr.splitlines() if line.startswith("rka-memory: ")]
         self.check(s.label, "no plugin warnings", not warnings, warnings[:3])
         self.check(s.label, "one session recorded", sid is not None, new)
-        self.check(s.label, "session mined", sid is not None and world.sessions[sid].mined)
+        errors_log = p.ledger_dir / "miner-errors.log"
+        why = [line for line in (errors_log.read_text().splitlines() if errors_log.exists() else []) if sid and line.startswith(sid)]
+        self.check(s.label, "session mined", sid is not None and world.sessions[sid].mined, why[-1:] or "")
         if sid is not None:
             gaps = [t.record_id for t in graph.traces(world, config_mod.load(path=p.config), sid) if not t.evidence]
             self.check(s.label, "every delivered record traces to evidence", not gaps, gaps[:3])

@@ -174,7 +174,9 @@ Before the first session, when the agent's tools are confined, the runner checks
 
 A stream with `model: live` runs against a real model. dsh uses its own default DeepSeek model, and the miner calls DeepSeek's OpenAI-compatible endpoint (`deepseek-flash`; set `RKM_MINER_MODEL` to change it). Both read the key from `DEEPSEEK_API_KEY`.
 
-A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `drift`, `prompt` and the user's file actions.
+A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `drift`, `prompt` and the user's file actions. A live run keeps no log of the requests the model received, so a live stream cannot observe `model_saw`, `model_never_saw`, `in_prompt` or `skill_offered` either: they would never hold, or always hold, whatever happened. To check what a live agent saw, search dsh's session transcripts under the run's `dsh-home/sessions/`.
+
+The agent can write the user's rules into a file of its own. In one house-rules run it wrote them to `AGENTS.md`, which dsh loads into every session whatever the packet arm, and the no-memory sessions then kept the rules too. The live streams clean `AGENTS.md` before every session after the first and record whether the agent wrote one.
 
 Any stream can add `observe` items: a `label` plus one check from the `expect` table that names no record, such as `{label: CHANGELOG entry, file_contains: {path: "{project}/CHANGELOG.md", text: "add divide("}}`. An observation never fails a run. The report records whether it held in each session, and counts how often each label held per packet arm, which is how a live stream measures whether delivered memory changed what the agent did.
 
@@ -185,6 +187,18 @@ The runner still checks the harness for every session: dsh exited 0, the plugin 
 `workload/live/1-calc-weeks.yaml` covers three simulated weeks on `calc-uv`. The user states the house rules once (type hints, one-line docstrings, `pytest -q` before finishing) and never repeats them. Packets alternate by day between the gated arm and no packet. The user adds a test by hand after the fourth session, and the project moves from uv to pip in the second week.
 
 `workload/live/2-house-rules.yaml` covers twelve simulated days. In the first session the user states two rules that leave nothing in the project for a later session to see: run the tests as `pytest -q -p no:cacheprovider` so no `.pytest_cache` is left behind, and end every reply with a line that starts with `Summary:`. The user repeats them once, in the third session, never again, and commits after every session. Each session observes whether both rules held: the cache from the project, the reply from dsh's output in `{run}/logs/s<n>.out`. `clean: .pytest_cache` runs before every session so each observation covers one session. The cache rule can be grounded by a passing test run, the reply rule only by the user's words (1/3 each), so the stream also shows how the ladder treats a preference without strong evidence. A rule that leaves an artifact, such as a changelog format, cannot test memory: every later session can copy the artifact. Run it alone with `make live LIVE=workload/live/2-house-rules.yaml`.
+
+## Replaying the miner on saved runs
+
+A live stream costs a full dsh run per session. A change to the miner's prompt or planner can be measured more cheaply on the ledgers earlier live runs left behind. `scripts/miner_replay.py` cuts each ledger where a session's miner output began, so the world is the one that miner saw, then mines the session again with the current code and DeepSeek, in a throwaway ledger. Its report lists, per session, the records the prompt listed, each candidate with the relations it proposed, what the planner kept and what it dropped. `scripts/replay_compare.py` totals reports and prints every kept relation with the text at both ends, for judging by hand. The replay runs in the workload image with the repository mounted, so it uses the working tree's code:
+
+```bash
+RKA_STACK_CORE_PORT= ./scripts/dockerw compose -p rka-memory-test --profile workload run --rm -v "$PWD:/src" -e PYTHONPATH=/src --entrypoint /opt/rka-memory/.venv/bin/python workload /src/scripts/miner_replay.py /src/workload-runs/<run>/<stream>/ledger/ledger.jsonl --out /src/workload-runs/replay/<name>.json
+```
+
+Each session is mined independently of the replay's other sessions, so a lesson a real run would have recorded once can come back in several sessions. Compare candidate counts between replays, not with live runs.
+
+With `--chain`, the script replays each ledger whole instead: it drops everything the old miner and gate wrote and mines the sessions again in order, so records accumulate as they do in a live run while the agent's sessions stay exactly as recorded. `--prompt <file>` swaps the miner prompt. Together they compare two prompts on the same sessions, without the run-to-run variance of the agent, which in the live house-rules runs ranged from 4 to 9 records with one prompt.
 
 ## Run directory
 

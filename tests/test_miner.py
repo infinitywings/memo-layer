@@ -505,7 +505,7 @@ def test_a_stated_rule_becomes_a_record_in_the_users_own_words_cited_to_the_mess
     assert rec.rung.value == "L1"
     assert rec.scope.describe() == "project=/p/app, user_context=default"
     assert f"{msg.id}: Add multiply. House rule: {SUMMARY_RULE}." in backend.rule_prompts[0]
-    assert f"- {SUMMARY_RULE}\n" in backend.prompts[0]
+    assert f"- stated-0: {SUMMARY_RULE}\n" in backend.prompts[0]
     assert (result.tokens, result.seconds) == (1800, 3.0)
     assert [(e.kind, e.payload.get("tokens")) for e in appended(memory, result)][-1] == (Kind.COST, 1800)
 

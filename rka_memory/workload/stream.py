@@ -217,6 +217,8 @@ def _selector(raw: Any, where: str) -> dict[str, Any]:
 
 LINK_KEYS = ("counter_links", "support_links")
 RULE_KINDS = ("preference", "constraint")
+# Checks that read the requests the model received, which only the scripted model logs.
+REQUEST_CHECKS = frozenset({"model_saw", "model_never_saw", "in_prompt", "skill_offered"})
 CANDIDATE_KEYS = {
     "broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on", "about", "supersedes",
     "refines",
@@ -361,6 +363,11 @@ def parse(doc: Any, source: Path) -> Stream:
     if any(b.at < a.at for a, b in zip(sessions, sessions[1:])):
         raise StreamError(f"{where}: session offsets must not go back in time")
     for s in sessions if model == "live" else ():
+        blind = sorted({o.expect.check for o in s.observe} & REQUEST_CHECKS)
+        if blind:
+            raise StreamError(
+                f"{where}.sessions[{s.label[1:]}]: a live stream keeps no log of the model's requests, so it cannot observe {', '.join(blind)}"
+            )
         scripted = {
             "agent": s.agent,
             "miner": any(s.miner[k] for k in ("candidates", "rules", "withdrawn", *LINK_KEYS)) or "task_class" in s.miner,

@@ -105,6 +105,13 @@ def deepseek_miner() -> dict[str, str]:
     return {"backend": "openai_compat", **DEEPSEEK, "model": os.environ.get("RKM_MINER_MODEL") or DEEPSEEK["model"]}
 
 
+# A dropped connection, a rate limit or a server error is retried once; a
+# session whose miner call fails stays unmined until something mines it again.
+ATTEMPTS = 2
+RETRY_SECONDS = 5.0
+TRANSIENT = frozenset({429, 500, 502, 503, 504})
+
+
 def openai_compat(cfg: Config, transport: httpx.BaseTransport | None = None) -> Backend:
     """Any OpenAI-compatible chat endpoint: the stack's mock model in tests,
     DeepSeek or another provider in live runs."""
@@ -117,11 +124,19 @@ def openai_compat(cfg: Config, transport: httpx.BaseTransport | None = None) -> 
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         body = {"model": cfg.miner_model, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
         started = time.monotonic()
-        try:
-            with httpx.Client(transport=transport, timeout=cfg.miner_timeout_seconds) as client:
-                resp = client.post(url, json=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise BackendError(f"miner endpoint unreachable: {exc}") from exc
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                with httpx.Client(transport=transport, timeout=cfg.miner_timeout_seconds) as client:
+                    resp = client.post(url, json=body, headers=headers)
+            except httpx.HTTPError as exc:
+                if attempt < ATTEMPTS:
+                    time.sleep(RETRY_SECONDS)
+                    continue
+                raise BackendError(f"miner endpoint unreachable: {exc}") from exc
+            if resp.status_code in TRANSIENT and attempt < ATTEMPTS:
+                time.sleep(RETRY_SECONDS)
+                continue
+            break
         if resp.status_code != 200:
             raise BackendError(f"miner endpoint answered HTTP {resp.status_code}: {resp.text[:300]}")
         try:

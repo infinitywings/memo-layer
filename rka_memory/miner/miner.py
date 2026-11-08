@@ -13,7 +13,7 @@ Rungs stay with the validity engine, which runs right after.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from string import Template
@@ -243,7 +243,7 @@ def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
         state=canonical_json(view.state.to_json()),
         delivered=_rows(view.delivered),
         existing=_rows(view.existing),
-        stated="\n".join(f"- {q}" for q in stated) or "(none)",
+        stated="\n".join(f"- stated-{n}: {q}" for n, q in enumerate(stated)) or "(none)",
         anchors=", ".join(view.anchors) or "(none)",
         events="\n".join(f"{e.id} {e.kind.value} {e.actor.value} {_short(dict(e.payload))}" for e in view.events)
         or "(none)",
@@ -362,6 +362,8 @@ class _Planner:
         # Records the prompts listed: the only ones a new record may supersede.
         self.listed: set[str] = set()
         self.rule_records: set[str] = set()
+        # `stated-<n>` in the miner prompt -> the record stated rule n became.
+        self.stated: dict[str, str] = {}
 
     def refined(self, label: str, c: Candidate) -> list[str]:
         """The listed records `c` qualifies; it may refine nothing else."""
@@ -444,7 +446,9 @@ class _Planner:
 
     def candidate(
         self, label: str, c: Candidate, statement: dict[str, str] | None = None, by_user: bool = False
-    ) -> None:
+    ) -> str | None:
+        """Plan one candidate; return the record it became or merged into."""
+        c = self.resolve_stated(c)
         evidence = self.cited(label, c.evidence, Polarity.SUPPORT)
         state = self.world.session(self.session_id).state
         replaces = self.supersedes(label, c, by_user)
@@ -454,7 +458,7 @@ class _Planner:
         if dup is not None:
             linked = [e for e in evidence if self.link(dup, e, Polarity.SUPPORT, "duplicate candidate cited it", statement)]
             self.result.merged.append({"record_id": dup.id, "content": c.content, "evidence": linked})
-            return
+            return dup.id
         depends_on = []
         for d in c.depends_on:
             if d in self.world.records:
@@ -494,6 +498,7 @@ class _Planner:
         )
         if not evidence:
             self.result.ungrounded.append(spec.record_id)
+        return spec.record_id
 
     def record_link(
         self,
@@ -518,16 +523,36 @@ class _Planner:
                 {"record_id": rl.record_id, "event_id": rl.event_id, "polarity": polarity.value, "reason": rl.reason}
             )
 
-    def rule(self, found: extract.Located, listed: set[str]) -> None:
+    def resolve_stated(self, c: Candidate) -> Candidate:
+        """The miner prompt names this session's stated rules `stated-<n>`;
+        point those references at the records the rules became."""
+        if not self.stated:
+            return c
+
+        def one(ref: str) -> str:
+            return self.stated.get(ref, ref)
+
+        def each(refs: tuple[str, ...]) -> tuple[str, ...]:
+            # The miner may name a restated rule both ways; keep it once.
+            return tuple(dict.fromkeys(one(r) for r in refs))
+
+        return replace(
+            c,
+            depends_on=each(c.depends_on),
+            refines=each(c.refines),
+            supersedes=one(c.supersedes) if c.supersedes else None,
+        )
+
+    def rule(self, found: extract.Located, listed: set[str]) -> str | None:
         """A rule in the user's own words: evidence for the record it restates,
-        or a new record citing the message that holds it."""
+        or a new record citing the message that holds it. Returns that record."""
         label, rule, event_id = f"rule {found.rule.index}", found.rule, found.message.event_id
         statement = found.statement()
         if rule.restates:
             link = RecordLink(rule.restates, event_id, "the user stated this rule again")
             self.record_link(label, link, Polarity.SUPPORT, listed, "restates a record that was not listed", statement)
-            return
-        self.candidate(
+            return rule.restates if rule.restates in listed else None
+        return self.candidate(
             label,
             Candidate(
                 content=rule.quote,
@@ -581,8 +606,11 @@ def plan(
     planner.judge_task_class(out.task_class)
     rule_records = {r.id for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS}
     planner.listed, planner.rule_records = listed, rule_records
-    for found in extraction.rules if extraction else ():
-        planner.rule(found, rule_records)
+    for n, found in enumerate(extraction.rules if extraction else ()):
+        rid = planner.rule(found, rule_records)
+        if rid is not None:
+            planner.stated[f"stated-{n}"] = rid
+            planner.listed.add(rid)
     for gone in extraction.withdrawn if extraction else ():
         planner.withdraw(gone, rule_records)
     for i, c in enumerate(out.candidates):
