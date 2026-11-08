@@ -1,0 +1,77 @@
+name: refines-stale
+description: >-
+  A qualification stays with the record it qualifies: the miner says one
+  record refines another, and packets keep the two in one group. Without the
+  group the qualification, promoted last, would open the packet and its rule
+  would come last; with it the rule comes first and the qualification right
+  after. A record about a file that the project no longer has is delivered
+  with a note saying the file is gone.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    drift:
+      - write: {path: helpers.py, content: "def clamp(value, low, high):\n    return max(low, min(value, high))\n"}
+    prompt: Add a multiply function to calc.py, next to clamp in helpers.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Run the tests with pytest -q
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+        - content: helpers.clamp keeps a value between two bounds
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+          about: [file:helpers.py]
+    expect:
+      - {record: Run the tests with pytest -q, rung: L1}
+      - {record: helpers.clamp keeps a value between two bounds, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links:
+        - record: Run the tests with pytest -q
+          event: {kind: test_result, passed: true}
+          reason: the suite passed again
+        - record: helpers.clamp keeps a value between two bounds
+          event: {kind: test_result, passed: true}
+          reason: the suite with clamp passed again
+      candidates:
+        - content: pytest -q still leaves __pycache__ directories behind
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+          refines: [Run the tests with pytest -q]
+    expect:
+      - {record: Run the tests with pytest -q, rung: L2}
+      - {record: pytest -q still leaves __pycache__ directories behind, rung: L1}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links:
+        - record: pytest -q still leaves __pycache__ directories behind
+          event: {kind: test_result, passed: true}
+          reason: the cache directories were there again
+    expect:
+      - {record: pytest -q still leaves __pycache__ directories behind, rung: L2}
+
+  - at: +3d
+    drift:
+      - remove: helpers.py
+    prompt: Add a negate function to calc.py
+    expect:
+      - {record: Run the tests with pytest -q, first_in_packet: true}
+      - {record: pytest -q still leaves __pycache__ directories behind, delivered: true}
+      - {record: helpers.clamp keeps a value between two bounds, delivered: true}
+      - {model_saw: "helpers.py no longer exists"}

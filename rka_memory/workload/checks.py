@@ -83,14 +83,20 @@ def _agent_requests(obs: Observed) -> list[dict[str, Any]]:
     return [r["body"] for r in obs.requests if r.get("kind") == "agent"]
 
 
+PACKET_HEADERS = ("## Validated memory (rka-memory)", "## Unvalidated memory hints (rka-memory)")
+
+
 def _in_prompt(obs: Observed, rec: RecordState, want: bool) -> Outcome:
-    systems = [
-        json.dumps(m.get("content"), ensure_ascii=False)
-        for body in _agent_requests(obs)
-        for m in body.get("messages") or ()
-        if m.get("role") in ("system", "developer")
-    ]
-    got = any(rec.id in text for text in systems)
+    """The record id is in a packet the model received: in a system or
+    developer message (the session-start packet), or in a message that
+    carries a packet (the first prompt's)."""
+    packets = []
+    for body in _agent_requests(obs):
+        for m in body.get("messages") or ():
+            text = json.dumps(m.get("content"), ensure_ascii=False)
+            if m.get("role") in ("system", "developer") or any(h in text for h in PACKET_HEADERS):
+                packets.append(text)
+    got = any(rec.id in text for text in packets)
     return got == want, got
 
 

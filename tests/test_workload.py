@@ -330,7 +330,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale"]
 
 
 LIVE = """

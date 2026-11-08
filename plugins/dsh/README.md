@@ -3,7 +3,7 @@
 `dsh-plugin-rka-memory` connects a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) session to rka-memory. It does three things:
 
 - It records the session in the rka-memory ledger: prompts, tool calls, file writes, exit codes, test results and token usage.
-- It puts the rka-memory packet into the system prompt, so the model sees the records that are valid for the session.
+- It gives the model the rka-memory packet: the session-start packet in the system prompt, and the first prompt's packet as a message on that prompt's first step, so the model sees the records that are valid for the session.
 - It registers the L3 skills that are valid for the session on the session's own agent.
 
 The plugin starts the `rka-memory` CLI once per event and speaks the Claude Code hook protocol to it (`rka-memory hook <Event>`, JSON payload on stdin). dsh keeps no transcript file, so every payload sends `transcript_path: ''`, `harness: 'dsh'`, the exit code of each shell command, and the session's token usage.
@@ -51,7 +51,7 @@ The plugin sends the calls for one session one at a time, in dsh order, so the l
 
 Messages that other plugins inject (working directory, hook context, skill invocations) are not user prompts. The plugin does not send them to rka-memory. Neither are a subagent's prompts: dsh marks them `source.kind` `user`, but the parent model wrote them, so the plugin skips `UserPromptSubmit` for every session whose header has a `parentSession` or `origin: 'subagent'`. Otherwise model text would land in the ledger as a user message, or the model could type its own `rkm confirm`.
 
-The packet is one system-prompt section named `rka-memory` with order 9000. dsh evaluates sections on every step, so the packet stays in the prompt for the whole session. The first prompt can add a second part to the packet.
+The session-start packet is one system-prompt section named `rka-memory` with order 9000. dsh evaluates sections on every step, so the packet stays in the prompt for the whole session. The first prompt's packet holds the records its task class unlocks. By the time `agent/pre-step` sees the prompt, dsh has already rendered the system prompt for that step, so a packet added to the section would first reach the model on the second step; a session whose agent answered in one step never saw it. The plugin therefore appends that packet to the step's messages as a user-role message with `source.kind` `rka-memory`, as dsh's own `time-context` plugin does. It stays in the session history, and the plugin never forwards it to rka-memory as a user prompt, since its source is not `user`.
 
 When a prompt starts with `rkm confirm <id>` or `rkm reject <id> <reason>`, rka-memory records the verdict and blocks the prompt. The plugin then rejects the step, so the model never sees the prompt, and writes rka-memory's answer to stderr.
 

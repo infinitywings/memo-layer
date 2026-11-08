@@ -7,6 +7,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { closeSync, constants, existsSync, fchmodSync, fchownSync, fstatSync, lstatSync, openSync, readlinkSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -360,6 +361,25 @@ function run(command: readonly string[], args: readonly string[], input: string,
   })
 }
 
+/** A user-role message carrying a packet, shaped like dsh-llm's createUserMessage output. */
+function packetMessage(text: string): UserMessage {
+  const message = {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: { kind: 'rka-memory', form: 'snapshot', sections: [{ name: 'rka-memory', text }] },
+  }
+  return deepFreeze(message) as unknown as UserMessage
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) deepFreeze(child)
+    Object.freeze(value)
+  }
+  return value
+}
+
 function parseReply(value: unknown): HookReply {
   if (!isRecord(value)) return { kind: 'none' }
   if (value.decision === 'block') {
@@ -564,6 +584,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     if (isSubagent(agent)) return next()
     const typed = messages.filter((message: UserMessage) => message.source.kind === 'user')
     if (typed.length === 0) return next()
+    let context = ''
     const rejected = await guard('UserPromptSubmit', async () => {
       const state = sessionOf(agent.id)
       const prompt = typed.map(message => textOf(message.content)).join('\n')
@@ -572,14 +593,20 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         process.stderr.write(`${reply.reason}\n`)
         return true
       }
-      if (reply.kind === 'context') state.packet = state.packet === '' ? reply.text : `${state.packet}\n\n${reply.text}`
+      if (reply.kind === 'context') context = reply.text
       if (!state.prompted) {
         state.prompted = true
         await reloadSkills(agent, state)
       }
       return false
     })
-    return rejected === true ? { kind: 'reject' } : next()
+    if (rejected === true) return { kind: 'reject' }
+    const decision = await next()
+    if (decision.kind === 'reject' || context === '') return decision
+    // The system prompt for this step is already rendered, so a packet
+    // added to it would first reach the model on the next step. A sourced
+    // message on this step reaches it now, as dsh's time-context plugin does.
+    return { ...decision, messages: [...decision.messages, packetMessage(context)] }
   })
 
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next): Promise<PreToolDecision> => {

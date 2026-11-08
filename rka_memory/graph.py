@@ -28,6 +28,7 @@ class EdgeType(StrEnum):
     EVIDENCE = "evidence"  # event -> record, with a polarity
     DEPENDS_ON = "depends_on"  # record -> record
     SUPERSEDES = "supersedes"  # record -> record
+    REFINES = "refines"  # record -> record it qualifies
     DELIVERED = "delivered"  # delivery event -> record
     TOUCHES = "touches"  # event -> anchor (a user message names it)
     ABOUT = "about"  # record -> anchor
@@ -122,6 +123,7 @@ def project(world: World, cfg: Config) -> Graph:
         if rec.spec.supersedes in world.records:
             edges.append(Edge(EdgeType.SUPERSEDES, rec.id, rec.spec.supersedes))
         edges += [Edge(EdgeType.ABOUT, rec.id, a) for a in rec.spec.about]
+        edges += [Edge(EdgeType.REFINES, rec.id, r) for r in rec.spec.refines if r in world.records]
     for d in world.deliveries:
         attrs = {"session_id": d.event.session_id, "channel": d.channel, "arm": d.arm, "ts": d.event.ts}
         edges += [Edge(EdgeType.DELIVERED, d.event.id, rid, attrs) for rid in d.record_ids if rid in world.records]

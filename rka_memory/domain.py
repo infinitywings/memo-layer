@@ -453,6 +453,8 @@ class RecordSpec:
     supersedes: str | None = None
     # Anchor keys (rka_memory/anchors.py) the record is about.
     about: tuple[str, ...] = ()
+    # Records this one qualifies or narrows; views keep them together.
+    refines: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         out = {
@@ -469,6 +471,8 @@ class RecordSpec:
         }
         if self.about:
             out["about"] = list(self.about)
+        if self.refines:
+            out["refines"] = list(self.refines)
         return out
 
     @classmethod
@@ -485,4 +489,5 @@ class RecordSpec:
             depends_on=tuple(d.get("depends_on") or ()),
             supersedes=d.get("supersedes"),
             about=tuple(str(a) for a in d.get("about") or ()),
+            refines=tuple(str(r) for r in d.get("refines") or ()),
         )

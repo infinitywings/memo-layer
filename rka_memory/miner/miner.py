@@ -102,6 +102,7 @@ class Candidate:
     depends_on: tuple[str, ...]
     about: tuple[str, ...] = ()
     supersedes: str | None = None
+    refines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -290,6 +291,7 @@ def _candidate(raw: Any, index: int) -> Candidate | Drop:
         depends_on=_strings(raw.get("depends_on")),
         about=_strings(raw.get("about")),
         supersedes=str(raw["supersedes"]) if raw.get("supersedes") else None,
+        refines=_strings(raw.get("refines")),
     )
 
 
@@ -360,6 +362,16 @@ class _Planner:
         # Records the prompts listed: the only ones a new record may supersede.
         self.listed: set[str] = set()
         self.rule_records: set[str] = set()
+
+    def refined(self, label: str, c: Candidate) -> list[str]:
+        """The listed records `c` qualifies; it may refine nothing else."""
+        kept = []
+        for target in c.refines:
+            if target in self.listed:
+                kept.append(target)
+            else:
+                self.result.dropped.append(Drop(f"{label} refines {target}", "refines a record that was not listed"))
+        return kept
 
     def supersedes(self, label: str, c: Candidate, by_user: bool) -> str | None:
         """The listed record `c` replaces, or None. The miner may supersede only
@@ -471,6 +483,7 @@ class _Planner:
             depends_on=tuple(depends_on),
             about=tuple(about),
             supersedes=replaces,
+            refines=tuple(self.refined(label, c)),
         )
         self.emit(Kind.RECORD_PROPOSED, {**spec.to_json(), "mined_from_session": self.session_id})
         rec = self.world.records[spec.record_id]

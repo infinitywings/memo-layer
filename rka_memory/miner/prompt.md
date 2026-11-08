@@ -16,7 +16,8 @@ Reply with one JSON object and nothing else. No prose, no Markdown fences.
       "acceptance_check": "<shell or test command that shows the procedure worked>",
       "depends_on": ["<record ids this candidate relies on>"],
       "about": ["<anchors from the list below that this lesson is specifically about>"],
-      "supersedes": "<id of a delivered or existing procedure this procedure replaces, or null>"
+      "supersedes": "<id of a delivered or existing procedure this procedure replaces, or null>",
+      "refines": ["<ids of delivered or existing records this lesson qualifies or narrows>"]
     }
   ],
   "support_links": [
@@ -41,6 +42,7 @@ Rules:
 10. `task_class`: the class that best describes the session's main work.
 11. `about`: the anchors listed below that the lesson is specifically about, such as the file a fact describes or the command a procedure runs. Leave it empty for a lesson about the whole project. Name only anchors from the list below.
 12. `supersedes`: only for a procedure that replaces a procedure listed below, because the agent now does that work in a different way. The old procedure stays on record, and the new one is shown instead once it is validated. Never use it for other kinds.
+13. `refines`: when the lesson qualifies or narrows a record listed below, such as an exception or a side effect of what that record says, list that record's id. The two are then shown together. Do not use it for a lesson that only shares a topic.
 
 Session: $session_id
 State: $state

@@ -73,8 +73,9 @@ class Memory:
         now = now or clock_now()
         world = world or self.world()
         anchors = frozenset(world.session(session_id).anchors) if self.cfg.graph_anchors else frozenset()
+        missing = builder.missing_files(world, state) if self.cfg.graph_anchors else frozenset()
         if channel == "hints":
-            packet = builder.hints(world, self.cfg, state, exclude=exclude, anchors=anchors)
+            packet = builder.hints(world, self.cfg, state, exclude=exclude, anchors=anchors, missing=missing)
         else:
             arm = arm or builder.arm_for(now.astimezone().date(), self.cfg)
             packet = builder.build(
@@ -86,6 +87,7 @@ class Memory:
                 budget_tokens=budget_tokens,
                 exclude=exclude,
                 anchors=anchors,
+                missing=missing,
             )
         self.append(
             Event.new(
@@ -187,6 +189,8 @@ class Memory:
                 "dependents": [ref(r.id) for r in world.records.values() if record_id in r.spec.depends_on],
                 "supersedes": ref(rec.spec.supersedes) if rec.spec.supersedes else None,
                 "superseded_by": [ref(r.id) for r in world.records.values() if r.spec.supersedes == record_id],
+                "refines": [ref(r) for r in rec.spec.refines],
+                "refined_by": [ref(r.id) for r in world.records.values() if record_id in r.spec.refines],
             },
             "deliveries": [
                 {"event_id": d.event.id, "session_id": d.event.session_id, "ts": d.event.ts, "arm": d.arm, "channel": d.channel}

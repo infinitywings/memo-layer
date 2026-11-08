@@ -134,12 +134,15 @@ def miner_reply(prompt: str, rules: dict[str, Any]) -> tuple[dict[str, Any], lis
     candidates = []
     for c in rules.get("candidates") or ():
         label = f"candidate {c['content']!r}"
-        out = {k: v for k, v in c.items() if k not in ("evidence", "depends_on", "supersedes")}
+        out = {k: v for k, v in c.items() if k not in ("evidence", "depends_on", "supersedes", "refines")}
         out["evidence"] = [eid for sel in c.get("evidence") or () for eid in r.events(sel, f"{label} evidence")]
         deps = [r.record(dep, known, f"{label} depends_on") for dep in c.get("depends_on") or ()]
         out["depends_on"] = [d for d in deps if d]
         if c.get("supersedes"):
             out["supersedes"] = r.record(c["supersedes"], known, f"{label} supersedes")
+        if c.get("refines"):
+            refined = [r.record(target, known, f"{label} refines") for target in c["refines"]]
+            out["refines"] = [t for t in refined if t]
         candidates.append(out)
     doc: dict[str, Any] = {"candidates": candidates}
     # a counter link names a delivered record; a support link any listed one

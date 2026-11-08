@@ -218,7 +218,8 @@ def _selector(raw: Any, where: str) -> dict[str, Any]:
 LINK_KEYS = ("counter_links", "support_links")
 RULE_KINDS = ("preference", "constraint")
 CANDIDATE_KEYS = {
-    "broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on", "about", "supersedes"
+    "broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on", "about", "supersedes",
+    "refines",
 }
 
 

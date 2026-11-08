@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 from rka_memory.config import Config
 from rka_memory.domain import DELIVERABLE, Polarity, Rung, State, parse_ts
@@ -31,10 +32,13 @@ class PacketItem:
     sessions: int
     unvalidated: bool = False
     stated: str | None = None
+    gone: tuple[str, ...] = ()
 
     def line(self) -> str:
         tag = "unvalidated hint" if self.unvalidated else f"{self.rung} {self.kind}"
         said = attributed(self.content, self.stated)
+        if self.gone:
+            said += f" ({flatten(', '.join(self.gone))} no longer {'exists' if len(self.gone) == 1 else 'exist'})"
         return (
             f"- [{flatten(self.record_id)} | {tag}] {said} "
             f"(scope: {flatten(self.scope)}; grounding {self.grounding:.2f} across {self.sessions} sessions)"
@@ -140,13 +144,25 @@ def session_arm(world: World, session_id: str, cfg: Config, today: date) -> str:
     return arm_for(today, cfg)
 
 
+def missing_files(world: World, state: State) -> frozenset[str]:
+    """File anchors of records that the project at `state` no longer has.
+    Reads the filesystem; says nothing when the project is not present here."""
+    root = Path(state.project) if state.project else None
+    if root is None or not root.is_dir():
+        return frozenset()
+    files = {a for r in world.records.values() for a in r.spec.about if a.startswith("file:")}
+    return frozenset(a for a in files if not (root / a.removeprefix("file:")).exists())
+
+
 def rule_text(rec: RecordState, world: World, cfg: Config) -> str:
     """One record as a line of text for a skill's rules section."""
     item = _item(rec, world, cfg)
     return attributed(item.content, item.stated)
 
 
-def _item(rec: RecordState, world: World, cfg: Config, unvalidated: bool = False) -> PacketItem:
+def _item(
+    rec: RecordState, world: World, cfg: Config, unvalidated: bool = False, missing: frozenset[str] = frozenset()
+) -> PacketItem:
     support = assess(rec, world, cfg).support
     statements = [g for g in support if g.affirms]
     return PacketItem(
@@ -159,6 +175,7 @@ def _item(rec: RecordState, world: World, cfg: Config, unvalidated: bool = False
         sessions=len({g.session_id for g in support}),
         unvalidated=unvalidated,
         stated=parse_ts(statements[-1].event.ts).date().isoformat() if statements else None,
+        gone=tuple(a.removeprefix("file:") for a in rec.spec.about if a in missing),
     )
 
 
@@ -174,7 +191,7 @@ def _groups(records: list[RecordState]) -> list[list[RecordState]]:
         return x
 
     for r in records:
-        for d in r.spec.depends_on:
+        for d in (*r.spec.depends_on, *r.spec.refines):
             if d in by_id:
                 parent[find(r.id)] = find(d)
     groups: dict[str, list[RecordState]] = {}
@@ -208,9 +225,11 @@ def build(
     budget_tokens: int | None = None,
     exclude: frozenset[str] = frozenset(),
     anchors: frozenset[str] = frozenset(),
+    missing: frozenset[str] = frozenset(),
 ) -> Packet:
     """`anchors` are the files, commands and tools the session has touched or
-    named so far: groups about one of them come first, so the budget keeps them."""
+    named so far: groups about one of them come first, so the budget keeps them.
+    `missing` are file anchors the project no longer has (`missing_files`)."""
     budget = cfg.budget_tokens if budget_tokens is None else budget_tokens
     chosen = _select(world, cfg, state, arm, exclude)
     groups = _groups(chosen)
@@ -227,7 +246,7 @@ def build(
     used = estimate_tokens(header(channel))
     for group in groups:
         ordered = sorted(group, key=lambda r: (len(r.spec.depends_on), world.position[r.proposed.id]))
-        lines = [_item(r, world, cfg, unvalidated=r.rung not in DELIVERABLE) for r in ordered]
+        lines = [_item(r, world, cfg, unvalidated=r.rung not in DELIVERABLE, missing=missing) for r in ordered]
         cost = sum(estimate_tokens(i.line()) for i in lines)
         if used + cost > budget:
             omitted += len(group)
@@ -248,6 +267,7 @@ def hints(
     *,
     exclude: frozenset[str] = frozenset(),
     anchors: frozenset[str] = frozenset(),
+    missing: frozenset[str] = frozenset(),
 ) -> Packet:
     hidden = exclude | superseded(world, cfg, state)
     pool = [r for r in world.records.values() if r.rung is Rung.L1 and r.id not in hidden]
@@ -255,7 +275,7 @@ def hints(
     pool.sort(key=lambda r: (_about(r, anchors), _recency(r, world)), reverse=True)
     items, used, omitted = [], estimate_tokens(header("hints")), 0
     for r in pool:
-        item = _item(r, world, cfg, unvalidated=True)
+        item = _item(r, world, cfg, unvalidated=True, missing=missing)
         cost = estimate_tokens(item.line())
         if used + cost > cfg.hints_budget_tokens:
             omitted += 1

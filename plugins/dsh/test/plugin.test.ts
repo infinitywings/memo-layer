@@ -104,7 +104,7 @@ test('session start puts the packet in the system prompt and registers the sessi
   }])
 })
 
-test('only typed prompts reach rka-memory; the first one extends the packet and reloads skills', async (t) => {
+test('only typed prompts reach rka-memory; the first one gets its packet on the same step and reloads skills', async (t) => {
   const rkm = fakeRkaMemory(t)
   rkm.reply({ SessionStart: { stdout: PACKET_A }, skills: { stdout: [PROC_SKILL] } })
   const host = fakeHost({ command: rkm.command })
@@ -117,12 +117,18 @@ test('only typed prompts reach rka-memory; the first one extends the packet and 
   assert.equal(rkm.calls().length, 2)
 
   const typed = userMessage('m1', 'fix the crash in the parser')
-  assert.deepEqual(await host.emit('agent/pre-step', { agent, messages: [injected, typed] }, enter([typed])), { kind: 'enter', messages: [typed] })
+  const decision = await host.emit('agent/pre-step', { agent, messages: [injected, typed] }, enter([typed]))
+  assert.equal(decision.kind, 'enter')
+  assert.equal(decision.messages[0], typed)
+  assert.deepEqual(
+    decision.messages.slice(1).map((m: any) => [m.role, m.source.kind, m.content[0].text]),
+    [['user', 'rka-memory', 'PACKET-B']],
+  )
   assert.deepEqual(rkm.calls().slice(2), [
     { args: ['hook', 'UserPromptSubmit'], input: { ...base('UserPromptSubmit'), prompt: 'fix the crash in the parser', prompt_id: 'm1' } },
     { args: ['skills', '--session', 's1', '--cwd', CWD], input: null },
   ])
-  assert.equal(host.systemPrompt(agent), 'PACKET-A\n\nPACKET-B')
+  assert.equal(host.systemPrompt(agent), 'PACKET-A')
   assert.deepEqual(agent.skills.map(skill => skill.name), ['rka-r-test'])
 
   rkm.reply({})

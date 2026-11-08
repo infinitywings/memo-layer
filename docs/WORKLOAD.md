@@ -115,6 +115,7 @@ miner:
       confidence: 0.7
       about: [file:calc.py]           # anchors the mined session touched or the user named
       supersedes: <content of a listed procedure this procedure replaces>
+      refines: [<content of a listed record this one qualifies>]
   counter_links:
     - record: <content of a delivered record>
       event: {kind: user_undo}
@@ -152,7 +153,7 @@ Each item is one check, with `record` naming the record by its content when the 
 |---|---|
 | `{record, rung: L2}` | The record is at that rung. |
 | `{record, delivered: true}` | The record was in this session's packet, at session start or with the first prompt. |
-| `{record, in_prompt: true}` | The record id appears in a system or developer message the model received in this session. |
+| `{record, in_prompt: true}` | The record id appears in a packet the model received in this session: a system or developer message, or a message that carries a packet. |
 | `{record, narrowed: {toolchain: pip}}` | The engine narrowed the record's scope by excluding that value. |
 | `{record, first_in_packet: true}` | The record opened a packet delivered in this session. |
 | `{record, skill_offered: true}` | The record's skill name appears in a request the model received in this session. |
