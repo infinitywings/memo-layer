@@ -6,6 +6,7 @@ change to a file the agent wrote to the user, as an edit or an undo.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,6 +19,25 @@ Snapshot = dict[str, bytes]
 
 
 GIT = ["git", "-c", "user.name=workload", "-c", "user.email=workload@example.invalid"]
+# The agent owns the repository, .git included. Hooks and fsmonitor are off as
+# a second guard; the first is that git runs as the agent user (`sandboxed`).
+GIT_GUARDED = [*GIT, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+RunAs = tuple[int, int] | None
+
+
+def sandboxed(cmd: list[str], cwd: Path, run_as: RunAs, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    """Run a command that executes or reads what the agent wrote (its tests,
+    its repository) as the agent user, with an environment that carries no
+    API key and no RKA_MEMORY_* setting. As root, such a command would run
+    agent code outside the agent's confinement, next to the ledger."""
+    env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": "/home/agent" if run_as else os.environ.get("HOME", "/"),
+        "LANG": "C.UTF-8",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    owner = {"user": run_as[0], "group": run_as[1], "extra_groups": []} if run_as else {}
+    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, check=False, **owner)
 
 
 def create_project(fixture: Path, project: Path) -> None:
@@ -27,12 +47,16 @@ def create_project(fixture: Path, project: Path) -> None:
         subprocess.run([*GIT, *args], cwd=project, check=True, capture_output=True)
 
 
-def commit(project: Path, message: str) -> None:
+def commit(project: Path, message: str, run_as: RunAs = None) -> None:
     """Commit every change, or nothing when the tree is clean."""
-    subprocess.run([*GIT, "add", "-A"], cwd=project, check=True, capture_output=True)
-    staged = subprocess.run([*GIT, "diff", "--cached", "--quiet"], cwd=project, capture_output=True)
+    added = sandboxed([*GIT_GUARDED, "add", "-A"], project, run_as)
+    if added.returncode != 0:
+        raise ValueError(f"git add failed: {added.stderr.strip()[-300:]}")
+    staged = sandboxed([*GIT_GUARDED, "diff", "--cached", "--quiet"], project, run_as)
     if staged.returncode == 1:
-        subprocess.run([*GIT, "commit", "-q", "-m", message], cwd=project, check=True, capture_output=True)
+        done = sandboxed([*GIT_GUARDED, "commit", "-q", "-m", message], project, run_as)
+        if done.returncode != 0:
+            raise ValueError(f"git commit failed: {done.stderr.strip()[-300:]}")
 
 
 def snapshot(project: Path) -> Snapshot:
@@ -52,11 +76,12 @@ def target(project: Path, path: str) -> Path:
     return full
 
 
-def apply(action: FileAction, project: Path, before: Snapshot) -> None:
+def apply(action: FileAction, project: Path, before: Snapshot, run_as: RunAs = None) -> None:
     """Apply one drift or user file action. `before` is the snapshot taken
-    before the latest agent session, which `restore` returns a file to."""
+    before the latest agent session, which `restore` returns a file to.
+    A commit runs as `run_as`, the agent user, when the runner confines it."""
     if isinstance(action, Commit):
-        commit(project, action.message)
+        commit(project, action.message, run_as)
         return
     path = target(project, action.path)
     match action:

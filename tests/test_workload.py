@@ -3,6 +3,7 @@ simulated user's file actions, the scripted model, and the ledger checks."""
 
 import importlib.util
 import json
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -590,3 +591,26 @@ def test_command_passes_runs_in_the_project_and_reports_the_exit(tmp_path):
     assert evaluate(obs, Expect("command_passes", "test -f ok"))[0] is True
     ok, detail = evaluate(obs, Expect("command_passes", "echo nope; exit 3"))
     assert (ok, detail) == (False, "exit 3: nope")
+
+
+def test_a_commit_never_runs_a_hook_the_agent_planted(tmp_path):
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "calc.py").write_text("x = 1\n")
+    proj = tmp_path / "proj"
+    files.create_project(fixture, proj)
+    hook = proj / ".git" / "hooks" / "pre-commit"
+    hook.write_text(f"#!/bin/sh\ntouch {tmp_path}/hook-ran\n")
+    hook.chmod(0o755)
+    (proj / "calc.py").write_text("x = 2\n")
+    files.commit(proj, "change")
+    assert not (tmp_path / "hook-ran").exists()
+    assert "change" in subprocess.run(["git", "log", "--oneline"], cwd=proj, capture_output=True, text=True).stdout
+
+
+def test_command_passes_runs_without_the_runners_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-secret")
+    monkeypatch.setenv("RKA_MEMORY_DIR", "/runs/x/ledger")
+    obs = Observed(world=project([]), session_id=None, requests=[], ledger_lines=[], metrics=dict, project=tmp_path)
+    check = 'test -z "$DEEPSEEK_API_KEY" && test -z "$RKA_MEMORY_DIR" && test "$PYTHONDONTWRITEBYTECODE" = 1'
+    assert evaluate(obs, Expect("command_passes", check))[0] is True

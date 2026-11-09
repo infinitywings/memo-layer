@@ -163,7 +163,7 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{ledger_parses: true}` | Every line of the ledger parses as an event. |
 | `{raw_line_absent: <line>}` | No ledger line equals the given text. |
 | `{file_absent: <path>}` | The path does not exist. Placeholders work here. |
-| `{command_passes: <shell command>}` | The command exits 0 when the runner runs it in the project after the session, such as the test suite. The last lines of its output are the detail. |
+| `{command_passes: <shell command>}` | The command exits 0 when the runner runs it in the project after the session, such as the test suite. It runs code the agent wrote, so the runner runs it as the agent user, with no API key or `RKA_MEMORY_*` variable in its environment. The last lines of its output are the detail. |
 | `{file_contains: {path, text}}` | The file exists and contains the text. Placeholders work in `path`. |
 | `{model_never_saw: <text>}` | No request the model received in this session contained the text, in a prompt or a tool result. With the canaries, a read-leak check. |
 | `{model_saw: <text>}` | Some request the model received in this session contained the text. JSON escaping applies, so quote characters in the text do not match. |

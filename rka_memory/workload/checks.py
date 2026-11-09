@@ -19,6 +19,7 @@ from typing import Any, Callable
 from rka_memory.config import ARMS
 from rka_memory.domain import SCOPE_FIELDS, Event, Rung
 from rka_memory.skills.gate import skill_name
+from rka_memory.workload import files
 from rka_memory.world import RecordState, World
 
 PACKET_CHANNELS = ("session_start", "prompt")
@@ -55,6 +56,8 @@ class Observed:
     ledger_lines: list[str]
     metrics: Callable[[], dict[str, Any]]
     project: Path | None = None
+    # The agent user's uid and gid, when the runner confines the agent.
+    run_as: tuple[int, int] | None = None
 
     def deliveries(self, channels: tuple[str, ...] = PACKET_CHANNELS):
         return [d for d in self.world.deliveries if d.event.session_id == self.session_id and d.channel in channels]
@@ -194,9 +197,8 @@ def _command_passes(obs: Observed, command: str) -> Outcome:
     if obs.project is None:
         return False, "no project"
     try:
-        proc = subprocess.run(
-            ["bash", "-c", command], cwd=obs.project, capture_output=True, text=True, timeout=COMMAND_TIMEOUT, check=False
-        )
+        # The command runs code the agent wrote, so it runs as the agent.
+        proc = files.sandboxed(["bash", "-c", command], obs.project, obs.run_as, timeout=COMMAND_TIMEOUT)
     except subprocess.TimeoutExpired:
         return False, f"timed out after {COMMAND_TIMEOUT}s"
     tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]

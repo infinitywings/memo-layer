@@ -392,7 +392,7 @@ class StreamRun:
         p = self.paths
         self._set_clock(self.stream.start + s.at)
         for action in s.drift:
-            files.apply(action, p.project, self.before)
+            files.apply(action, p.project, self.before, self.confine)
         self._own()
         self.before = files.snapshot(p.project)
         mock.script(label=s.label, agent=files.substitute(s.agent, p.placeholders()), say=s.say, miner=s.miner)
@@ -422,7 +422,7 @@ class StreamRun:
                 verdicts += 1
                 self._verdict(s, verdicts, action, mock)
             else:
-                files.apply(action, p.project, self.before)
+                files.apply(action, p.project, self.before, self.confine)
         new_errors = self._hook_errors()[len(errors):]
         self.check(s.label, "no hook errors", not new_errors.strip(), new_errors[-400:])
         obs = Observed(
@@ -432,6 +432,7 @@ class StreamRun:
             ledger_lines=p.ledger.read_text().splitlines() if p.ledger.exists() else [],
             metrics=self._metrics,
             project=p.project,
+            run_as=self.confine,
         )
         for expect in s.expect:
             expect = replace(expect, value=files.substitute(expect.value, p.placeholders()))
