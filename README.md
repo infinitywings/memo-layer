@@ -6,7 +6,7 @@ A memory layer for Claude Code that lets an agent improve across sessions, but o
 
 A record is grounded when it cites at least one event from a test, an exit code, a tool, or the user, never the model's own text. It is applicable when its scope covers the current state (project, toolchain, model, task class, user context) and no counter-event inside that scope has arrived since. Only valid records reach the agent. Everything else stays in the ledger for audit.
 
-The spec is [docs/SPEC.md](docs/SPEC.md). The event schema is [docs/LEDGER.md](docs/LEDGER.md). The promotion rules and every departure from the spec are in [docs/LADDER.md](docs/LADDER.md). The proposal to treat the memory as a knowledge graph is [docs/GRAPH.md](docs/GRAPH.md).
+The spec is [docs/SPEC.md](docs/SPEC.md). The event schema is [docs/LEDGER.md](docs/LEDGER.md). The promotion rules and every departure from the spec are in [docs/LADDER.md](docs/LADDER.md). The proposal to treat the memory as a knowledge graph is [docs/GRAPH.md](docs/GRAPH.md). Results of the live streams, including the spec's gated-against-ungated decision point, are in [docs/RESULTS.md](docs/RESULTS.md).
 
 ## How it works
 
