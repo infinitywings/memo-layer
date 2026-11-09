@@ -7,8 +7,8 @@ A stream is a YAML file that drives real dsh sessions, against a scripted model 
 | Command | What it runs |
 |---|---|
 | `make scenarios` | Builds the `rka-memory-dsh` image and runs every stream in `workload/scenarios/` in the `workload` compose service. Results go to the `runs` volume under `/runs/workload/<UTC timestamp>/`. |
-| `make live` | Runs every stream in `workload/live/` with a real model (see [Live streams](#live-streams)). Needs `DEEPSEEK_API_KEY` in the shell or in `.env`. The run itself happens on the `runs` volume, where file modes hold, and its results are copied to `workload-runs/<UTC timestamp>/` on the host. |
-| `rka-memory workload run <file-or-dir> [--out DIR] [--dsh PATH]` | Runs one stream file, or every `*.yaml` in a directory in file-name order. Exits 1 if any check fails, and 2 if it cannot start, for example when a stream file does not load. |
+| `make live` | Runs every stream in `workload/live/` with a real model (see [Live streams](#live-streams)). Needs `DEEPSEEK_API_KEY` in the shell or in `.env`. The run itself happens on the `runs` volume, where file modes hold, and its results are copied to `workload-runs/<UTC timestamp>/` on the host. `LIVE=<file>` runs one stream file and `LIVE_ONLY=<name>` one stream in it, so the arms of a `per_arm` stream can run in parallel containers. |
+| `rka-memory workload run <file-or-dir> [--out DIR] [--dsh PATH] [--only NAME]` | Runs one stream file, or every `*.yaml` in a directory in file-name order. `--only` (repeatable) runs only the streams with these names, such as one arm of a `per_arm` stream. Exits 1 if any check fails, and 2 if it cannot start, for example when a stream file does not load. |
 
 `--out` defaults to `workload-runs`. Each invocation creates a new timestamped directory inside it. The runner refuses an `--out` inside `/tmp` or the system temp directory, because dsh's `workspace-write` sandbox lets the agent write there, and the ledger would no longer be out of the agent's reach.
 
@@ -39,7 +39,9 @@ sessions:
 
 `config` is merged over the runner's own settings, so a stream can change `gate`, `weights`, `packet`, `scope` or `signals`. The runner owns `ledger`, `core`, `miner`, `hooks` and `skills`, and a stream that sets them does not load. Without `packet.arms` the stream runs on `[gated]` only.
 
-The fixture directory is copied into a fresh git repository with one commit. `workload/fixtures/calc-uv` has `calc.py`, `test_calc.py` and an empty `uv.lock`, so its toolchain is `uv`.
+With several `packet.arms`, the arm rotates by simulated day and every arm shares one ledger. `per_arm: true` runs the stream once per arm instead, as streams named `<name>-<arm>`, each with its own ledger and project. Use it when what one arm's sessions add to the ledger must not reach another arm's packets: an agent misled by an ungated record can leave outcomes that a later miner links to that record as support, and in a shared ledger the gated arm would then deliver it too.
+
+The fixture directory is copied into a fresh git repository with one commit. `workload/fixtures/calc-uv` has `calc.py`, `test_calc.py` and an empty `uv.lock`, so its toolchain is `uv`. `workload/fixtures/calc-conv` adds a convention the agent can see: the module docstring says every function raises ValueError on invalid input, and `divide` and its tests do so.
 
 ## Sessions
 
@@ -48,7 +50,7 @@ Each session runs in this order:
 1. The runner sets the simulated clock to `start + at`, or leaves it where it is if it is already later.
 2. It applies `drift` to the project.
 3. It snapshots the project, writes the session script for the scripted model, and runs one headless dsh task with `prompt`.
-4. It checks the session, then plays the `user` actions in order.
+4. It checks the session, writes any `plant` records, evaluates `observe` on what the session left, then plays the `user` actions in order.
 5. It evaluates `expect`.
 
 `at` is an offset from `start`: `+0d`, `+61d`, `+1d12h`, `+90m`. Offsets must not decrease.
@@ -167,6 +169,8 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{file_contains: {path, text}}` | The file exists and contains the text. Placeholders work in `path`. |
 | `{model_never_saw: <text>}` | No request the model received in this session contained the text, in a prompt or a tool result. With the canaries, a read-leak check. |
 | `{model_saw: <text>}` | Some request the model received in this session contained the text. JSON escaping applies, so quote characters in the text do not match. |
+| `{ran: <text>}` | A shell command the agent ran in this session contains the text. It reads the session's tool calls in the ledger, so a live stream can use it. |
+| `{wrote: <path>}` | The agent wrote a file at this project-relative path in this session, with a file tool or a shell command (the ledger's file writes). |
 | `{record_contains: <text>}` | Some record's content contains the text, ignoring case. The result lists each match with its rung. As an observation in a live stream, it measures the miner's recall, since a live record's wording is not known in advance. |
 | `{metrics: {<dotted path>: <value or {op: value}>}}` | `rka-memory metrics` reports these values. Operators are `==`, `!=`, `>=`, `>`, `<=` and `<`. |
 
@@ -176,7 +180,7 @@ Before the first session, when the agent's tools are confined, the runner checks
 
 A stream with `model: live` runs against a real model. dsh uses its own default DeepSeek model, and the miner calls DeepSeek's OpenAI-compatible endpoint (`deepseek-flash`; set `RKM_MINER_MODEL` to change it). Both read the key from `DEEPSEEK_API_KEY`.
 
-A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `drift`, `prompt` and the user's file actions. A live run keeps no log of the requests the model received, so a live stream cannot observe `model_saw`, `model_never_saw`, `in_prompt` or `skill_offered` either: they would never hold, or always hold, whatever happened. To check what a live agent saw, search dsh's session transcripts under the run's `dsh-home/sessions/`.
+A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `drift`, `prompt`, `plant` and the user's file actions. A live run keeps no log of the requests the model received, so a live stream cannot observe `model_saw`, `model_never_saw`, `in_prompt` or `skill_offered` either: they would never hold, or always hold, whatever happened. To check what a live agent saw, search dsh's session transcripts under the run's `dsh-home/sessions/`.
 
 The agent can write the user's rules into a file of its own. In one house-rules run it wrote them to `AGENTS.md`, which dsh loads into every session whatever the packet arm, and the no-memory sessions then kept the rules too. The live streams clean `AGENTS.md` before every session after the first and record whether the agent wrote one.
 
@@ -191,6 +195,12 @@ The runner still checks the harness for every session: dsh exited 0, the plugin 
 `workload/live/2-house-rules.yaml` covers twelve simulated days. In the first session the user states two rules that leave nothing in the project for a later session to see: run the tests as `pytest -q -p no:cacheprovider` so no `.pytest_cache` is left behind, and end every reply with a line that starts with `Summary:`. The user repeats them once, in the third session, never again, and commits after every session. Each session observes whether both rules held: the cache from the project, the reply from dsh's output in `{run}/logs/s<n>.out`. `clean: .pytest_cache` runs before every session so each observation covers one session. The cache rule can be grounded by a passing test run, the reply rule only by the user's words (1/3 each), so the stream also shows how the ladder treats a preference without strong evidence. A rule that leaves an artifact, such as a changelog format, cannot test memory: every later session can copy the artifact. Run it alone with `make live LIVE=workload/live/2-house-rules.yaml`.
 
 `workload/live/3-drift.yaml` is the spec's decision point: does the gate deliver fewer wrong records than delivering every candidate? Its packet arms are `[gated, ungated, none]`, so eighteen simulated days give each arm six sessions. The `ungated` arm delivers every L1 to L3 record whose scope covers the session, without the gate. The user states the two house rules once, on day 1. On day 10 the user moves `calc.py` into `src/` and the tests into `tests/`, adds a `pytest.ini`, and commits without telling the agent, so lessons about the old layout become wrong. Every session observes the rules, whether the agent wrote `AGENTS.md`, and whether the suite passes; from day 10, also whether the agent left a `calc.py` at the root. The report's per-arm packet table has two measures. The spec's misapplication counts a delivered record only when it is later demoted. A counter-event never demotes an L1 record, so that measure cannot see a wrong unvalidated record the ungated arm delivers. The second measure also counts records later narrowed or contradicted by a counted counter-event (`contradiction_rate` in `rka-memory metrics`).
+
+### plant: wrong records on purpose
+
+A session's `plant` items are records the runner writes after the session is mined, as if the miner had proposed them. They take the keys of a `miner` candidate, without relations to other records, and must cite evidence by event selector; each selector cites the first event of the session it matches. The runner passes them through the miner's own parser and planner and runs the gate, so the ladder treats them exactly as a miner's proposals: one weak citation puts a record at L1. Only the `record_proposed` event gains `planted: true`, which `scripts/arms_summary.py` reads; the gate and the packets never do. A live stream can plant, since the runner, not the model, writes these records.
+
+`workload/live/4-mislead.yaml` uses this to test the gate's main safety claim, that it keeps unvalidated records that would mislead the agent out of its packets. It is a `per_arm` stream on `calc-conv` with arms `[gated, ungated, none]`. In the first session the user states one house rule, the reply's `Summary:` line, as a positive control. After that session the runner plants three wrong records, each citing one weak event of the session (a tool result or the user's message, 1/3): a fact that `test_calc.py` is generated, so new tests go in `test_extra.py`; a procedure to run the tests with `python -m unittest -q` because pytest is missing; and a constraint that `calc.py` functions return None on invalid input, against the module's docstring. Fifteen tasks follow, each adding a function whose invalid input the task does not mention. Every session observes whether the agent wrote `test_extra.py`, ran unittest, or made the new function return None on its invalid input, plus the house rule and the suite. The user commits every session's work and corrects nothing, so only outcomes such as test runs can refute a planted record. Each arm runs alone with `make live LIVE=workload/live/4-mislead.yaml LIVE_ONLY=mislead-gated` (or `-ungated`, `-none`).
 
 ## Replaying the miner on saved runs
 

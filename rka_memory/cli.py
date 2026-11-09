@@ -251,7 +251,9 @@ def cmd_workload_run(args) -> int:
     from rka_memory.workload.stream import StreamError
 
     try:
-        return runner.run_all(Path(args.path), Path(args.out), args.dsh, Path(args.copy_to) if args.copy_to else None)
+        return runner.run_all(
+            Path(args.path), Path(args.out), args.dsh, Path(args.copy_to) if args.copy_to else None, tuple(args.only)
+        )
     except (StreamError, FileNotFoundError, ValueError) as exc:
         print(f"rka-memory workload: {exc}", file=sys.stderr)
         return 2
@@ -360,6 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--copy-to", default=None, help="after the run, copy its results here (a host directory whose file modes may not hold)"
     )
+    r.add_argument("--only", action="append", default=[], help="run only the stream with this name (repeatable)")
     r.set_defaults(fn=cmd_workload_run)
     return p
 

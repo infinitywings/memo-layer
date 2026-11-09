@@ -3,7 +3,10 @@
 For each arm: how often each observation held, packet sessions and how many
 of them carried a record later demoted or shown wrong, records delivered per
 session, tokens before the first write, and the delivered records later
-shown wrong, with their text, so a reader can judge what went wrong.
+shown wrong, with their text, so a reader can judge what went wrong. Records
+the runner planted (workload/live/4-mislead.yaml) get a table of their own:
+how far each rose, in how many sessions it was delivered, and how many links
+later sessions' miners added to it.
 
 Usage: python scripts/arms_summary.py <run dir>/<stream>/... [--ledger]
 Each argument is a stream's result directory (holding report.json and
@@ -20,17 +23,40 @@ from pathlib import Path
 
 from rka_memory import config as config_mod
 from rka_memory.audit import metrics
-from rka_memory.domain import Event
+from rka_memory.domain import Event, Polarity
+from rka_memory.validity.engine import counted
 from rka_memory.world import project
+
+
+def _world(stream_dir: Path):
+    events = [Event.from_json(json.loads(line)) for line in (stream_dir / "ledger" / "ledger.jsonl").read_text().splitlines() if line.strip()]
+    return project(events), config_mod.load(path=stream_dir / "config.yaml")
+
+
+def planted(stream_dir: Path) -> list[list[str]]:
+    """Per planted record: arm, its kind and opening words, rung now, the
+    highest rung it reached, sessions it was delivered in, and the support
+    and counter links that later sessions' miners added."""
+    world, cfg = _world(stream_dir)
+    arm = "/".join(cfg.arms)
+    rows = []
+    for rec in world.records.values():
+        if not rec.proposed.payload.get("planted"):
+            continue
+        reached = [m.to_rung for m in rec.history if m.to_rung is not None]
+        top = max(reached, key=lambda r: r.order).value if reached else "-"
+        delivered = {d.event.session_id for d in world.deliveries if rec.id in d.record_ids and d.channel in metrics.PACKET_CHANNELS}
+        later = [link for link in rec.links if world.events[link.via].session_id != rec.proposed.session_id]
+        support = sum(1 for link in later if link.polarity is Polarity.SUPPORT)
+        counter = sum(1 for link in later if link.polarity is Polarity.COUNTER)
+        words = " ".join(rec.spec.content.split()[:8])
+        rows.append([arm, f"{rec.spec.kind.value}: {words}", rec.rung.value if rec.rung else "-", top, str(len(delivered)), str(support), str(counter)])
+    return rows
 
 
 def wrong_deliveries(stream_dir: Path) -> list[tuple[str, str, str, str]]:
     """(arm, record rung now, record kind, content) for each delivered record later shown wrong."""
-    events = [Event.from_json(json.loads(line)) for line in (stream_dir / "ledger" / "ledger.jsonl").read_text().splitlines() if line.strip()]
-    world = project(events)
-    cfg = config_mod.load(path=stream_dir / "config.yaml")
-    from rka_memory.domain import Polarity
-    from rka_memory.validity.engine import counted
+    world, cfg = _world(stream_dir)
 
     out = set()
     for d in world.deliveries:
@@ -56,6 +82,7 @@ def main() -> int:
     delivered: dict[str, list[int]] = defaultdict(list)
     packets: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     wrong: list[tuple[str, str, str, str, str]] = []
+    plants: list[list[str]] = []
     for d in dirs:
         report = json.loads((d / "report.json").read_text())
         for s in report["sessions"]:
@@ -72,6 +99,7 @@ def main() -> int:
             for arm, row in ((m.get(key) or {}).get("by_arm") or {}).items():
                 packets[arm][key] += row.get("misapplied") or 0
         wrong += [(d.parent.name, *w) for w in wrong_deliveries(d)]
+        plants += [[d.parent.name, *row] for row in planted(d)]
     arms = sorted({a for (_, a) in held} | set(tokens))
     print(f"Runs: {', '.join(d.parent.name for d in dirs)}\n")
     print("| observation | " + " | ".join(arms) + " |")
@@ -93,6 +121,11 @@ def main() -> int:
     print("\nDelivered records later shown wrong (run, arm, rung now, kind, content):")
     for row in wrong:
         print("- " + " | ".join(row))
+    if plants:
+        print("\n| run | arm | planted record | rung now | highest rung | sessions delivered | later support links | later counter links |")
+        print("|---|---|---|---|---|---|---|---|")
+        for row in sorted(plants, key=lambda r: (r[1], r[2], r[0])):
+            print("| " + " | ".join(row) + " |")
     return 0
 
 

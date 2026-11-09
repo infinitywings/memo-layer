@@ -3,6 +3,7 @@ simulated user's file actions, the scripted model, and the ledger checks."""
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -15,7 +16,18 @@ from rka_memory.domain import Scope, State
 from rka_memory.miner.miner import build_prompt, view_of
 from rka_memory.workload import files
 from rka_memory.workload.checks import Expect, Observed, evaluate
-from rka_memory.workload.stream import Append, Remove, Replace, Restore, StreamError, Verdict, Write, load, parse_offset
+from rka_memory.workload.stream import (
+    Append,
+    Remove,
+    Replace,
+    Restore,
+    StreamError,
+    Verdict,
+    Write,
+    load,
+    load_all,
+    parse_offset,
+)
 from rka_memory.world import project
 
 REPO = Path(__file__).resolve().parent.parent
@@ -331,7 +343,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted"]
 
 
 LIVE = """
@@ -451,7 +463,7 @@ def test_report_row_says_what_a_session_received_and_changed():
 
 def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
-    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live"), ("drift", "live")]
+    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live"), ("drift", "live"), ("mislead", "live")]
     drift = streams[2]
     assert drift.config == {"packet": {"arms": ["gated", "ungated", "none"]}}
     arms = ["gated", "ungated", "none"]
@@ -614,3 +626,110 @@ def test_command_passes_runs_without_the_runners_secrets(tmp_path, monkeypatch):
     obs = Observed(world=project([]), session_id=None, requests=[], ledger_lines=[], metrics=dict, project=tmp_path)
     check = 'test -z "$DEEPSEEK_API_KEY" && test -z "$RKA_MEMORY_DIR" && test "$PYTHONDONTWRITEBYTECODE" = 1'
     assert evaluate(obs, Expect("command_passes", check))[0] is True
+
+
+def test_mislead_stream_runs_once_per_arm_and_plants_after_the_first_session():
+    streams = load_all(REPO / "workload" / "live" / "4-mislead.yaml")
+    assert [(s.name, s.config["packet"]["arms"]) for s in streams] == [
+        ("mislead-gated", ["gated"]),
+        ("mislead-ungated", ["ungated"]),
+        ("mislead-none", ["none"]),
+    ]
+    sessions = streams[0].sessions
+    assert [len(s.plant) for s in sessions] == [3] + [0] * 15
+    assert [p["kind"] for p in sessions[0].plant] == ["fact", "procedure", "constraint"]
+    assert all(s.user == (s.user[0],) and type(s.user[0]).__name__ == "Commit" for s in sessions)
+    followed = ["wrote test_extra.py", "ran unittest", "invalid input does not return None"]
+    assert all(set(followed) <= {o.label for o in s.observe} for s in sessions[1:])
+
+
+def test_per_arm_stream_runs_once_per_arm_with_its_own_ledger(tmp_path):
+    text = LIVE.replace("model: live\n", "model: live\nper_arm: true\nconfig:\n  packet: {arms: [gated, ungated, none]}\n")
+    source = write_stream(tmp_path, text)
+    streams = load_all(source)
+    assert [(s.name, s.config["packet"]["arms"]) for s in streams] == [
+        ("live-sample-gated", ["gated"]),
+        ("live-sample-ungated", ["ungated"]),
+        ("live-sample-none", ["none"]),
+    ]
+    assert load(source).per_arm and not any(s.per_arm for s in streams)
+
+
+def test_per_arm_needs_two_distinct_arms(tmp_path):
+    text = LIVE.replace("model: live\n", "model: live\nper_arm: true\nconfig:\n  packet: {arms: [gated]}\n")
+    with pytest.raises(StreamError, match="two or more distinct arms"):
+        load(write_stream(tmp_path, text))
+
+
+def test_live_stream_may_plant_records_that_cite_evidence(tmp_path):
+    plant = "    plant:\n      - {content: Put tests in test_extra.py, kind: fact, evidence: [{kind: tool_result}]}\n"
+    text = LIVE.replace("    prompt: Add a multiply function\n", "    prompt: Add a multiply function\n" + plant)
+    stream = load(write_stream(tmp_path, text))
+    assert stream.sessions[0].plant == (
+        {"content": "Put tests in test_extra.py", "kind": "fact", "evidence": [{"kind": "tool_result"}], "depends_on": []},
+    )
+    with pytest.raises(StreamError, match="cites evidence"):
+        load(write_stream(tmp_path / "bare", text.replace(", evidence: [{kind: tool_result}]", "")))
+
+
+def test_planted_records_take_the_miners_path_and_the_gate_puts_them_at_l1(tmp_path, monkeypatch):
+    from rka_memory.domain import Actor, Kind
+    from rka_memory.service import Memory
+    from rka_memory.workload import runner
+
+    clock = tmp_path / "clock"
+    clock.write_text("2026-11-01T10:00:00+00:00")
+    env = {"RKA_MEMORY_DIR": str(tmp_path / "run"), "RKA_MEMORY_CONFIG": str(tmp_path / "none.yaml"), "RKA_MEMORY_CLOCK_FILE": str(clock)}
+
+    lg = Ledger()
+    lg.start("s1", project="/p")
+    lg.user_msg("s1", "Add a multiply function")
+    shown = lg._ev(Kind.TOOL_RESULT, Actor.TOOL, "s1", {"tool": "Bash", "output": "2 passed"})
+    lg.end("s1")
+    monkeypatch.setenv("RKA_MEMORY_DIR", env["RKA_MEMORY_DIR"])
+    memory = Memory.open(cfg())
+    memory.append(*lg.events)
+    # The runner's own settings point elsewhere; planting must use the run's.
+    monkeypatch.setenv("RKA_MEMORY_DIR", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("RKA_MEMORY_NOW", "2030-01-01T00:00:00+00:00")
+    wanted = (
+        {"content": "Put new tests in test_extra.py", "kind": "fact", "evidence": [{"kind": "tool_result"}]},
+        {"content": "Return None on invalid input", "kind": "constraint", "evidence": [{"kind": "exit_code"}]},
+    )
+    result = runner.plant("s1", wanted, env)
+    records = {r.spec.content: r for r in memory.world().records.values()}
+    planted = records["Put new tests in test_extra.py"]
+    assert (planted.rung.value, planted.proposed.actor, planted.proposed.payload["planted"]) == ("L1", Actor.MODEL, True)
+    assert planted.proposed.ts.startswith("2026-11-01T10:00") and planted.history[-1].ts.startswith("2026-11-01T10:00")
+    assert [link.event_id for link in planted.links] == [shown.id]
+    assert records["Return None on invalid input"].rung.value == "L0D"
+    assert [d.reason for d in result.dropped] == ["no such event in the ledger"]
+    assert not (tmp_path / "elsewhere").exists() and os.environ["RKA_MEMORY_NOW"].startswith("2030")
+
+
+def test_ran_and_wrote_read_the_sessions_tool_calls_and_file_writes():
+    from rka_memory.domain import Actor, Kind
+
+    lg = Ledger()
+    lg.start("s1", project="/p")
+    lg.tool_call("s1", "Bash", "python -m unittest -q")
+    lg.tool_call("s1", "Read", "/p/pytest_notes.txt")
+    lg._ev(Kind.FILE_WRITE, Actor.TOOL, "s1", {"tool": "Write", "path": "/p/test_extra.py", "post_hash": "x"})
+    lg.end("s1")
+    lg.start("s2", project="/p")
+    lg.tool_call("s2", "Bash", "pytest -q")
+    lg.end("s2")
+    world = project(lg.events)
+    first = Observed(world, "s1", [], [], metrics=dict)
+    assert evaluate(first, Expect("ran", "unittest")) == (True, ["python -m unittest -q"])
+    assert evaluate(first, Expect("ran", "pytest")) == (False, "none of 1 commands")
+    assert evaluate(first, Expect("wrote", "test_extra.py")) == (True, ["/p/test_extra.py"])
+    assert evaluate(first, Expect("wrote", "extra.py"))[0] is False
+    assert evaluate(Observed(world, "s2", [], [], metrics=dict), Expect("wrote", "test_extra.py"))[0] is False
+
+
+def test_only_must_name_a_stream_the_path_holds(tmp_path):
+    from rka_memory.workload import runner
+
+    with pytest.raises(ValueError, match="live-sample"):
+        runner.run_all(write_stream(tmp_path, LIVE), tmp_path / "out", only=("nope",))

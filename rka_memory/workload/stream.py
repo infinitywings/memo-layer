@@ -8,14 +8,28 @@ selectors, and config keys the runner owns.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from rka_memory import config as config_mod
 from rka_memory.domain import SCOPE_FIELDS, RecordKind
+from rka_memory.workload.actions import (
+    Append,
+    Clean,
+    Commit,
+    FileAction,
+    Move,
+    Remove,
+    Replace,
+    Restore,
+    UserAction,
+    Verdict,
+    Write,
+)
 from rka_memory.workload.checks import CHECKS, Expect
 
 OFFSET = re.compile(r"\+?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?")
@@ -29,70 +43,6 @@ class StreamError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
-class Write:
-    path: str
-    content: str
-
-
-@dataclass(frozen=True)
-class Remove:
-    path: str
-
-
-@dataclass(frozen=True)
-class Append:
-    path: str
-    text: str
-
-
-@dataclass(frozen=True)
-class Replace:
-    path: str
-    old: str
-    new: str
-
-
-@dataclass(frozen=True)
-class Clean:
-    """Delete the file or directory if it exists, such as a cache the agent left."""
-
-    path: str
-
-
-@dataclass(frozen=True)
-class Commit:
-    """Commit every change in the project, as a user does between sessions."""
-
-    message: str
-
-
-@dataclass(frozen=True)
-class Move:
-    """Rename a file inside the project, as a user does when restructuring it."""
-
-    path: str
-    to: str
-
-
-@dataclass(frozen=True)
-class Restore:
-    """Put the file back as it was before the latest agent session; delete it if it did not exist."""
-
-    path: str
-
-
-@dataclass(frozen=True)
-class Verdict:
-    """A typed `rkm confirm|reject`; `record` is the record's content, resolved to its id at run time."""
-
-    confirm: bool
-    record: str
-    reason: str = ""
-
-
-FileAction = Write | Remove | Append | Replace | Restore | Clean | Commit | Move
-UserAction = FileAction | Verdict
 
 
 @dataclass(frozen=True)
@@ -107,6 +57,10 @@ class Session:
     user: tuple[UserAction, ...]
     expect: tuple[Expect, ...]
     observe: tuple[Observe, ...] = ()
+    # Records the runner writes after the session is mined, through the
+    # miner's own path, as if the miner had proposed them: wrong lessons
+    # planted to see what each packet arm does with them.
+    plant: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -119,6 +73,7 @@ class Stream:
     fixture: Path
     sessions: tuple[Session, ...]
     source: Path
+    per_arm: bool = False
 
 
 def parse_offset(text: str) -> timedelta:
@@ -236,19 +191,32 @@ CANDIDATE_KEYS = {
 }
 
 
+def _candidate(raw: Any, where: str) -> dict[str, Any]:
+    c = _keys(raw, where, {"content", "kind"}, CANDIDATE_KEYS)
+    if c["kind"] not in {k.value for k in RecordKind}:
+        raise StreamError(f"{where}: kind must be one of {[k.value for k in RecordKind]}")
+    if set(_list(c.get("broaden"), where)) - set(SCOPE_FIELDS):
+        raise StreamError(f"{where}: broaden names scope fields {list(SCOPE_FIELDS)}")
+    evidence = [_selector(s, f"{where}.evidence") for s in _list(c.get("evidence"), where)]
+    depends_on = [_str(x, f"{where}.depends_on") for x in _list(c.get("depends_on"), where)]
+    return {**c, "evidence": evidence, "depends_on": depends_on}
+
+
+def _plant(raw: Any, where: str) -> tuple[dict[str, Any], ...]:
+    planted = []
+    for i, c in enumerate(_list(raw, where)):
+        c = _candidate(c, f"{where}[{i}]")
+        if not c["evidence"]:
+            raise StreamError(f"{where}[{i}]: a planted record cites evidence, or the gate leaves it at L0D and no arm delivers it")
+        if c["depends_on"] or c.get("supersedes") or c.get("refines"):
+            raise StreamError(f"{where}[{i}]: a planted record names no other record; their ids are not known in advance")
+        planted.append(c)
+    return tuple(planted)
+
+
 def _miner(raw: Any, where: str) -> dict[str, Any]:
     d = _keys(raw or {}, where, set(), {"task_class", "candidates", "rules", "withdrawn", *LINK_KEYS})
-    candidates = []
-    for i, c in enumerate(_list(d.get("candidates"), f"{where}.candidates")):
-        cw = f"{where}.candidates[{i}]"
-        c = _keys(c, cw, {"content", "kind"}, CANDIDATE_KEYS)
-        if c["kind"] not in {k.value for k in RecordKind}:
-            raise StreamError(f"{cw}: kind must be one of {[k.value for k in RecordKind]}")
-        if set(_list(c.get("broaden"), cw)) - set(SCOPE_FIELDS):
-            raise StreamError(f"{cw}: broaden names scope fields {list(SCOPE_FIELDS)}")
-        evidence = [_selector(s, f"{cw}.evidence") for s in _list(c.get("evidence"), cw)]
-        depends_on = [_str(x, f"{cw}.depends_on") for x in _list(c.get("depends_on"), cw)]
-        candidates.append({**c, "evidence": evidence, "depends_on": depends_on})
+    candidates = [_candidate(c, f"{where}.candidates[{i}]") for i, c in enumerate(_list(d.get("candidates"), f"{where}.candidates"))]
     out: dict[str, Any] = {"candidates": candidates}
     for key in LINK_KEYS:
         links = []
@@ -312,7 +280,7 @@ def _observe(raw: Any, where: str) -> Observe:
     return Observe(raw["label"].strip(), expect)
 
 
-SESSION_KEYS = {"drift", "agent", "miner", "user", "expect", "observe"}
+SESSION_KEYS = {"drift", "agent", "miner", "user", "expect", "observe", "plant"}
 
 
 def _session(raw: Any, index: int, where: str) -> Session:
@@ -336,6 +304,7 @@ def _session(raw: Any, index: int, where: str) -> Session:
         user=tuple(_user_action(a, f"{where}.user[{i}]") for i, a in enumerate(_list(d.get("user"), where))),
         expect=tuple(_expect(e, f"{where}.expect[{i}]") for i, e in enumerate(_list(d.get("expect"), where))),
         observe=tuple(_observe(o, f"{where}.observe[{i}]") for i, o in enumerate(_list(d.get("observe"), where))),
+        plant=_plant(d.get("plant"), f"{where}.plant"),
     )
 
 
@@ -361,7 +330,7 @@ def find_fixture(source: Path, name: str) -> Path:
 
 def parse(doc: Any, source: Path) -> Stream:
     where = str(source)
-    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config", "model"})
+    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config", "model", "per_arm"})
     model = d.get("model", "scripted")
     if model not in MODELS:
         raise StreamError(f"{where}: model must be one of {list(MODELS)}, got {model!r}")
@@ -388,6 +357,12 @@ def parse(doc: Any, source: Path) -> Stream:
         used = [k for k, v in scripted.items() if v]
         if used:
             raise StreamError(f"{where}.sessions[{s.label[1:]}]: a live stream cannot use {', '.join(used)}")
+    per_arm = d.get("per_arm", False)
+    arms = ((config.get("packet") or {}).get("arms")) or []
+    if not isinstance(per_arm, bool):
+        raise StreamError(f"{where}: per_arm is true or false")
+    if per_arm and (len(arms) < 2 or len(set(arms)) != len(arms)):
+        raise StreamError(f"{where}: per_arm runs one stream per arm, so config.packet.arms needs two or more distinct arms")
     return Stream(
         name=_str(d["name"], where),
         description=str(d.get("description") or ""),
@@ -397,7 +372,26 @@ def parse(doc: Any, source: Path) -> Stream:
         fixture=find_fixture(source, _str(d["project"], where)),
         sessions=sessions,
         source=source,
+        per_arm=per_arm,
     )
+
+
+def by_arm(stream: Stream) -> list[Stream]:
+    """A `per_arm` stream as one stream per packet arm, named `<name>-<arm>`.
+    Each runs with its own ledger, so what one arm's sessions add to the
+    ledger never reaches another arm's packets. Rotating arms by day in one
+    ledger cannot keep them apart."""
+    if not stream.per_arm:
+        return [stream]
+    return [
+        replace(
+            stream,
+            name=f"{stream.name}-{arm}",
+            config=config_mod.merge(stream.config, {"packet": {"arms": [arm]}}),
+            per_arm=False,
+        )
+        for arm in stream.config["packet"]["arms"]
+    ]
 
 
 def load(path: Path) -> Stream:
@@ -409,7 +403,7 @@ def load_all(path: Path) -> list[Stream]:
     files = sorted(path.glob("*.yaml")) if path.is_dir() else [path]
     if not files:
         raise StreamError(f"{path}: no stream files")
-    streams = [load(f) for f in files]
+    streams = [one for f in files for one in by_arm(load(f))]
     names = [s.name for s in streams]
     if len(set(names)) != len(names):
         raise StreamError(f"{path}: stream names must be unique, got {names}")

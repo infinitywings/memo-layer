@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from rka_memory.workload.stream import Append, Clean, Commit, FileAction, Move, Remove, Replace, Restore, Write
+from rka_memory.workload.actions import Append, Clean, Commit, FileAction, Move, Remove, Replace, Restore, Write
 
 UNTRACKED = frozenset({".git", ".pytest_cache", "__pycache__", ".claude"})
 Snapshot = dict[str, bytes]

@@ -9,6 +9,7 @@ the user's file actions and typed verdicts, then check the expectations.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pwd
@@ -22,16 +23,18 @@ import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
 import rka_memory
 from rka_memory import config as config_mod
 from rka_memory import graph
-from rka_memory.domain import Kind, clock_file_now
+from rka_memory.domain import Event, Kind, clock_file_now
 from rka_memory.ledger.jsonl import JsonlLedger
+from rka_memory.miner import miner
 from rka_memory.miner.backends import DEEPSEEK, deepseek_miner
+from rka_memory.service import Memory
 from rka_memory.workload import files, report
 from rka_memory.workload.checks import Observed, evaluate, find_record
 from rka_memory.workload.stream import Session, Stream, Verdict, load_all
@@ -233,6 +236,58 @@ def _wait_for_group(pgid: int) -> None:
     os.killpg(pgid, signal.SIGKILL)
 
 
+def _matches(ev: Event, selector: dict[str, Any]) -> bool:
+    if selector.get("kind") != ev.kind.value or selector.get("actor", ev.actor.value) != ev.actor.value:
+        return False
+    return all(ev.payload.get(k) == v for k, v in selector.items() if k not in ("kind", "actor"))
+
+
+@contextlib.contextmanager
+def _as_hooks(env: dict[str, str]) -> Iterator[None]:
+    """Run with the RKA_MEMORY_* settings the hooks dsh starts get (the run's
+    ledger, config and simulated clock) and none of the runner's own."""
+    saved = {k: os.environ.pop(k) for k in [k for k in os.environ if k.startswith("RKA_MEMORY_")]}
+    os.environ.update({k: v for k, v in env.items() if k.startswith("RKA_MEMORY_")})
+    try:
+        yield
+    finally:
+        for k in [k for k in os.environ if k.startswith("RKA_MEMORY_")]:
+            del os.environ[k]
+        os.environ.update(saved)
+
+
+def plant(session_id: str, wanted: tuple[dict[str, Any], ...], env: dict[str, str]) -> miner.MineResult:
+    """Write `wanted` as if the miner of `session_id` had proposed them: the
+    candidates go through the miner's parser and planner, so the gate sees
+    nothing it would not see from a real miner. Each cites the first event of
+    the session that its selectors match. Only RECORD_PROPOSED gains
+    `planted: true`, for analysis; nothing in the gate or the packets reads it.
+    `env` is the hooks' environment: the run's ledger, and its simulated
+    clock, without which a record stamped with today's date would look
+    untouched for months and retire."""
+    with _as_hooks(env):
+        return _plant(Memory.open(), session_id, wanted)
+
+
+def _plant(memory: Memory, session_id: str, wanted: tuple[dict[str, Any], ...]) -> miner.MineResult:
+    with memory.ledger.exclusive("miner"):
+        world = memory.world()
+        events = world.sessions[session_id].events
+        doc = {"candidates": []}
+        for c in wanted:
+            cited = [next((e.id for e in events if _matches(e, sel)), f"no event matches {sel}") for sel in c["evidence"]]
+            doc["candidates"].append({**c, "evidence": cited})
+        result = miner.MineResult(session_id, miner.MineStatus.MINED)
+        out = miner.parse_output(json.dumps(doc))
+        planned = miner.plan(out, world, session_id, memory.cfg, result)
+        marked = [
+            replace(e, payload={**e.payload, "planted": True}) if e.kind is Kind.RECORD_PROPOSED else e for e in planned
+        ]
+        memory.append(*marked)
+    memory.gate(session_id=session_id)
+    return result
+
+
 class StreamRun:
     def __init__(self, stream: Stream, root: Path, dsh: str, workspace: Path | None = None) -> None:
         self.stream = stream
@@ -416,6 +471,14 @@ class StreamRun:
         if self.stream.model == "scripted":
             problems = [msg for r in mock.requests(s.label) for msg in r.get("problems") or ()]
             self.check(s.label, "scripted model resolved every rule", not problems, problems[:3])
+        if s.plant:
+            self._plant(s, sid)
+        # What the session left, before the user's file actions tidy it up.
+        left = self._observed(sid, mock, s.label)
+        observed = {
+            o.label: evaluate(left, replace(o.expect, value=files.substitute(o.expect.value, p.placeholders())))[0]
+            for o in s.observe
+        }
         verdicts = 0
         for action in s.user:
             if isinstance(action, Verdict):
@@ -425,25 +488,37 @@ class StreamRun:
                 files.apply(action, p.project, self.before, self.confine)
         new_errors = self._hook_errors()[len(errors):]
         self.check(s.label, "no hook errors", not new_errors.strip(), new_errors[-400:])
-        obs = Observed(
-            world=self.world(),
-            session_id=sid,
-            requests=mock.requests(s.label),
-            ledger_lines=p.ledger.read_text().splitlines() if p.ledger.exists() else [],
-            metrics=self._metrics,
-            project=p.project,
-            run_as=self.confine,
-        )
+        obs = self._observed(sid, mock, s.label)
         for expect in s.expect:
             expect = replace(expect, value=files.substitute(expect.value, p.placeholders()))
             ok, detail = evaluate(obs, expect)
             self.check(s.label, expect.describe(), ok, detail)
         row = report.session_row(s.label, (self.stream.start + s.at).isoformat(timespec="minutes"), sid, before, obs.world, protected=(str(p.root),))
-        row["observed"] = {
-            o.label: evaluate(obs, replace(o.expect, value=files.substitute(o.expect.value, p.placeholders())))[0]
-            for o in s.observe
-        }
+        row["observed"] = observed
         self.rows.append(row)
+
+    def _observed(self, sid: str | None, mock: MockModel | LiveModel, label: str) -> Observed:
+        p = self.paths
+        return Observed(
+            world=self.world(),
+            session_id=sid,
+            requests=mock.requests(label),
+            ledger_lines=p.ledger.read_text().splitlines() if p.ledger.exists() else [],
+            metrics=self._metrics,
+            project=p.project,
+            run_as=self.confine,
+        )
+
+    def _plant(self, s: Session, sid: str | None) -> None:
+        name = f"planted {len(s.plant)} records"
+        if sid is None:
+            self.check(s.label, name, False, "no session to plant them in")
+            return
+        result = plant(sid, s.plant, self._env())
+        rungs = {r.id: r.rung.value if r.rung else None for r in self.world().records.values()}
+        kept = [f"{rungs.get(x['record_id'])} {x['content'][:60]}" for x in result.proposed]
+        problems = [d.to_json() for d in result.dropped] + [{"merged": m["content"][:60]} for m in result.merged]
+        self.check(s.label, name, len(result.proposed) == len(s.plant) and not problems, problems[:3] or kept)
 
     def run(self) -> list[CheckResult]:
         p = self.paths
@@ -505,8 +580,15 @@ def find_dsh(explicit: str | None) -> str:
     return dsh
 
 
-def run_all(path: Path, out: Path, dsh: str | None = None, copy_to: Path | None = None) -> int:
+def run_all(
+    path: Path, out: Path, dsh: str | None = None, copy_to: Path | None = None, only: tuple[str, ...] = ()
+) -> int:
     streams = load_all(path)
+    if only:
+        unknown = sorted(set(only) - {st.name for st in streams})
+        if unknown:
+            raise ValueError(f"--only names no stream in {path}: {unknown}; the streams are {[st.name for st in streams]}")
+        streams = [st for st in streams if st.name in only]
     refuse_temp_dir(out)
     root = out / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     root.mkdir(parents=True, exist_ok=False)

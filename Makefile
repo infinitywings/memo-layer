@@ -39,11 +39,14 @@ scenarios: pull
 # the DeepSeek miner. Needs DEEPSEEK_API_KEY (in the shell or .env). Each
 # stream's report.md lands under workload-runs/ on the host. One stream:
 #   make live LIVE=workload/live/2-house-rules.yaml
+# One arm of a per_arm stream:
+#   make live LIVE=workload/live/4-mislead.yaml LIVE_ONLY=mislead-gated
 LIVE ?= workload/live
+LIVE_ONLY ?=
 live: pull
 	@[ -n "$$DEEPSEEK_API_KEY" ] || grep -q '^DEEPSEEK_API_KEY=.' .env 2>/dev/null || { echo "make live needs DEEPSEEK_API_KEY in the shell or in .env" >&2; exit 2; }
 	$(TEST_COMPOSE) --profile workload build workload
-	$(TEST_COMPOSE) --profile workload run --rm -v "$(CURDIR)/workload-runs:/out" workload /opt/rka-memory/$(LIVE) --out /runs/live --copy-to /out
+	$(TEST_COMPOSE) --profile workload run --rm -v "$(CURDIR)/workload-runs:/out" workload /opt/rka-memory/$(LIVE) --out /runs/live --copy-to /out $(if $(LIVE_ONLY),--only $(LIVE_ONLY))
 
 # Interactive: dsh's web UI on 127.0.0.1:$${DSH_HOST_PORT:-3080} with the
 # memory service and the stack's Core. The model is the mock unless

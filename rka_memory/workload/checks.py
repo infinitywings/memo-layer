@@ -16,8 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from rka_memory import anchors
 from rka_memory.config import ARMS
-from rka_memory.domain import SCOPE_FIELDS, Event, Rung
+from rka_memory.domain import SCOPE_FIELDS, Event, Kind, Rung
 from rka_memory.skills.gate import skill_name
 from rka_memory.workload import files
 from rka_memory.world import RecordState, World
@@ -205,6 +206,29 @@ def _command_passes(obs: Observed, command: str) -> Outcome:
     return proc.returncode == 0, f"exit {proc.returncode}: {' | '.join(tail)}"
 
 
+def _ran(obs: Observed, text: str) -> Outcome:
+    """A shell command the agent ran in this session holds `text`. It reads
+    the session's tool calls in the ledger, not the model's requests, so a
+    live stream can observe it."""
+    sess = obs.world.sessions.get(obs.session_id or "")
+    commands = [
+        str(e.payload.get("input") or "")
+        for e in (sess.events if sess else ())
+        if e.kind is Kind.TOOL_CALL and e.payload.get("tool") in anchors.SHELL_TOOLS
+    ]
+    hits = [c for c in commands if text in c]
+    return bool(hits), [" ".join(c.split())[:120] for c in hits[:3]] or f"none of {len(commands)} commands"
+
+
+def _wrote(obs: Observed, name: str) -> Outcome:
+    """The agent wrote a file at this project-relative path in this session,
+    by a file tool or a shell command (the ledger's file writes)."""
+    sess = obs.world.sessions.get(obs.session_id or "")
+    paths = {str(e.payload.get("path") or "") for e in (sess.events if sess else ()) if e.kind is Kind.FILE_WRITE}
+    hits = sorted(x for x in paths if x == name or x.endswith("/" + name))
+    return bool(hits), hits or f"none of {len(paths)} written files"
+
+
 def _file_absent(obs: Observed, path: str) -> Outcome:
     return not Path(path).exists(), "exists" if Path(path).exists() else "absent"
 
@@ -284,6 +308,8 @@ CHECKS: dict[str, Check] = {
     "record_contains": Check(_is_str, _record_contains, False),
     "model_saw": Check(_is_str, _model_saw, False),
     "command_passes": Check(_is_str, _command_passes, False),
+    "ran": Check(_is_str, _ran, False),
+    "wrote": Check(_is_str, _wrote, False),
     "metrics": Check(_is_metric_conditions, _metrics, False),
 }
 
