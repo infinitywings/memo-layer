@@ -126,3 +126,24 @@ def test_daily_report_is_written_under_the_ledger_dir(memory):
 
     assert path == memory.cfg.ledger_dir / "metrics" / "2026-11-06.json"
     assert json.loads(path.read_text()) == report
+
+
+def test_a_contradicted_l1_record_counts_as_shown_wrong_though_it_is_never_demoted():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_l1", content="Keep calc.py at the project root")
+    lg.link("r_l1", lg.test("s1", True))
+    lg.end("s1")
+    lg.gate()
+    lg.start("s2", **UV)
+    packet(lg, "s2", "ungated", "r_l1")
+    lg.link("r_l1", lg.test("s2", False), "counter")
+    lg.end("s2")
+    lg.start("s3", **UV)
+    packet(lg, "s3", "ungated", "r_l1")
+    lg.end("s3")
+    world = lg.gate()
+
+    assert world.records["r_l1"].rung.value == "L1"
+    assert metrics.misapplication(world)["by_arm"]["ungated"] == {"sessions": 2, "misapplied": 0, "rate": 0.0}
+    assert metrics.contradiction(world, cfg())["by_arm"]["ungated"] == {"sessions": 2, "misapplied": 1, "rate": 0.5}

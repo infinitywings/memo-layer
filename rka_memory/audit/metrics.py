@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from rka_memory.config import Config
-from rka_memory.domain import Kind, Rung, Scope
+from rka_memory.domain import Kind, Polarity, Rung, Scope
 from rka_memory.skills.gate import final_outcome, outcome_ok
 from rka_memory.world import RecordState, RungMove, Session, World
 
@@ -61,6 +61,42 @@ def misapplication(world: World) -> dict[str, Any]:
         "overall": _rate(len(all_misapplied), len(all_received)),
         "by_arm": {
             arm: _rate(len(misapplied.get(arm, ())), len(received.get(arm, ())))
+            for arm in sorted(set(ARMS) | set(received))
+        },
+    }
+
+
+def contradiction(world: World, cfg: Config) -> dict[str, Any]:
+    """Sessions given a non-empty packet in which a delivered record was later
+    shown wrong, over sessions given a non-empty packet; overall and per arm.
+    Wrong means demoted, narrowed, or contradicted by a counted counter-event
+    observed after the delivery. The spec's misapplication rate counts only
+    demotions, and a counter-event never demotes an L1 record, so a wrong
+    unvalidated record delivered by the ungated arm would never count there."""
+    from rka_memory.validity.engine import counted
+
+    received: dict[str, set[str]] = {}
+    wrong: dict[str, set[str]] = {}
+    counters = {rid: counted(rec, world, cfg, Polarity.COUNTER) for rid, rec in world.records.items()}
+    for d in world.deliveries:
+        if d.channel not in PACKET_CHANNELS or not d.record_ids:
+            continue
+        sid = d.event.session_id
+        received.setdefault(d.arm, set()).add(sid)
+        at = world.position[d.event.id]
+        for rid in d.record_ids:
+            rec = world.records.get(rid)
+            if rec is None:
+                continue
+            later = [world.position[m.event_id] for m in _demotions(rec)]
+            later += [world.position[n.event_id] for n in rec.narrowings]
+            later += [world.position[g.event.id] for g in counters[rid]]
+            if any(p > at for p in later):
+                wrong.setdefault(d.arm, set()).add(sid)
+    return {
+        "overall": _rate(len(set().union(*wrong.values())), len(set().union(*received.values()))),
+        "by_arm": {
+            arm: _rate(len(wrong.get(arm, ())), len(received.get(arm, ())))
             for arm in sorted(set(ARMS) | set(received))
         },
     }
@@ -182,6 +218,7 @@ def compute(world: World, cfg: Config, now: datetime) -> dict[str, Any]:
         "generated_at": now.isoformat(),
         "ledger_revision": world.revision,
         "misapplication_rate": misapplication(world),
+        "contradiction_rate": contradiction(world, cfg),
         "regression_count": regressions(world),
         "rediscovery_tokens": rediscovery(world),
         "validation_cost": validation_cost(world),

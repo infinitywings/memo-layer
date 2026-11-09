@@ -1,0 +1,50 @@
+name: ungated-drift
+description: >-
+  The ungated arm delivers an unvalidated L1 record, the project's layout
+  changes under it, and the record is contradicted. The spec's
+  misapplication rate counts a delivery only when the record is later
+  demoted, and a counter-event never demotes an L1 record, so it reports
+  nothing; the contradiction rate counts it. The restructure (calc.py into
+  src/, the tests into tests/, a pytest.ini) keeps the suite green, which
+  the drift stream relies on.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [ungated]}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Keep calc.py at the project root, next to test_calc.py
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    user:
+      - commit: "calc: add multiply"
+    expect:
+      - {record: "Keep calc.py at the project root, next to test_calc.py", rung: L1}
+
+  - at: +1d
+    drift:
+      - move: {path: calc.py, to: src/calc.py}
+      - move: {path: test_calc.py, to: tests/test_calc.py}
+      - write: {path: pytest.ini, content: "[pytest]\npythonpath = src\ntestpaths = tests\n"}
+      - commit: "restructure: code in src/, tests in tests/"
+    prompt: Add a divide function to calc.py
+    agent:
+      - bash: test -f calc.py
+    miner:
+      counter_links:
+        - record: "Keep calc.py at the project root, next to test_calc.py"
+          event: {kind: exit_code, code: 1}
+          reason: calc.py is no longer at the root
+    expect:
+      - {arm: ungated}
+      - {record: "Keep calc.py at the project root, next to test_calc.py", delivered: true}
+      - {record: "Keep calc.py at the project root, next to test_calc.py", rung: L1}
+      - {command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {file_absent: "{project}/calc.py"}
+      - {metrics: {misapplication_rate.by_arm.ungated.misapplied: 0, contradiction_rate.by_arm.ungated.misapplied: 1}}

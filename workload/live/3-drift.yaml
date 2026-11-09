@@ -1,0 +1,284 @@
+name: drift
+model: live
+description: >-
+  Eighteen simulated days that compare the three packet arms the spec's
+  decision point asks for: gated, ungated (every L1 to L3 record whose scope
+  covers the session, without the gate) and none, rotating by day so each
+  gets six sessions. In the first session the user states two house rules
+  once. On day 10 the user moves calc.py into src/ and the tests into tests/,
+  adds a pytest.ini with pythonpath = src, and commits, without telling the
+  agent, so lessons about the old layout become wrong. From then on each
+  session also records whether the agent left a calc.py at the project root;
+  the user removes a stray one before the next session. Every session records
+  whether the house rules held and whether the suite passes. AGENTS.md and the
+  pytest cache are cleaned before every session, so each observation covers
+  one session.
+start: 2027-05-03T09:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated, ungated, none]}
+sessions:
+  - at: +0d
+    prompt: >-
+      Build a small feature: add a multiply(a, b) function to calc.py, with a
+      test. Two house rules for this project, please keep them from now on:
+      run the tests as `pytest -q -p no:cacheprovider` so no .pytest_cache is
+      left behind, and end every reply to me with a final line that starts
+      with `Summary:`.
+    user:
+      - commit: "calc: add multiply"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s1.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +1d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a divide(a, b) function to calc.py that raises ValueError when b is zero, with tests.
+    user:
+      - commit: "calc: add divide"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s2.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +2d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a power(base, exponent) function to calc.py, with a test.
+    user:
+      - commit: "calc: add power"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s3.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +3d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a mean(values) function to calc.py that averages a list of numbers, with a test.
+    user:
+      - commit: "calc: add mean"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s4.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +4d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a median(values) function to calc.py, with tests.
+    user:
+      - commit: "calc: add median"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s5.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +5d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a mode(values) function to calc.py that returns the most common value, with tests.
+    user:
+      - commit: "calc: add mode"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s6.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +6d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a clamp(value, low, high) function to calc.py, with tests.
+    user:
+      - commit: "calc: add clamp"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s7.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +7d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a percentage(part, whole) function to calc.py that raises ValueError when whole is zero, with tests.
+    user:
+      - commit: "calc: add percentage"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s8.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +8d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+    prompt: Add a factorial(n) function to calc.py that raises ValueError for a negative n, with tests.
+    user:
+      - commit: "calc: add factorial"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s9.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+
+  - at: +9d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - move: {path: calc.py, to: src/calc.py}
+      - move: {path: test_calc.py, to: tests/test_calc.py}
+      - write: {path: pytest.ini, content: "[pytest]\npythonpath = src\ntestpaths = tests\n"}
+      - commit: "restructure: code in src/, tests in tests/"
+    prompt: Add a gcd(a, b) function, with tests.
+    user:
+      - commit: "calc: add gcd"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s10.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +10d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add a lcm(a, b) function, with tests.
+    user:
+      - commit: "calc: add lcm"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s11.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +11d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add an absolute_difference(a, b) function, with a test.
+    user:
+      - commit: "calc: add absolute_difference"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s12.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +12d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add an is_even(n) function, with tests.
+    user:
+      - commit: "calc: add is_even"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s13.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +13d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add a square(x) function, with a test.
+    user:
+      - commit: "calc: add square"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s14.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +14d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add a cube(x) function, with a test.
+    user:
+      - commit: "calc: add cube"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s15.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +15d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add a sign(x) function that returns -1, 0 or 1, with tests.
+    user:
+      - commit: "calc: add sign"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s16.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +16d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add a hypotenuse(a, b) function, with a test.
+    user:
+      - commit: "calc: add hypotenuse"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s17.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
+
+  - at: +17d
+    drift:
+      - clean: .pytest_cache
+      - clean: AGENTS.md
+      - clean: calc.py
+      - clean: test_calc.py
+    prompt: Add a reciprocal(x) function that raises ValueError when x is zero, with tests.
+    user:
+      - commit: "calc: add reciprocal"
+    observe:
+      - {label: no .pytest_cache left, file_absent: "{project}/.pytest_cache"}
+      - {label: reply ends with Summary, file_contains: {path: "{run}/logs/s18.out", text: "\nSummary:"}}
+      - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - {label: no calc.py at the root, file_absent: "{project}/calc.py"}

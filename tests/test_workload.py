@@ -330,7 +330,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift"]
 
 
 LIVE = """
@@ -450,7 +450,12 @@ def test_report_row_says_what_a_session_received_and_changed():
 
 def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
-    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live")]
+    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live"), ("drift", "live")]
+    drift = streams[2]
+    assert drift.config == {"packet": {"arms": ["gated", "ungated", "none"]}}
+    arms = ["gated", "ungated", "none"]
+    days = [arms[(drift.start + s.at).date().toordinal() % 3] for s in drift.sessions]
+    assert {arm: days.count(arm) for arm in arms} == {"gated": 6, "ungated": 6, "none": 6}
     rules = streams[1]
     held = ["no .pytest_cache left", "reply ends with Summary", "agent wrote no AGENTS.md"]
     recorded = [*held, "cache rule recorded", "Summary rule recorded"]
@@ -567,3 +572,21 @@ def test_model_never_saw_scans_every_request_the_model_received():
     )
     assert evaluate(obs, Expect("model_never_saw", "CANARY-abc")) == (False, "seen in requests [0]")
     assert evaluate(obs, Expect("model_never_saw", "CANARY-xyz")) == (True, "never seen")
+
+
+def test_move_renames_a_file_inside_the_project_and_refuses_one_outside(tmp_path):
+    from rka_memory.workload.stream import Move
+
+    (tmp_path / "calc.py").write_text("x = 1\n")
+    files.apply(Move("calc.py", "src/calc.py"), tmp_path, {})
+    assert ((tmp_path / "src" / "calc.py").read_text(), (tmp_path / "calc.py").exists()) == ("x = 1\n", False)
+    with pytest.raises(ValueError, match="outside the project"):
+        files.apply(Move("src/calc.py", "../calc.py"), tmp_path, {})
+
+
+def test_command_passes_runs_in_the_project_and_reports_the_exit(tmp_path):
+    (tmp_path / "ok").write_text("")
+    obs = Observed(world=project([]), session_id=None, requests=[], ledger_lines=[], metrics=dict, project=tmp_path)
+    assert evaluate(obs, Expect("command_passes", "test -f ok"))[0] is True
+    ok, detail = evaluate(obs, Expect("command_passes", "echo nope; exit 3"))
+    assert (ok, detail) == (False, "exit 3: nope")

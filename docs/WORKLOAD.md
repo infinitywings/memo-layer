@@ -67,6 +67,7 @@ Both lists take the same file actions. Paths are relative to the project and mus
 | `replace: {path, old, new}` | Replaces the first occurrence of `old`; fails if it is missing. |
 | `restore: <path>` | Puts the file back as it was before the latest agent session, or deletes it if it did not exist then. |
 | `clean: <path>` | Deletes the file or directory if it exists, such as a cache the agent left behind. |
+| `move: {path, to}` | Renames a file inside the project, as a user does when restructuring it. |
 | `commit: <message>` | Commits every change in the project, as a user does between sessions; does nothing on a clean tree. Without commits, uncommitted work piles up across sessions, which no real project does. |
 
 rka-memory detects a changed file when the next session starts. A file the agent wrote that now differs from what it wrote is a `user_edit`; one that is back to its content before the agent wrote it is a `user_undo`. The event belongs to that next session, so the miner rule that links it belongs there too.
@@ -162,6 +163,7 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{ledger_parses: true}` | Every line of the ledger parses as an event. |
 | `{raw_line_absent: <line>}` | No ledger line equals the given text. |
 | `{file_absent: <path>}` | The path does not exist. Placeholders work here. |
+| `{command_passes: <shell command>}` | The command exits 0 when the runner runs it in the project after the session, such as the test suite. The last lines of its output are the detail. |
 | `{file_contains: {path, text}}` | The file exists and contains the text. Placeholders work in `path`. |
 | `{model_never_saw: <text>}` | No request the model received in this session contained the text, in a prompt or a tool result. With the canaries, a read-leak check. |
 | `{model_saw: <text>}` | Some request the model received in this session contained the text. JSON escaping applies, so quote characters in the text do not match. |
@@ -187,6 +189,8 @@ The runner still checks the harness for every session: dsh exited 0, the plugin 
 `workload/live/1-calc-weeks.yaml` covers three simulated weeks on `calc-uv`. The user states the house rules once (type hints, one-line docstrings, `pytest -q` before finishing) and never repeats them. Packets alternate by day between the gated arm and no packet. The user adds a test by hand after the fourth session, and the project moves from uv to pip in the second week.
 
 `workload/live/2-house-rules.yaml` covers twelve simulated days. In the first session the user states two rules that leave nothing in the project for a later session to see: run the tests as `pytest -q -p no:cacheprovider` so no `.pytest_cache` is left behind, and end every reply with a line that starts with `Summary:`. The user repeats them once, in the third session, never again, and commits after every session. Each session observes whether both rules held: the cache from the project, the reply from dsh's output in `{run}/logs/s<n>.out`. `clean: .pytest_cache` runs before every session so each observation covers one session. The cache rule can be grounded by a passing test run, the reply rule only by the user's words (1/3 each), so the stream also shows how the ladder treats a preference without strong evidence. A rule that leaves an artifact, such as a changelog format, cannot test memory: every later session can copy the artifact. Run it alone with `make live LIVE=workload/live/2-house-rules.yaml`.
+
+`workload/live/3-drift.yaml` is the spec's decision point: does the gate deliver fewer wrong records than delivering every candidate? Its packet arms are `[gated, ungated, none]`, so eighteen simulated days give each arm six sessions. The `ungated` arm delivers every L1 to L3 record whose scope covers the session, without the gate. The user states the two house rules once, on day 1. On day 10 the user moves `calc.py` into `src/` and the tests into `tests/`, adds a `pytest.ini`, and commits without telling the agent, so lessons about the old layout become wrong. Every session observes the rules, whether the agent wrote `AGENTS.md`, and whether the suite passes; from day 10, also whether the agent left a `calc.py` at the root. The report's per-arm packet table has two measures. The spec's misapplication counts a delivered record only when it is later demoted. A counter-event never demotes an L1 record, so that measure cannot see a wrong unvalidated record the ungated arm delivers. The second measure also counts records later narrowed or contradicted by a counted counter-event (`contradiction_rate` in `rka-memory metrics`).
 
 ## Replaying the miner on saved runs
 

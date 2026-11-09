@@ -126,6 +126,14 @@ def render(report: dict[str, Any]) -> str:
     )
     mis = (m.get("misapplication_rate") or {}).get("overall") or {}
     cost = (m.get("validation_cost") or {}).get("totals") or {}
+    packets = [
+        [arm, v.get("sessions"), v.get("misapplied"), ((m.get("contradiction_rate") or {}).get("by_arm") or {}).get(arm, {}).get("misapplied")]
+        for arm, v in ((m.get("misapplication_rate") or {}).get("by_arm") or {}).items()
+        if v.get("sessions")
+    ]
+    if packets:
+        lines += ["", "Packets by arm: sessions given one, and those in which a delivered record was later demoted (the spec's misapplication) or shown wrong (demoted, narrowed or contradicted).", ""]
+        lines += _table(["arm", "sessions given a packet", "later demoted", "later shown wrong"], packets)
     lines += [
         "",
         f"Misapplication: {mis.get('misapplied', 0)} of {mis.get('sessions', 0)} sessions given a packet. "

@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from rka_memory.workload.stream import Append, Clean, Commit, FileAction, Remove, Replace, Restore, Write
+from rka_memory.workload.stream import Append, Clean, Commit, FileAction, Move, Remove, Replace, Restore, Write
 
 UNTRACKED = frozenset({".git", ".pytest_cache", "__pycache__", ".claude"})
 Snapshot = dict[str, bytes]
@@ -77,6 +77,10 @@ def apply(action: FileAction, project: Path, before: Snapshot) -> None:
             if old not in text:
                 raise ValueError(f"replace: {action.path} does not contain {old!r}")
             path.write_text(text.replace(old, new, 1), encoding="utf-8")
+        case Move(to=to):
+            dest = target(project, to)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            path.rename(dest)
         case Restore():
             rel = path.relative_to(project.resolve()).as_posix()
             if rel in before:

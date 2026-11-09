@@ -68,6 +68,14 @@ class Commit:
 
 
 @dataclass(frozen=True)
+class Move:
+    """Rename a file inside the project, as a user does when restructuring it."""
+
+    path: str
+    to: str
+
+
+@dataclass(frozen=True)
 class Restore:
     """Put the file back as it was before the latest agent session; delete it if it did not exist."""
 
@@ -83,7 +91,7 @@ class Verdict:
     reason: str = ""
 
 
-FileAction = Write | Remove | Append | Replace | Restore | Clean | Commit
+FileAction = Write | Remove | Append | Replace | Restore | Clean | Commit | Move
 UserAction = FileAction | Verdict
 
 
@@ -168,10 +176,13 @@ def _file_action(key: str, value: Any, where: str) -> FileAction:
         return Clean(_str(value, where))
     if key == "commit":
         return Commit(_str(value, where))
+    if key == "move":
+        d = _keys(value, where, {"path", "to"})
+        return Move(_str(d["path"], where), _str(d["to"], where))
     return Restore(_str(value, where))
 
 
-FILE_ACTIONS = {"write", "remove", "append", "replace", "restore", "clean", "commit"}
+FILE_ACTIONS = {"write", "remove", "append", "replace", "restore", "clean", "commit", "move"}
 
 
 def _user_action(raw: Any, where: str) -> UserAction:

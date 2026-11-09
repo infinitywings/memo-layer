@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import operator
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -53,6 +54,7 @@ class Observed:
     requests: list[dict[str, Any]]
     ledger_lines: list[str]
     metrics: Callable[[], dict[str, Any]]
+    project: Path | None = None
 
     def deliveries(self, channels: tuple[str, ...] = PACKET_CHANNELS):
         return [d for d in self.world.deliveries if d.event.session_id == self.session_id and d.channel in channels]
@@ -183,6 +185,24 @@ def _record_contains(obs: Observed, text: str) -> Outcome:
     return bool(found), found or "no record"
 
 
+COMMAND_TIMEOUT = 300
+
+
+def _command_passes(obs: Observed, command: str) -> Outcome:
+    """The shell command exits 0 when run in the project after the session,
+    such as the test suite. Its last output lines are the detail."""
+    if obs.project is None:
+        return False, "no project"
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", command], cwd=obs.project, capture_output=True, text=True, timeout=COMMAND_TIMEOUT, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {COMMAND_TIMEOUT}s"
+    tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
+    return proc.returncode == 0, f"exit {proc.returncode}: {' | '.join(tail)}"
+
+
 def _file_absent(obs: Observed, path: str) -> Outcome:
     return not Path(path).exists(), "exists" if Path(path).exists() else "absent"
 
@@ -261,6 +281,7 @@ CHECKS: dict[str, Check] = {
     "model_never_saw": Check(_is_str, _model_never_saw, False),
     "record_contains": Check(_is_str, _record_contains, False),
     "model_saw": Check(_is_str, _model_saw, False),
+    "command_passes": Check(_is_str, _command_passes, False),
     "metrics": Check(_is_metric_conditions, _metrics, False),
 }
 

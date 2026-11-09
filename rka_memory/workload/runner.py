@@ -431,6 +431,7 @@ class StreamRun:
             requests=mock.requests(s.label),
             ledger_lines=p.ledger.read_text().splitlines() if p.ledger.exists() else [],
             metrics=self._metrics,
+            project=p.project,
         )
         for expect in s.expect:
             expect = replace(expect, value=files.substitute(expect.value, p.placeholders()))
