@@ -744,3 +744,27 @@ def test_unverifiable_stream_plants_three_claims_about_systems_outside_the_repos
     assert streams[0].fixture.name == "calc-uv"
     followed = ["registered in OPERATIONS", "result not rounded", "invalid input raises TypeError"]
     assert all(set(followed) <= {o.label for o in s.observe} for s in sessions[1:])
+
+
+def test_a_chained_replay_keeps_planted_records_and_drops_what_the_miner_and_gate_wrote():
+    from rka_memory.domain import Actor, Kind
+
+    spec = importlib.util.spec_from_file_location("miner_replay", REPO / "scripts" / "miner_replay.py")
+    miner_replay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(miner_replay)
+    lg = Ledger()
+    lg.start("s1", project="/p")
+    shown = lg._ev(Kind.TOOL_RESULT, Actor.TOOL, "s1", {"tool": "Bash", "output": "ok"})
+    lg.end("s1")
+    lg.propose("s1", "r_mined", content="Mined by the live miner")
+    mined_link = lg.link("r_mined", shown)
+    planted = lg._ev(Kind.RECORD_PROPOSED, Actor.MODEL, "s1", {"record_id": "r_planted", "kind": "fact", "content": "Wrong", "planted": True})
+    planting = lg.link("r_planted", shown)
+    lg.gate()
+    lg.start("s2", project="/p")
+    later = lg.link("r_planted", lg.test("s2", True))
+    lg.end("s2")
+    kept = {e.id for e in miner_replay.recorded_sessions(lg.events)}
+    assert {planted.id, planting.id} <= kept
+    assert not kept & {mined_link.id, later.id}
+    assert not any(e.kind is Kind.RUNG_CHANGE for e in lg.events if e.id in kept)

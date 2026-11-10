@@ -214,7 +214,7 @@ RKA_STACK_CORE_PORT= ./scripts/dockerw compose -p rka-memory-test --profile work
 
 Each session is mined independently of the replay's other sessions, so a lesson a real run would have recorded once can come back in several sessions. Compare candidate counts between replays, not with live runs.
 
-With `--chain`, the script replays each ledger whole instead: it drops everything the old miner and gate wrote and mines the sessions again in order, so records accumulate as they do in a live run while the agent's sessions stay exactly as recorded. `--prompt <file>` swaps the miner prompt. Together they compare two prompts on the same sessions, without the run-to-run variance of the agent, which in the live house-rules runs ranged from 4 to 9 records with one prompt.
+With `--chain`, the script replays each ledger whole instead: it drops everything the old miner and gate wrote, except records the runner planted and the links that planted them, and mines the sessions again in order, so records accumulate as they do in a live run while the agent's sessions stay exactly as recorded. `--prompt <file>` swaps the miner prompt. Together they compare two prompts on the same sessions, without the run-to-run variance of the agent, which in the live house-rules runs ranged from 4 to 9 records with one prompt.
 
 ## Run directory
 

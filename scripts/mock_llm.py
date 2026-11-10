@@ -39,12 +39,13 @@ MINER_PREFIX = "You are the candidate miner for rka-memory"
 EXTRACT_PREFIX = "You are the rule extractor for rka-memory"
 USAGE = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
 SKILL_NAME = re.compile(r"\brka-r-[0-9a-z-]+")
-ROW = re.compile(r"^- (\S+) \[(\S+) (\S+)\] (.*)$")
+ROW = re.compile(r"^- (\S+) \[(\S+) (\S+?)(?:, unverified)?\] (.*)$")
 EVENT_LINE = re.compile(r"^(ev_\S+) (\S+) (\S+) (.*)$")
 RULE_ROW = re.compile(r"^- (\S+): (.*)$")
 SECTIONS = (
     ("Records delivered to the agent", "delivered"),
-    ("Existing records that apply", "existing"),
+    ("Validated records that apply", "existing"),
+    ("Unverified claims that apply", "existing"),
     ("Rules the user stated", "stated"),
     ("Events, oldest first", "events"),
 )

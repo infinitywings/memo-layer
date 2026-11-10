@@ -42,9 +42,10 @@ Rules:
    - `supersedes`: only for a procedure that replaces a listed procedure, because the agent now does that work in a different way. The old procedure stays on record, and the new one is shown instead once it is validated.
    Leave a field empty when nothing applies.
 8. `counter_links`: when an event in this session shows that a delivered record below was wrong here (a failing check after following it, a user undo or correction), link that record to the event. Only records in the delivered list may be named.
-9. `support_links`: when an event in this session shows that a record listed below, delivered or existing, held here (a passing check after doing what it says, the user stating or relying on it), link that record to the event. Cite events by rule 1 and rule 2, exactly as for candidate evidence. Link only when the event bears on what the record says; a passing test unrelated to it is not support.
+9. `support_links`: when an event in this session shows that a record listed below held here (a passing check after doing what it says, the user stating or relying on it), link that record to the event. Cite events by rule 1 and rule 2, exactly as for candidate evidence. Link only when the event bears on what the record says; a passing test unrelated to it is not support. For a record marked `unverified`, rule 12 applies as well.
 10. `task_class`: the class that best describes the session's main work.
 11. `about`: the anchors listed below that the lesson is specifically about, such as the file a fact describes or the command a procedure runs. Leave it empty for a lesson about the whole project. Name only anchors from the list below.
+12. Records marked `unverified` are claims an earlier miner proposed that nothing has shown to hold yet. They may be wrong, and many cannot be checked from one session, such as a claim about a system outside the project. Never take one as a fact about this project: do not propose a candidate that repeats one, assumes one, or gives one as its reason, even when the agent did what it says or the code now matches it. Link one in support_links only with an event that shows it holds whether or not the agent followed it: tests that pass after the agent did what a claim says show that the code works, not that the claim is true. When this session shows one is false, a candidate may state what the session shows.
 
 Session: $session_id
 State: $state
@@ -52,8 +53,11 @@ State: $state
 Records delivered to the agent in this session or in the sessions whose files the user edited or undid here:
 $delivered
 
-Existing records that apply to this state:
+Validated records that apply to this state:
 $existing
+
+Unverified claims that apply to this state (see rule 12):
+$unverified
 
 Rules the user stated in this session, already recorded in the user's own words. Do not propose them again in any wording, but refer to one by its id (such as stated-0) in `refines` or `depends_on`:
 $stated

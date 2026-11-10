@@ -87,6 +87,13 @@ class MinerView:
     delivered: tuple[RecordRow, ...]
     existing: tuple[RecordRow, ...]
     anchors: tuple[str, ...] = ()
+    # L1 records that apply and were not delivered: claims nothing has yet
+    # shown to hold, listed apart so the miner does not build on them.
+    unverified: tuple[RecordRow, ...] = ()
+
+    @property
+    def listed(self) -> tuple[RecordRow, ...]:
+        return (*self.delivered, *self.existing, *self.unverified)
 
 
 @dataclass(frozen=True)
@@ -211,7 +218,7 @@ def view_of(world: World, session_id: str, cfg: Config) -> MinerView:
     sess = world.sessions[session_id]
     delivered = delivered_records(world, session_id)
     seen = {r.id for r in delivered}
-    existing = [
+    applicable = [
         r
         for r in sorted(world.records.values(), key=lambda r: world.position[r.proposed.id])
         if r.id not in seen and r.rung in EXISTING_RUNGS and could_apply(r.scope, sess.state)
@@ -222,8 +229,9 @@ def view_of(world: World, session_id: str, cfg: Config) -> MinerView:
         task_classes=cfg.task_classes,
         events=tuple(e for e in sess.events if e.kind in SHOWN_KINDS),
         delivered=tuple(_row(r) for r in delivered),
-        existing=tuple(_row(r) for r in existing),
+        existing=tuple(_row(r) for r in applicable if r.rung is not Rung.L1),
         anchors=tuple(sorted(sess.anchors)) if cfg.graph_anchors else (),
+        unverified=tuple(_row(r) for r in applicable if r.rung is Rung.L1),
     )
 
 
@@ -233,7 +241,10 @@ def _short(payload: Any) -> str:
 
 
 def _rows(rows: tuple[RecordRow, ...]) -> str:
-    return "\n".join(f"- {r.id} [{r.rung} {r.kind}] {r.content}" for r in rows) or "(none)"
+    def tag(r: RecordRow) -> str:
+        return f"{r.rung} {r.kind}, unverified" if r.rung == Rung.L1.value else f"{r.rung} {r.kind}"
+
+    return "\n".join(f"- {r.id} [{tag(r)}] {r.content}" for r in rows) or "(none)"
 
 
 def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
@@ -243,6 +254,7 @@ def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
         state=canonical_json(view.state.to_json()),
         delivered=_rows(view.delivered),
         existing=_rows(view.existing),
+        unverified=_rows(view.unverified),
         stated="\n".join(f"- stated-{n}: {q}" for n, q in enumerate(stated)) or "(none)",
         anchors=", ".join(view.anchors) or "(none)",
         events="\n".join(f"{e.id} {e.kind.value} {e.actor.value} {_short(dict(e.payload))}" for e in view.events)
@@ -602,9 +614,9 @@ def plan(
     result.dropped.extend(out.dropped)
     view = view_of(world, session_id, cfg)
     delivered = {r.id for r in view.delivered}
-    listed = delivered | {r.id for r in view.existing}
+    listed = {r.id for r in view.listed}
     planner.judge_task_class(out.task_class)
-    rule_records = {r.id for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS}
+    rule_records = {r.id for r in view.listed if r.kind in RULE_KINDS}
     planner.listed, planner.rule_records = listed, rule_records
     for n, found in enumerate(extraction.rules if extraction else ()):
         rid = planner.rule(found, rule_records)
@@ -638,7 +650,7 @@ def stated_rules(
     messages = extract.user_messages(world, view.session_id)
     if not messages:
         return None, None
-    records = [(r.id, r.content) for r in (*view.delivered, *view.existing) if r.kind in RULE_KINDS]
+    records = [(r.id, r.content) for r in view.listed if r.kind in RULE_KINDS]
     completion = backend(extract.build_prompt(messages, records))
     if not completion.text.strip():
         return None, completion

@@ -81,7 +81,7 @@ def replay_session(events: list[Event], sid: str, cut: int, ledger: Path, dry: b
         cfg = config_for(ledger, tmp)
         before = project(events[:cut])
         view = miner.view_of(before, sid, cfg)
-        listed = [{"id": r.id, "kind": r.kind, "rung": r.rung, "content": r.content, "delivered": r in view.delivered} for r in (*view.delivered, *view.existing)]
+        listed = [{"id": r.id, "kind": r.kind, "rung": r.rung, "content": r.content, "delivered": r in view.delivered} for r in view.listed]
         row: dict[str, Any] = {"listed": listed}
         if dry:
             return row
@@ -123,11 +123,22 @@ ENGINE_KINDS = frozenset({Kind.RUNG_CHANGE, Kind.SCOPE_NARROWED})
 
 
 def recorded_sessions(events: list[Event]) -> list[Event]:
-    """The ledger without what a miner or the gate wrote."""
+    """The ledger without what a miner or the gate wrote. Records the workload
+    runner planted stay, with the links that planted them: they stand for an
+    earlier miner's mistakes, which the replayed miner must meet as the live
+    one did."""
+    planted = {e.payload["record_id"]: e.session_id for e in events if e.kind is Kind.RECORD_PROPOSED and e.payload.get("planted")}
+
+    def planting(e: Event) -> bool:
+        if e.kind is Kind.RECORD_PROPOSED:
+            return e.payload["record_id"] in planted
+        return e.kind is Kind.EVIDENCE_LINKED and planted.get(e.payload.get("record_id")) == e.session_id
+
     return [
         e
         for e in events
-        if not (e.actor is Actor.MODEL and e.kind in MINER_OUTPUT)
+        if planting(e)
+        or not (e.actor is Actor.MODEL and e.kind in MINER_OUTPUT)
         and e.kind not in ENGINE_KINDS
         and not (e.kind is Kind.COST and e.payload.get("component") == "miner")
     ]
@@ -144,6 +155,8 @@ def chain(ledger: Path) -> dict[str, Any]:
         for ev in events:
             memory.append(ev)
             if ev.kind is Kind.SESSION_END:
+                # Rungs for anything appended since the last mining, such as planted records.
+                memory.gate(session_id=ev.session_id)
                 result = miner.mine_session(memory, ev.session_id, backend=backend)
                 tokens += result.tokens
                 statuses.append(result.status.value)
@@ -155,7 +168,7 @@ def chain(ledger: Path) -> dict[str, Any]:
         return {
             "records": [
                 {"id": r.id, "kind": r.spec.kind.value, "rung": r.rung.value if r.rung else None, "content": r.spec.content,
-                 **_relations(r.spec.to_json())}
+                 "planted": bool(r.proposed.payload.get("planted")), **_relations(r.spec.to_json())}
                 for r in records
             ],
             "by_rung": rungs,

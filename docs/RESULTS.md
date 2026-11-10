@@ -103,8 +103,21 @@ The wrong claims also became validated memory, by two routes.
 What the run shows, and what it does not:
 
 - When a wrong claim cannot be checked, delivering it unvalidated misleads this agent every time, and nothing downstream notices. Within sixteen sessions the gate kept all three claims away from the agent.
-- The gate does not keep them out of the miner. Wrong L1 records leak into new records through the miner's prompt, and from there to L2. Given more sessions, a gated agent would receive a planted claim restated as a validated record. Closing this leak is a design question: show the miner L1 records as unverified claims it must not build on, or let a record that restates an L1 premise inherit that record's rung.
+- The gate does not keep them out of the miner. Wrong L1 records leak into new records through the miner's prompt, and from there to L2. Given more sessions, a gated agent would receive a planted claim restated as a validated record. The next section closes the leak in the miner's prompt.
 - Evidence produced by following a record is not independent of it. The engine discounts a session's evidence when a dependency below L2 was delivered in it (`rka_memory/validity/propagate.py`), but the records derived here declared no dependency. In production a gated agent sees L1 records only through the MCP hints tool, which is the channel through which this loop could start.
+
+### Closing the miner leak
+
+The miner prompt now lists L1 records apart, as unverified claims, and its rule 12 forbids a candidate that repeats, assumes or rests on one, even when the agent did what it says or the code now matches it (`docs/LADDER.md`). The change was measured without a live run, by chained replay of the six `unverifiable` ledgers: the agent's sessions stay exactly as recorded, the planted records stay, and the miner mines every session again in order. The previous prompt ran once, from a worktree of commit `eb385d3`; the new one twice. Each mined record that names a planted claim's subject (the registry, TypeError, rounding, the invoicing service or the gateway) was read and sorted by hand: it takes a planted claim as its premise, or it does not (it rebuts one, or only describes the code).
+
+| records that take a planted claim as their premise | live run | previous prompt | new prompt, first | new prompt, second |
+|---|---|---|---|---|
+| gated and none ledgers, where no agent saw a claim (4) | 9, one at L2 | 10, one at L2 | 0 | 0 |
+| first ungated ledger (1) | 1 | 4 | 0 | 0 |
+
+In the four ledgers whose agents never saw the claims, the new prompt removed the leak: no record built on a planted claim in either replay, against nine in the live runs and ten in the replay of the previous prompt. In their place the miner wrote four rebuttals, such as "calc.py has no OPERATIONS dict; a new function there is a plain module-level def with no registry entry". Across all six ledgers the house rule still reached L2 in every replay, the planted records stayed at L1, and the miner kept 44 and 43 records against 52, of which 24, 15 and 21 reached L2 or L3: part of the drop is the contaminated records.
+
+The prompt does not close the second route. In the second ungated ledger the misled agent had already added the registry and TypeError tests to the code, and with the new prompt the miner still read those conventions off the code: "test_calc.py asserts `calc.OPERATIONS` entries, so create or update the registry before running `python -m pytest -q`" reached L2 in one replay. Each such record describes the project correctly as it now stands; the project is wrong. Only the user can say so, by correcting the code or rejecting the records. The gate's part is to keep the claim from reaching the agent in the first place, which it did.
 
 ## House rules: gated against no memory
 

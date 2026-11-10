@@ -139,7 +139,7 @@ def test_week2_grounded_candidates_reach_l1_model_cited_ones_l0d_and_duplicates_
 
     prompt = backend.prompts[0]
     assert f"{ok2.id} test_result tool " in prompt
-    assert f"- {grounded} [L1 fact] Run the tests with uv run pytest" in prompt
+    assert f"- {grounded} [L1 fact, unverified] Run the tests with uv run pytest" in prompt
     assert ok1.id not in prompt
 
 
@@ -419,10 +419,37 @@ def test_support_link_adds_a_later_sessions_evidence_to_an_existing_record_and_p
     backend = FakeBackend(reply)
     result = mine_session(memory, "s2", backend=backend)
 
-    assert "- r_tests [L1 fact] Run pytest -q before finishing" in backend.prompts[0]
+    unverified = backend.prompts[0].split("Unverified claims that apply to this state")[1].split("Rules the user stated")[0]
+    assert "- r_tests [L1 fact, unverified] Run pytest -q before finishing" in unverified
     assert result.links == [{"record_id": "r_tests", "event_id": ok2.id, "polarity": "support", "reason": "tests passed again"}]
     assert result.dropped == []
     assert [(m["record_id"], m["from"], m["to"]) for m in result.moves] == [("r_tests", "L1", "L2")]
+
+
+def test_the_prompt_lists_validated_records_apart_from_unverified_claims(memory, monkeypatch):
+    monkeypatch.setenv("RKA_MEMORY_NOW", "2026-11-02T09:00:00+00:00")
+    lg = Ledger()
+    coding = dict(STATE, task_class="coding")
+    lg.start("s1", **coding)
+    lg.propose("s1", "r_checked", scope=Scope.exact(State(**coding)), content="Run pytest -q before finishing")
+    lg.confirm("s1", "r_checked")
+    lg.link("r_checked", lg.test("s1", True))
+    lg.propose("s1", "r_claim", scope=Scope.exact(State(**coding)), content="Round results to two decimals")
+    lg.link("r_claim", lg.user_msg("s1", "add mean"))
+    lg.end("s1")
+    lg.start("s2", **coding)
+    lg.end("s2")
+    sync(memory, lg)
+    memory.gate()
+    backend = FakeBackend({"candidates": []})
+    mine_session(memory, "s2", backend=backend)
+
+    prompt = backend.prompts[0]
+    validated = prompt.split("Validated records that apply to this state:")[1].split("Unverified claims")[0]
+    unverified = prompt.split("Unverified claims that apply to this state (see rule 12):")[1].split("Rules the user stated")[0]
+    assert validated.strip() == "- r_checked [L2 fact] Run pytest -q before finishing"
+    assert unverified.strip() == "- r_claim [L1 fact, unverified] Round results to two decimals"
+    assert "12. Records marked `unverified`" in prompt
 
 
 def test_support_link_names_only_listed_records_and_cites_by_the_evidence_rules(memory, monkeypatch):
