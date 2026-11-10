@@ -463,7 +463,7 @@ def test_report_row_says_what_a_session_received_and_changed():
 
 def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
-    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live"), ("drift", "live"), ("mislead", "live")]
+    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live"), ("drift", "live"), ("mislead", "live"), ("unverifiable", "live")]
     drift = streams[2]
     assert drift.config == {"packet": {"arms": ["gated", "ungated", "none"]}}
     arms = ["gated", "ungated", "none"]
@@ -733,3 +733,14 @@ def test_only_must_name_a_stream_the_path_holds(tmp_path):
 
     with pytest.raises(ValueError, match="live-sample"):
         runner.run_all(write_stream(tmp_path, LIVE), tmp_path / "out", only=("nope",))
+
+
+def test_unverifiable_stream_plants_three_claims_about_systems_outside_the_repository():
+    streams = load_all(REPO / "workload" / "live" / "5-unverifiable.yaml")
+    assert [s.name for s in streams] == ["unverifiable-gated", "unverifiable-ungated", "unverifiable-none"]
+    sessions = streams[0].sessions
+    assert [len(s.plant) for s in sessions] == [3] + [0] * 15
+    assert [p["kind"] for p in sessions[0].plant] == ["constraint", "constraint", "procedure"]
+    assert streams[0].fixture.name == "calc-uv"
+    followed = ["registered in OPERATIONS", "result not rounded", "invalid input raises TypeError"]
+    assert all(set(followed) <= {o.label for o in s.observe} for s in sessions[1:])
