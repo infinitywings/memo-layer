@@ -9,7 +9,7 @@ Requests come in three kinds:
 - miner: the prompt starts with MINER_PREFIX. The reply is the miner JSON built
   from the script's `miner` rules. Event selectors such as `{kind: test_result}`
   resolve to event ids from the prompt's event lines; record contents resolve
-  to ids from its delivered and existing record rows.
+  to ids from its delivered, validated and unverified record rows.
 - rules: the prompt starts with EXTRACT_PREFIX. The reply lists the script's
   `miner.rules` and `miner.withdrawn` as given; a `restates` or `record`
   content resolves to the id of the recorded rule row with that content.
@@ -45,7 +45,7 @@ RULE_ROW = re.compile(r"^- (\S+): (.*)$")
 SECTIONS = (
     ("Records delivered to the agent", "delivered"),
     ("Validated records that apply", "existing"),
-    ("Unverified claims that apply", "existing"),
+    ("Unverified claims that apply", "unverified"),
     ("Rules the user stated", "stated"),
     ("Events, oldest first", "events"),
 )
@@ -90,11 +90,12 @@ class MinerPrompt:
 
     delivered: dict[str, str]
     existing: dict[str, str]
+    unverified: dict[str, str]
     events: tuple[EventLine, ...]
 
 
 def parse_miner_prompt(prompt: str) -> MinerPrompt:
-    found: dict[str, list[str]] = {"delivered": [], "existing": [], "stated": [], "events": []}
+    found: dict[str, list[str]] = {"delivered": [], "existing": [], "unverified": [], "stated": [], "events": []}
     current: list[str] | None = None
     for line in prompt.splitlines():
         heading = next((name for prefix, name in SECTIONS if line.startswith(prefix)), None)
@@ -104,11 +105,11 @@ def parse_miner_prompt(prompt: str) -> MinerPrompt:
             current.append(line)
     rows = {
         name: {normalize(m.group(4)): m.group(1) for m in map(ROW.match, found[name]) if m}
-        for name in ("delivered", "existing")
+        for name in ("delivered", "existing", "unverified")
     }
     stated = {normalize(m.group(2)): m.group(1) for m in map(RULE_ROW.match, found["stated"]) if m}
     events = tuple(EventLine(*m.groups()) for m in map(EVENT_LINE.match, found["events"]) if m)
-    return MinerPrompt(rows["delivered"], {**stated, **rows["existing"]}, events)
+    return MinerPrompt(rows["delivered"], {**stated, **rows["existing"]}, rows["unverified"], events)
 
 
 @dataclass
@@ -132,7 +133,8 @@ class Resolver:
 def miner_reply(prompt: str, rules: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """The miner JSON the rules describe, with selectors and contents resolved to ids."""
     r = Resolver(parse_miner_prompt(prompt))
-    known = {**r.prompt.existing, **r.prompt.delivered}
+    known = {**r.prompt.existing, **r.prompt.unverified, **r.prompt.delivered}
+    counterable = {**r.prompt.unverified, **r.prompt.delivered}
     candidates = []
     for c in rules.get("candidates") or ():
         label = f"candidate {c['content']!r}"
@@ -147,8 +149,8 @@ def miner_reply(prompt: str, rules: dict[str, Any]) -> tuple[dict[str, Any], lis
             out["refines"] = [t for t in refined if t]
         candidates.append(out)
     doc: dict[str, Any] = {"candidates": candidates}
-    # a counter link names a delivered record; a support link any listed one
-    for key, rows in (("counter_links", r.prompt.delivered), ("support_links", known)):
+    # a counter link names a delivered record or an unverified claim; a support link any listed one
+    for key, rows in (("counter_links", counterable), ("support_links", known)):
         links = []
         for link in rules.get(key) or ():
             label = f"{key[:-6]} link to {link['record']!r}"

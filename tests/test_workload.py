@@ -182,7 +182,7 @@ def test_placeholders_are_replaced_in_nested_steps():
 
 
 def miner_prompt():
-    """A real miner prompt: one delivered record, one existing record, and a
+    """A real miner prompt: one delivered record, one unverified claim, and a
     session with a passing test, a failing test and an undo."""
     lg = Ledger()
     state = dict(task_class="coding", project="/p", toolchain="uv", model_id="m", user_context="default")
@@ -219,6 +219,7 @@ def test_mock_miner_resolves_selectors_and_contents_from_a_real_prompt():
         "counter_links": [
             {"record": "Run the tests with pytest -q", "event": {"kind": "test_result", "command": "pytest tests/test_slow.py"}, "reason": "slow suite failed"},
             {"record": "Run the tests with pytest -q", "event": {"kind": "user_undo"}, "reason": "undone"},
+            {"record": "Keep functions small", "event": {"kind": "user_msg"}, "reason": "the user said otherwise"},
         ],
         "support_links": [{"record": "Keep functions small", "event": {"kind": "test_result", "passed": True}, "reason": "held"}],
     }
@@ -239,6 +240,7 @@ def test_mock_miner_resolves_selectors_and_contents_from_a_real_prompt():
         "counter_links": [
             {"record_id": "r_tests", "event_id": ids["bad"], "reason": "slow suite failed"},
             {"record_id": "r_tests", "event_id": ids["undo"], "reason": "undone"},
+            {"record_id": "r_style", "event_id": ids["msg"], "reason": "the user said otherwise"},
         ],
         "support_links": [{"record_id": "r_style", "event_id": ids["ok"], "reason": "held"}],
     }
@@ -248,7 +250,7 @@ def test_mock_miner_reports_rules_it_cannot_resolve():
     prompt, ids = miner_prompt()
     rules = {
         "candidates": [{"content": "c", "kind": "fact", "evidence": [{"kind": "exit_code"}], "depends_on": ["No such record"]}],
-        "counter_links": [{"record": "Keep functions small", "event": {"kind": "user_undo"}}],
+        "counter_links": [{"record": "Keep functions large", "event": {"kind": "user_undo"}}],
     }
     doc, problems = mock_llm.miner_reply(prompt, rules)
     assert doc["candidates"][0]["evidence"] == [] and doc["candidates"][0]["depends_on"] == []
@@ -256,7 +258,7 @@ def test_mock_miner_reports_rules_it_cannot_resolve():
     assert problems == [
         "candidate 'c' evidence: no event matches {\"kind\":\"exit_code\"}",
         "candidate 'c' depends_on: no record row with content 'No such record'",
-        "counter link to 'Keep functions small': no record row with content 'Keep functions small'",
+        "counter link to 'Keep functions large': no record row with content 'Keep functions large'",
     ]
 
 
@@ -343,7 +345,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim"]
 
 
 LIVE = """

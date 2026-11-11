@@ -108,26 +108,19 @@ def test_week2_grounded_candidates_reach_l1_model_cited_ones_l0d_and_duplicates_
 
     lg.start("s2", **STATE)
     ok2 = lg.test("s2", True)
-    lint = lg.exit("s2", 1, "uv run ruff check")
     lg.end("s2")
     sync(memory, lg)
     backend = FakeBackend(
         {
             "task_class": "testing",
             "candidates": [{"content": "Run tests with uv run pytest", "kind": "fact", "evidence": [ok2.id]}],
-            "counter_links": [{"record_id": grounded, "event_id": lint.id, "reason": "lint failed"}],
         }
     )
     second = mine_session(memory, "s2", backend=backend)
 
     assert second.proposed == []
     assert second.merged == [{"record_id": grounded, "content": "Run tests with uv run pytest", "evidence": [ok2.id]}]
-    assert [d.to_json() for d in second.dropped] == [
-        {
-            "item": f"counter_link 0 {grounded}",
-            "reason": "record was not delivered in this session or a session it edited",
-        }
-    ]
+    assert second.dropped == []
     assert second.links == []
     assert second.moves == [
         {"record_id": grounded, "from": "L1", "to": "L2", "reason": "grounded in enough distinct sessions"}
@@ -225,6 +218,48 @@ def test_counter_link_reaches_a_record_delivered_in_the_session_whose_file_the_u
 
     assert result.links == [{"record_id": "r_known", "event_id": undo.id, "polarity": "counter", "reason": "undone"}]
     assert result.dropped == []
+
+
+def test_counter_link_refutes_an_unverified_claim_with_what_the_session_observed(memory):
+    lg = Ledger()
+    lg.start("s1", **STATE, task_class="coding")
+    ok1 = lg.test("s1", True)
+    for rid in ("r_claim", "r_valid"):
+        lg.propose("s1", rid, scope=Scope(), content=f"{rid} holds")
+        lg.link(rid, ok1)
+    lg.confirm("s1", "r_valid")
+    lg.end("s1")
+    sync(memory, lg)
+    memory.gate()
+    lg.start("s2", **STATE, task_class="coding")
+    said = lg.user_msg("s2", "calc.py has no OPERATIONS dict")
+    failed = lg.test("s2", False)
+    lg.end("s2")
+    sync(memory, lg)
+    reply = {
+        "candidates": [],
+        "counter_links": [
+            {"record_id": "r_claim", "event_id": said.id, "reason": "the user says otherwise"},
+            {"record_id": "r_valid", "event_id": said.id, "reason": "the user says otherwise"},
+            {"record_id": "r_claim", "event_id": failed.id, "reason": "the suite failed"},
+        ],
+    }
+    backend = FakeBackend(reply)
+    result = mine_session(memory, "s2", backend=backend)
+
+    assert "- r_claim [L1 fact, unverified] r_claim holds" in backend.prompts[0]
+    assert "- r_valid [L2 fact] r_valid holds" in backend.prompts[0]
+    assert result.links == [
+        {"record_id": "r_claim", "event_id": said.id, "polarity": "counter", "reason": "the user says otherwise"}
+    ]
+    assert [d.to_json() for d in result.dropped] == [
+        {
+            "item": "counter_link 1 r_valid",
+            "reason": "record was neither delivered in this session or a session it edited nor an unverified claim",
+        },
+        {"item": f"counter_link 2 evidence {failed.id}", "reason": "test_result cannot refute a claim the session never received"},
+    ]
+    assert [r.rung.value for r in map(memory.world().records.get, ("r_claim", "r_valid"))] == ["L1", "L2"]
 
 
 def test_duplicate_of_a_retired_record_merges_into_it_and_stays_retired(memory):

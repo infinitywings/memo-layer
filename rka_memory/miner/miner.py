@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from rka_memory.config import Config
 from rka_memory.domain import (
     GROUNDING,
+    REFUTING_KINDS,
     SCOPE_FIELDS,
     Actor,
     Event,
@@ -62,10 +63,10 @@ SHOWN_KINDS = frozenset(
         Kind.SESSION_END,
     }
 )
-EDIT_KINDS = (Kind.USER_EDIT, Kind.USER_UNDO)
 VERDICT_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT)
 EXISTING_RUNGS = (Rung.L1, Rung.L2, Rung.L3)
 RULE_KINDS = frozenset(k.value for k in extract.RULE_KINDS)
+NOT_COUNTERABLE = "record was neither delivered in this session or a session it edited nor an unverified claim"
 
 
 @dataclass(frozen=True)
@@ -188,19 +189,8 @@ class MineResult:
         }
 
 
-def related_sessions(world: World, session_id: str) -> list[str]:
-    """The session plus the sessions whose files the user edited or undid in it."""
-    out = [session_id]
-    for ev in world.sessions[session_id].events:
-        write_session = ev.payload.get("write_session_id") if ev.kind in EDIT_KINDS else None
-        if write_session and write_session not in out:
-            out.append(write_session)
-    return out
-
-
 def delivered_records(world: World, session_id: str) -> list[RecordState]:
-    ids = set().union(*(world.delivered_in(s) for s in related_sessions(world, session_id)))
-    recs = [world.records[i] for i in ids if i in world.records]
+    recs = [world.records[i] for i in world.received_in(session_id) if i in world.records]
     return sorted(recs, key=lambda r: world.position[r.proposed.id])
 
 
@@ -521,9 +511,11 @@ class _Planner:
         why_not: str,
         statement: dict[str, str] | None = None,
     ) -> None:
-        """A counter link may name only a delivered record. A support link may name
-        any record the prompt listed, delivered or existing: support has to reach
-        L1 records, which are never delivered, or nothing accumulates evidence
+        """A counter link may name a delivered record or an unverified claim, the
+        L1 records the prompt lists apart. A validated record that was not
+        delivered was not tested here, so a counter link may not name it. A
+        support link may name any listed record: support has to reach L1
+        records, which are never delivered, or nothing accumulates evidence
         across sessions. Either way the event obeys the candidate citation rules."""
         if rl.record_id not in allowed:
             self.result.dropped.append(Drop(f"{label} {rl.record_id}", why_not))
@@ -613,7 +605,7 @@ def plan(
     planner = _Planner(world, session_id, cfg, result)
     result.dropped.extend(out.dropped)
     view = view_of(world, session_id, cfg)
-    delivered = {r.id for r in view.delivered}
+    counterable = {r.id for r in (*view.delivered, *view.unverified)}
     listed = {r.id for r in view.listed}
     planner.judge_task_class(out.task_class)
     rule_records = {r.id for r in view.listed if r.kind in RULE_KINDS}
@@ -627,10 +619,15 @@ def plan(
         planner.withdraw(gone, rule_records)
     for i, c in enumerate(out.candidates):
         planner.candidate(f"candidate {i}", c)
+    unverified = {r.id for r in view.unverified}
     for i, rl in enumerate(out.counter_links):
-        planner.record_link(
-            f"counter_link {i}", rl, Polarity.COUNTER, delivered, "record was not delivered in this session or a session it edited"
-        )
+        ev = world.events.get(rl.event_id)
+        if rl.record_id in unverified and ev is not None and ev.kind not in REFUTING_KINDS:
+            # The engine would not count it: see engine.counted.
+            why = f"{ev.kind.value} cannot refute a claim the session never received"
+            result.dropped.append(Drop(f"counter_link {i} evidence {rl.event_id}", why))
+            continue
+        planner.record_link(f"counter_link {i}", rl, Polarity.COUNTER, counterable, NOT_COUNTERABLE)
     for i, rl in enumerate(out.support_links):
         planner.record_link(f"support_link {i}", rl, Polarity.SUPPORT, listed, "record was not listed in the prompt")
     return planner.events

@@ -131,6 +131,19 @@ class World:
     def delivered_in(self, session_id: str) -> set[str]:
         return {rid for d in self.deliveries if d.event.session_id == session_id for rid in d.record_ids}
 
+    def related_sessions(self, session_id: str) -> list[str]:
+        """The session plus the sessions whose files the user edited or undid in it."""
+        out = [session_id]
+        for ev in self.session(session_id).events:
+            write_session = ev.payload.get("write_session_id") if ev.kind in (Kind.USER_EDIT, Kind.USER_UNDO) else None
+            if write_session and write_session not in out:
+                out.append(write_session)
+        return out
+
+    def received_in(self, session_id: str) -> set[str]:
+        """Records delivered in the session or in the sessions whose files the user edited or undid in it."""
+        return set().union(*(self.delivered_in(s) for s in self.related_sessions(session_id)))
+
     def deliverable(self) -> list[RecordState]:
         return [r for r in self.records.values() if r.rung in DELIVERABLE]
 

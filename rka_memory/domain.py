@@ -105,6 +105,10 @@ GROUNDING: dict[Kind, Callable[[Mapping[str, Any]], frozenset[Polarity]]] = {
     Kind.TOOL_RESULT: lambda p: BOTH,
 }
 
+# What a session observed, as opposed to an outcome of the agent's own work: the
+# only events that can count against a claim the session never received.
+REFUTING_KINDS: frozenset[Kind] = frozenset({Kind.TOOL_RESULT, Kind.USER_MSG})
+
 
 def clock_now() -> datetime:
     """The current time, or a simulated one for workload runs.

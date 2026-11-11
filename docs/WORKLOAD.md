@@ -120,7 +120,7 @@ miner:
       supersedes: <content of a listed procedure this procedure replaces>
       refines: [<content of a listed record this one qualifies>]
   counter_links:
-    - record: <content of a delivered record>
+    - record: <content of a delivered record or an unverified claim>
       event: {kind: user_undo}
       reason: the user undid the change
   support_links:
@@ -140,7 +140,7 @@ miner:
 
 An event selector names a `kind` and optionally an `actor` and payload fields, such as `{kind: test_result, passed: false}` or `{kind: exit_code, command: pytest -q}`. The model resolves it to every matching event in the prompt's event lines. A candidate cites them all as evidence. A counter or support link becomes one link per matching event.
 
-`depends_on` contents resolve to ids from the prompt's delivered and existing record rows. A counter link's `record` resolves from the delivered rows only, because the miner may only counter a record delivered in the session or in a session whose file the user edited or undid in it. A support link's `record` resolves from the delivered and existing rows, because support has to reach L1 records, which are never delivered.
+`depends_on` contents resolve to ids from the prompt's delivered and existing record rows. A counter link's `record` resolves from the delivered and unverified rows, because the miner may counter a record delivered in the session or in a session whose file the user edited or undid in it, or an unverified claim, but not a validated record the session never received (scenario `countered-claim`). A support link's `record` resolves from the delivered and existing rows, because support has to reach L1 records, which are never delivered.
 
 `rules` and `withdrawn` answer the rule-extractor prompt, which rka-memory sends before the miner prompt when the session has user messages. The model returns them as written, with a `restates` or `record` content resolved to the id of the recorded rule row with that content. rka-memory keeps a quote only if it appears in one of the session's user messages, and standing words only if they appear in the rule's own message, so scripted quotes must be copied from the session's `prompt` (scenario `stated-rule`).
 
@@ -214,7 +214,7 @@ RKA_STACK_CORE_PORT= ./scripts/dockerw compose -p rka-memory-test --profile work
 
 Each session is mined independently of the replay's other sessions, so a lesson a real run would have recorded once can come back in several sessions. Compare candidate counts between replays, not with live runs.
 
-With `--chain`, the script replays each ledger whole instead: it drops everything the old miner and gate wrote, except records the runner planted and the links that planted them, and mines the sessions again in order, so records accumulate as they do in a live run while the agent's sessions stay exactly as recorded. `--prompt <file>` swaps the miner prompt. Together they compare two prompts on the same sessions, without the run-to-run variance of the agent, which in the live house-rules runs ranged from 4 to 9 records with one prompt.
+With `--chain`, the script replays each ledger whole instead: it drops everything the old miner and gate wrote, except records the runner planted and the links that planted them, and mines the sessions again in order, so records accumulate as they do in a live run while the agent's sessions stay exactly as recorded. `--prompt <file>` swaps the miner prompt. Together they compare two prompts on the same sessions, without the run-to-run variance of the agent, which in the live house-rules runs ranged from 4 to 9 records with one prompt. The chained output gives each record's count of support and counter links, and lists every counter link the miner made or had dropped, with the kind of event it cited.
 
 ## Run directory
 

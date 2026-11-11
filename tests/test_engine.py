@@ -4,7 +4,7 @@ from ledger_builder import Ledger, cfg, moves, rung
 from rka_memory.domain import Actor, Event, FieldConstraint, Kind, RecordKind, Scope
 from rka_memory.validity.engine import assess, evaluate, valid
 from rka_memory.domain import State
-from rka_memory.world import project
+from rka_memory.world import World, project
 
 UV = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
 
@@ -107,6 +107,7 @@ def test_counter_event_narrows_scope_when_evidence_survives():
     two_strong_sessions(lg)
     assert rung(lg.gate(), "r_a") == "L2"
     lg.start("s3", **{**UV, "toolchain": "pip"})
+    lg.deliver("s3", "r_a")
     lg.link("r_a", lg.test("s3", False), "counter")
     world = lg.gate()
     rec = world.records["r_a"]
@@ -116,11 +117,50 @@ def test_counter_event_narrows_scope_when_evidence_survives():
     assert not valid(rec, State(**{**UV, "toolchain": "pip"}), world, cfg())
 
 
+def refuted_claim(lg: Ledger, counter_event) -> World:
+    """r_a at L1 from one session, then a counter link in a session of another
+    task class that never received it, then two sessions of support."""
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_a", scope=Scope())
+    lg.link("r_a", lg.test("s1", True))
+    lg.gate()
+    lg.start("s2", **{**UV, "task_class": "debugging"})
+    lg.link("r_a", counter_event(lg, "s2"), "counter")
+    for session in ("s3", "s4"):
+        lg.start(session, **UV)
+        lg.link("r_a", lg.test(session, True))
+    return lg.gate()
+
+
+def test_a_refutation_of_a_claim_the_session_never_received_is_not_scoped_away():
+    world = refuted_claim(Ledger(), lambda lg, s: lg.user_msg(s, "there is no such registry"))
+    assert world.records["r_a"].narrowings == []
+    assert rung(world, "r_a") == "L1"
+
+
+def test_only_what_a_session_observed_refutes_a_claim_it_never_received():
+    world = refuted_claim(Ledger(), lambda lg, s: lg.test(s, False))
+    assert rung(world, "r_a") == "L2"
+
+
+def test_a_counter_event_on_a_delivered_l1_record_narrows_its_scope():
+    lg = Ledger()
+
+    def failed_after_following(lg, s):
+        lg.deliver(s, "r_a")
+        return lg.test(s, False)
+
+    world = refuted_claim(lg, failed_after_following)
+    assert [(n.field, n.value) for n in world.records["r_a"].narrowings] == [("task_class", "debugging")]
+    assert rung(world, "r_a") == "L2"
+
+
 def test_counter_event_in_the_evidence_state_demotes_and_blocks_repromotion():
     lg = Ledger()
     two_strong_sessions(lg)
     lg.gate()
     lg.start("s3", **UV)
+    lg.deliver("s3", "r_a")
     lg.link("r_a", lg.undo("s3", "s2"), "counter")
     world = lg.gate()
     assert moves(world, "r_a")[-1] == ("L2", "L1", "counter-event inside scope")
@@ -204,6 +244,23 @@ def test_untouched_l1_retires_after_window():
     lg.link("r_a", ok)
     lg.gate()
     lg.advance(days=59)
+    assert rung(lg.gate(), "r_a") == "L1"
+    lg.advance(days=2)
+    assert moves(lg.gate(), "r_a")[-1] == ("L1", "L4", "untouched for 60 days")
+
+
+def test_counter_links_do_not_keep_an_l1_record_alive():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    ok = lg.test("s1", True)
+    lg.propose("s1", "r_a")
+    lg.link("r_a", ok)
+    lg.gate()
+    for session in ("s2", "s3"):
+        lg.advance(days=20)
+        lg.start(session, **UV)
+        lg.link("r_a", lg.user_msg(session, "that is not how this project works"), polarity="counter")
+    lg.advance(days=19)
     assert rung(lg.gate(), "r_a") == "L1"
     lg.advance(days=2)
     assert moves(lg.gate(), "r_a")[-1] == ("L1", "L4", "untouched for 60 days")

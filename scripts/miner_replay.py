@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from rka_memory import config as config_mod
-from rka_memory.domain import Actor, Event, Kind
+from rka_memory.domain import Actor, Event, Kind, Polarity
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.miner import backends, miner
 from rka_memory.service import Memory
@@ -151,7 +151,7 @@ def chain(ledger: Path) -> dict[str, Any]:
         cfg = config_for(ledger, tmp)
         memory = Memory.open(cfg)
         backend = backends.backend_for(cfg)
-        tokens, statuses = 0, []
+        tokens, statuses, counters = 0, [], []
         for ev in events:
             memory.append(ev)
             if ev.kind is Kind.SESSION_END:
@@ -160,7 +160,13 @@ def chain(ledger: Path) -> dict[str, Any]:
                 result = miner.mine_session(memory, ev.session_id, backend=backend)
                 tokens += result.tokens
                 statuses.append(result.status.value)
+                counters += [dict(link, session_id=ev.session_id) for link in result.links if link["polarity"] == "counter"]
+                counters += [{"dropped": d.item, "reason": d.reason, "session_id": ev.session_id} for d in result.dropped if d.item.startswith("counter_link")]
         world = memory.world()
+        for c in counters:
+            if "event_id" in c:
+                c["event_kind"] = world.events[c["event_id"]].kind.value
+                c["planted"] = bool(world.records[c["record_id"]].proposed.payload.get("planted"))
         records = sorted(world.records.values(), key=lambda r: world.position[r.proposed.id])
         rungs: dict[str, int] = {}
         for r in records:
@@ -168,13 +174,15 @@ def chain(ledger: Path) -> dict[str, Any]:
         return {
             "records": [
                 {"id": r.id, "kind": r.spec.kind.value, "rung": r.rung.value if r.rung else None, "content": r.spec.content,
-                 "planted": bool(r.proposed.payload.get("planted")), **_relations(r.spec.to_json())}
+                 "planted": bool(r.proposed.payload.get("planted")), **_relations(r.spec.to_json()),
+                 "links": {p.value: sum(1 for link in r.links if link.polarity is p) for p in Polarity}}
                 for r in records
             ],
             "by_rung": rungs,
             "with_relations": sum(1 for r in records if r.spec.refines or r.spec.depends_on or r.spec.supersedes),
             "miner_tokens": tokens,
             "statuses": statuses,
+            "counter_links": counters,
         }
 
 

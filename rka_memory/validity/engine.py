@@ -16,6 +16,7 @@ from rka_memory.config import Config
 from rka_memory.domain import (
     DELIVERABLE,
     GROUNDING,
+    REFUTING_KINDS,
     Actor,
     Event,
     Kind,
@@ -108,6 +109,14 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
         if said is not None and polarity is Polarity.COUNTER:
             # The user withdrew the rule: like a reject, it is not scoped away.
             targeted = True
+        model_counter = polarity is Polarity.COUNTER and made_by is not None and made_by.actor is Actor.MODEL
+        if model_counter and rec.id not in world.received_in(ev.session_id):
+            # The session never received the record, so this is no failure of
+            # following it here: it refutes the claim, and only what the
+            # session observed can do that. Like a reject, it is not scoped away.
+            if ev.kind not in REFUTING_KINDS:
+                continue
+            targeted = True
         if polarity is Polarity.SUPPORT and weight <= 0:
             continue
         out.append(Grounding(ev, weight, world.state_of(ev), targeted, affirms))
@@ -173,7 +182,11 @@ def _keeps(rung: Rung, cfg: Config):
 
 
 def _last_touched(rec: RecordState, world: World) -> datetime:
-    stamps = [rec.proposed.ts] + [world.events[link.via].ts for link in rec.links if link.via in world.events]
+    # A counter link is not a touch: a claim the miner keeps refuting would
+    # otherwise never retire.
+    stamps = [rec.proposed.ts] + [
+        world.events[link.via].ts for link in rec.links if link.polarity is Polarity.SUPPORT and link.via in world.events
+    ]
     # Hints and MCP calls are model-driven; letting them count would let the
     # agent keep an unvalidated record alive just by asking for it.
     stamps += [d.event.ts for d in world.deliveries if rec.id in d.record_ids and d.channel not in ("hints", "mcp")]

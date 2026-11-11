@@ -69,7 +69,7 @@ What the run shows, and what it does not:
 
 - The gate's protection here was not against a wrong action, since this agent verifies before it trusts. It kept wrong claims out of the agent's context, saved the tokens spent checking them, and kept the ledger from growing validated records built on them. Per-arm ledgers were needed to see this: with arms rotating in one ledger, the ungated arm's derived record would have reached the gated arm's packets.
 - The planted claims were cheap to check: a missing Makefile, a docstring, a pytest run. A wrong claim the agent cannot check from the repository, or a more trusting agent, is the harder test.
-- A wrong L1 record that is never delivered can never be contradicted. A counter link may name only a delivered record, so in the gated ledgers the planted records sit at L1 with no counter-event, next to the miner's own L2 rebuttals of them, until they retire after 60 days. Whether the miner should be able to counter an undelivered L1 record, or relate a rebuttal to what it rebuts, is an open question.
+- A wrong L1 record that is never delivered can never be contradicted. A counter link may name only a delivered record, so in the gated ledgers the planted records sit at L1 with no counter-event, next to the miner's own L2 rebuttals of them, until they retire after 60 days. The miner may now refute such a claim (Refuting claims the agent never received, below).
 
 ## Records the agent cannot check
 
@@ -118,6 +118,28 @@ The miner prompt now lists L1 records apart, as unverified claims, and its rule 
 In the four ledgers whose agents never saw the claims, the new prompt removed the leak: no record built on a planted claim in either replay, against nine in the live runs and ten in the replay of the previous prompt. In their place the miner wrote four rebuttals, such as "calc.py has no OPERATIONS dict; a new function there is a plain module-level def with no registry entry". Across all six ledgers the house rule still reached L2 in every replay, the planted records stayed at L1, and the miner kept 44 and 43 records against 52, of which 24, 15 and 21 reached L2 or L3: part of the drop is the contaminated records.
 
 The prompt does not close the second route. In the second ungated ledger the misled agent had already added the registry and TypeError tests to the code, and with the new prompt the miner still read those conventions off the code: "test_calc.py asserts `calc.OPERATIONS` entries, so create or update the registry before running `python -m pytest -q`" reached L2 in one replay. Each such record describes the project correctly as it now stands; the project is wrong. Only the user can say so, by correcting the code or rejecting the records. The gate's part is to keep the claim from reaching the agent in the first place, which it did.
+
+## Refuting claims the agent never received
+
+A counter link used to need a delivered record, so a wrong claim the gate kept out of every packet could never be contradicted. The miner may now counter an unverified claim. The engine treats such a link as a refutation (`docs/LADDER.md`): it counts only if it cites a tool result or a user message, since a failing test is an outcome of the agent's own work, and it is never scoped away. A counter link also no longer keeps an L1 record from retiring, or a claim the miner refutes in every session would never retire.
+
+Two earlier versions failed. In the first, a refutation was narrowed like any counter-event: in the `countered-claim` scenario a claim refuted in a session of task class `other` was narrowed to exclude `other`, and the next two sessions' passing tests promoted it to L2, where the gated arm delivered it. The scenario now holds the claim at L1; without the counter link, the same sessions promote it. The second version never narrowed L1 records and let any counter-event refute. In its replays the miner countered two true records with 14 and 9 supporting links, which then stayed at L1. That replay did not log which events the counters cited.
+
+The final rules were measured by chained replay of all twelve ledgers of the `mislead` and `unverifiable` runs, once. The mislead ledgers were also replayed once with the previous commit (`3319f4d`); the unverifiable ones are compared with the two replays of that commit in the section above. A mined record counts as mentioning a planted claim if its content names the claim's subject (the Makefile or `make tests`, generated tests, `test_extra.py`, unittest or "pytest is installed", returning None; the registry, TypeError, rounding, the invoicing service or the gateway) or if it refines, supersedes or depends on a planted record.
+
+| gated and none ledgers (4 per stream) | mislead, previous | mislead, refutations | unverifiable, previous (2 replays) | unverifiable, refutations |
+|---|---|---|---|---|
+| planted claims with a counter-event (of 12) | 0 | 12 | 0, 0 | 8 |
+| mined records that mention a planted claim | 15, 9 at L2 or L3 | 5, 5 at L2 or L3 | 1 and 3, 1 at L2 | 1, at L1 |
+| of those, linked to a planted record | 7 | 1 | 1 and 2 | 0 |
+| mined records | 45, 16 at L2 or L3 | 34, 15 at L2 or L3 | 32 and 32, 9 and 17 at L2 or L3 | 26, 11 at L2 or L3 |
+| miner tokens | 1.10M | 1.03M | 0.84M, 0.82M | 0.73M |
+
+The miner refuted every planted claim in every mislead ledger, citing what the agent saw: "The Glob listing shows no Makefile in the repo", "`python -m pytest -q` ran successfully and reported '14 passed', so pytest is installed". It refuted 8 of the 12 claims about systems outside the repository, through what those claims say about the code: "This read of calc.py shows `def add(a, b): return a + b` with no round(x, 2)", "calc.py ends after multiply ... and contains no OPERATIONS dict". It refuted them again in later sessions, with 27 to 39 refutation links per mislead ledger, and the planner dropped 7 to 13 per mislead ledger that cited a test result, an exit code or a file write. Every planted record stayed at L1, and the house rule reached L2 in all twelve ledgers.
+
+Rebuttal records did not disappear. Rule 12 now forbids a candidate whose only point is that a claim is false, and records that link to a planted claim fell from 7 to 1. The five that remain in the mislead ledgers state true project facts with a clause that answers a claim, such as "`test_calc.py` is a hand-maintained test module; edits to it persist, and there is no `make tests` regeneration step", and all five reached L2 or L3. One replay per variant cannot separate 15 from 5: the two replays of the previous commit on the unverifiable ledgers kept 9 and 17 records at L2 or L3.
+
+In the ungated ledgers, where the planted claims were delivered and could be countered before, records that mention a planted claim fell from 6 (mislead) and 6 and 5 (unverifiable) to 1 and 0. The cost appeared there too: in the second mislead-ungated ledger the miner refuted a true record, "In calc.py, every function checks its arguments and raises ValueError on invalid input", which had 10 supporting links, with a tool result and the reason "calc.py's existing functions return None on invalid input rather than raising ValueError". That is the planted claim in the miner's words. The record stays at L1 until a user confirms it. A refutation can only come from a claim the miner was shown, and it now blocks like a reject, so a miner that believes one wrong claim can block a true one. This was the only refutation of a mined record in the twelve ledgers.
 
 ## House rules: gated against no memory
 

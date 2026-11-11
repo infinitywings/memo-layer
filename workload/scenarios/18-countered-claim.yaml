@@ -1,0 +1,78 @@
+name: countered-claim
+description: >-
+  A wrong claim at L1 that the gated arm never delivers can still be
+  countered. The runner plants a constraint that calc.py functions must be
+  registered in an OPERATIONS dict. In the next session the agent greps for
+  the dict and finds none, and the miner links the claim to that tool result
+  as a counter-event, which it may do for an unverified claim it was shown
+  but never delivered. Since the session never received the claim, the
+  counter-event is a refutation: it cites what the session observed, and the
+  engine does not scope it away to the session's task class, as it would a
+  failure after following a delivered record. Two later sessions add passing
+  tests as support, as a
+  miner misled by code that matches the claim would. Without the counter-event
+  that support would promote the claim to L2. With it the claim stays at L1
+  and is never delivered.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    plant:
+      - content: Register every calc.py function in the OPERATIONS dict at the end of calc.py
+        kind: constraint
+        evidence: [{kind: user_msg}]
+        broaden: [task_class, model_id]
+        about: ["file:calc.py"]
+    expect:
+      - {record: Register every calc.py function in the OPERATIONS dict at the end of calc.py, rung: L1}
+
+  - at: +1d
+    prompt: Is there an operations registry in calc.py?
+    agent:
+      - bash: grep -c OPERATIONS calc.py || true
+    miner:
+      counter_links:
+        - record: Register every calc.py function in the OPERATIONS dict at the end of calc.py
+          event: {kind: tool_result}
+          reason: calc.py has no OPERATIONS dict
+    expect:
+      - {record: Register every calc.py function in the OPERATIONS dict at the end of calc.py, delivered: false}
+      - {record: Register every calc.py function in the OPERATIONS dict at the end of calc.py, rung: L1}
+
+  - at: +2d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links: &support
+        - record: Register every calc.py function in the OPERATIONS dict at the end of calc.py
+          event: {kind: test_result, passed: true}
+          reason: the suite passed
+    expect:
+      - {record: Register every calc.py function in the OPERATIONS dict at the end of calc.py, rung: L1}
+
+  - at: +3d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links: *support
+    expect:
+      - {record: Register every calc.py function in the OPERATIONS dict at the end of calc.py, rung: L1}
+
+  - at: +4d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: Register every calc.py function in the OPERATIONS dict at the end of calc.py, delivered: false}
+      - {record: Register every calc.py function in the OPERATIONS dict at the end of calc.py, rung: L1}
