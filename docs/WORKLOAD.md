@@ -216,6 +216,14 @@ Each session is mined independently of the replay's other sessions, so a lesson 
 
 With `--chain`, the script replays each ledger whole instead: it drops everything the old miner and gate wrote, except records the runner planted and the links that planted them, and mines the sessions again in order, so records accumulate as they do in a live run while the agent's sessions stay exactly as recorded. `--prompt <file>` swaps the miner prompt. Together they compare two prompts on the same sessions, without the run-to-run variance of the agent, which in the live house-rules runs ranged from 4 to 9 records with one prompt. The chained output gives each record's count of support and counter links, and lists every counter link the miner made or had dropped, with the kind of event it cited.
 
+## Counting what a set of runs exercised
+
+`scripts/ledger_census.py` pools any number of ledgers and counts how the gate behaved in them: how many mined records reached L2 and by which rule, which events the threshold promotions cited, how many records came back down, and who made the evidence links. It also counts what the runs never exercised, such as scope narrowings, task classes other than the one the stream uses, hints, user verdicts and calls to the memory tools. Planted records are left out, and the output holds counts only, so it is safe to run on a ledger of real sessions.
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/ledger_census.py workload-runs/2026*/*/ledger/ledger.jsonl
+```
+
 ## Run directory
 
 Each stream gets a run directory and, apart from it, a workspace, with its own scripted model on a free localhost port:
