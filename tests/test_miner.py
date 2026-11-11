@@ -471,6 +471,7 @@ CODEX_EVENTS = [
 ]
 CODEX_ARGV = [
     "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
+    "--strict-config", "--config", 'web_search="disabled"',
     "--sandbox", "read-only", "--color", "never",
     "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "apps", "--disable", "plugins",
     "--disable", "browser_use", "--disable", "computer_use", "--disable", "multi_agent",

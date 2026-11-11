@@ -103,7 +103,8 @@ def claude_cli(cfg: Config) -> Backend:
 
 # What lets the Codex agent act instead of answer: running commands, the
 # user's connected apps and plugins, the browser and the desktop, other
-# agents, and its own memories and hooks.
+# agents, and its own memories and hooks. Web search is a setting, not a
+# feature, and codex_command turns it off there.
 CODEX_OFF = (
     "shell_tool",
     "unified_exec",
@@ -124,6 +125,10 @@ def codex_command(cfg: Config) -> list[str]:
     # a ChatGPT subscription can pay for mining. Without `miner.model` it
     # uses its own default model.
     command = ["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config"]
+    # A search query can carry what the prompt holds out of the machine. With
+    # --strict-config, a Codex that no longer knows the setting stops with an
+    # error and does not mine with search on.
+    command += ["--strict-config", "--config", 'web_search="disabled"']
     command += ["--sandbox", "read-only", "--color", "never"]
     for feature in CODEX_OFF:
         command += ["--disable", feature]
