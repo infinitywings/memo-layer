@@ -1,14 +1,15 @@
+import dataclasses
 import json
 import os
 import stat
 
 import pytest
 
-from ledger_builder import Ledger
+from ledger_builder import Ledger, cfg
 from rka_memory.domain import Actor, Kind, RecordKind, Scope, State, Step
 from rka_memory.miner import backends, extract
 from rka_memory.miner.backends import BackendError, Completion
-from rka_memory.miner.miner import mine_session
+from rka_memory.miner.miner import build_prompt, mine_session, view_of
 
 STATE = dict(project="/p/app", toolchain="uv", model_id="m1", user_context="default")
 
@@ -400,14 +401,17 @@ def test_cli_output_parses_into_text_summed_tokens_and_seconds():
         backends.parse_cli_output(json.dumps({**CLI_RESULT, "is_error": True, "result": "OAuth session expired"}), 1.0)
 
 
-def _fake_claude(tmp_path, monkeypatch, script_tail):
+def _fake_cli(tmp_path, monkeypatch, name, script_tail):
+    """Put a script named `name` first on PATH. It records its arguments,
+    environment and stdin under tmp_path, then runs `script_tail`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    script = bin_dir / "claude"
+    script = bin_dir / name
     script.write_text(
         "#!/bin/sh\n"
         f'printf "%s\\n" "$@" > "{tmp_path}/argv"\n'
         f'printf "%s" "$RKA_MEMORY_DISABLE" > "{tmp_path}/env"\n'
+        f'env > "{tmp_path}/environ"\n'
         f'cat > "{tmp_path}/stdin"\n' + script_tail
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
@@ -416,7 +420,7 @@ def _fake_claude(tmp_path, monkeypatch, script_tail):
 
 def test_claude_cli_backend_runs_claude_with_prompt_on_stdin_and_hooks_disabled(memory, tmp_path, monkeypatch):
     (tmp_path / "response.json").write_text(json.dumps(CLI_RESULT))
-    _fake_claude(tmp_path, monkeypatch, f'cat "{tmp_path}/response.json"\n')
+    _fake_cli(tmp_path, monkeypatch, "claude", f'cat "{tmp_path}/response.json"\n')
 
     completion = backends.claude_cli(memory.cfg)("PROMPT TEXT")
 
@@ -429,9 +433,112 @@ def test_claude_cli_backend_runs_claude_with_prompt_on_stdin_and_hooks_disabled(
 
 
 def test_claude_cli_failure_raises_backend_error(memory, tmp_path, monkeypatch):
-    _fake_claude(tmp_path, monkeypatch, 'echo "OAuth session expired" >&2\nexit 1\n')
+    _fake_cli(tmp_path, monkeypatch, "claude", 'echo "OAuth session expired" >&2\nexit 1\n')
     with pytest.raises(BackendError, match="exited 1: OAuth session expired"):
         backends.claude_cli(memory.cfg)("PROMPT TEXT")
+
+
+def test_a_long_session_shows_the_miner_its_newest_events_and_counts_the_rest():
+    lg = Ledger()
+    lg.start("s1", **STATE)
+    lg.tool_call("s1", "Bash", "ruff check .")
+    first, second, third = [lg.user_msg("s1", f"message {n}: " + "x" * 100) for n in range(3)]
+    tests = lg.tool_call("s1", "Bash", "pytest -q")
+    end = lg.end("s1")
+    world = lg.gate()
+
+    whole = view_of(world, "s1", cfg())
+    view = view_of(world, "s1", cfg(miner={"events_max_chars": 400}))
+
+    assert (len(whole.events), whole.omitted) == (7, 0)
+    assert whole.anchors == ("command:pytest", "command:ruff", "tool:Bash")
+    assert [e.id for e in view.events] == [second.id, third.id, tests.id, end.id]
+    assert view.omitted == 3
+    assert view.anchors == ("command:pytest", "tool:Bash")
+    prompt = build_prompt(view)
+    assert f"(3 earlier events of this session are not shown)\n{second.id} user_msg user" in prompt
+    assert f"{first.id} user_msg" not in prompt
+    assert "earlier events of this session are not shown" not in build_prompt(whole)
+
+
+MINED = '{"task_class": "coding", "candidates": [], "counter_links": []}'
+CODEX_EVENTS = [
+    {"type": "thread.started", "thread_id": "0199a213-81c0-7800-8aa1-bbab2a035a53"},
+    {"type": "turn.started"},
+    {"type": "item.completed", "item": {"id": "item_0", "type": "reasoning", "text": "**Reading the session**"}},
+    {"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": MINED}},
+    {"type": "turn.completed", "usage": {"input_tokens": 24763, "cached_input_tokens": 24448, "output_tokens": 122}},
+]
+CODEX_ARGV = [
+    "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
+    "--sandbox", "read-only", "--color", "never",
+    "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "apps", "--disable", "plugins",
+    "--disable", "browser_use", "--disable", "computer_use", "--disable", "multi_agent",
+    "--disable", "memories", "--disable", "hooks",
+]
+
+
+def _jsonl(events):
+    return "".join(json.dumps(e) + "\n" for e in events)
+
+
+def test_codex_output_parses_into_the_last_agent_message_and_the_turns_tokens():
+    assert backends.parse_codex_output(_jsonl(CODEX_EVENTS), elapsed=12.3456) == Completion(
+        text=MINED, tokens=24885, seconds=12.346
+    )
+
+
+def test_codex_output_with_a_failed_turn_is_a_backend_error():
+    failed = [*CODEX_EVENTS[:2], {"type": "turn.failed", "error": {"message": "You've hit your usage limit."}}]
+    with pytest.raises(BackendError, match="reported an error: You've hit your usage limit."):
+        backends.parse_codex_output(_jsonl(failed), 1.0)
+
+
+def test_codex_output_in_which_the_model_used_a_tool_is_a_backend_error():
+    ran = {"type": "item.started", "item": {"id": "item_1", "type": "command_execution", "command": "cat notes.txt"}}
+    with pytest.raises(BackendError, match="used a tool while mining: command_execution"):
+        backends.parse_codex_output(_jsonl([*CODEX_EVENTS[:3], ran, *CODEX_EVENTS[3:]]), 1.0)
+
+
+def test_codex_cli_backend_runs_codex_exec_without_tools_under_its_own_login(memory, tmp_path, monkeypatch):
+    (tmp_path / "response.jsonl").write_text(_jsonl(CODEX_EVENTS))
+    _fake_cli(tmp_path, monkeypatch, "codex", f'cat "{tmp_path}/response.jsonl"\n')
+    monkeypatch.setenv("CODEX_HOME", "/home/u/.codex")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-not-for-the-miner")
+
+    completion = backends.codex_cli(memory.cfg)("PROMPT TEXT")
+
+    assert completion.text == MINED
+    assert completion.tokens == 24885
+    assert (tmp_path / "argv").read_text().splitlines() == [*CODEX_ARGV, "-"]
+    assert (tmp_path / "stdin").read_text() == "PROMPT TEXT"
+    environ = (tmp_path / "environ").read_text().splitlines()
+    assert "RKA_MEMORY_DISABLE=1" in environ
+    assert "CODEX_HOME=/home/u/.codex" in environ
+    assert [line for line in environ if line.startswith("OPENAI_API_KEY=")] == []
+
+
+def test_codex_cli_backend_passes_a_configured_model(memory, tmp_path, monkeypatch):
+    (tmp_path / "response.jsonl").write_text(_jsonl(CODEX_EVENTS))
+    _fake_cli(tmp_path, monkeypatch, "codex", f'cat "{tmp_path}/response.jsonl"\n')
+
+    backends.codex_cli(dataclasses.replace(memory.cfg, miner_model="some-codex-model"))("PROMPT TEXT")
+
+    assert (tmp_path / "argv").read_text().splitlines() == [*CODEX_ARGV, "--model", "some-codex-model", "-"]
+
+
+def test_codex_cli_failure_raises_backend_error_with_what_codex_said(memory, tmp_path, monkeypatch):
+    said = json.dumps({"type": "error", "message": "Not logged in"})
+    _fake_cli(tmp_path, monkeypatch, "codex", f"echo '{said}'\necho 'WARNING: noise' >&2\nexit 1\n")
+    with pytest.raises(BackendError, match="exited 1: Not logged in"):
+        backends.codex_cli(memory.cfg)("PROMPT TEXT")
+
+
+def test_codex_cli_failure_without_events_reports_the_end_of_stderr(memory, tmp_path, monkeypatch):
+    _fake_cli(tmp_path, monkeypatch, "codex", "echo 'WARNING: noise' >&2\necho 'Error: Unknown feature flag: hooks' >&2\nexit 1\n")
+    with pytest.raises(BackendError) as failure:
+        backends.codex_cli(memory.cfg)("PROMPT TEXT")
+    assert str(failure.value) == "codex CLI exited 1: WARNING: noise\nError: Unknown feature flag: hooks"
 
 
 def test_support_link_adds_a_later_sessions_evidence_to_an_existing_record_and_promotes_it(memory, monkeypatch):

@@ -50,8 +50,9 @@ class Config:
     test_commands: tuple[str, ...]
     payload_max_chars: int
     miner_backend: str
-    miner_model: str
+    miner_model: str | None
     miner_timeout_seconds: int
+    miner_events_max_chars: int
     miner_base_url: str
     miner_api_key_env: str | None
     miner_extract_rules: bool
@@ -142,8 +143,9 @@ def from_dict(raw: dict[str, Any]) -> Config:
         test_commands=tuple(raw["signals"]["test_commands"]),
         payload_max_chars=int(raw["signals"].get("payload_max_chars", 2000)),
         miner_backend=raw["miner"]["backend"],
-        miner_model=raw["miner"]["model"],
+        miner_model=raw["miner"].get("model") or None,
         miner_timeout_seconds=int(raw["miner"].get("timeout_seconds", 240)),
+        miner_events_max_chars=int(raw["miner"].get("events_max_chars", 200_000)),
         miner_base_url=os.environ.get("RKA_MEMORY_MINER_BASE_URL", raw["miner"].get("base_url", "")),
         miner_api_key_env=raw["miner"].get("api_key_env"),
         miner_extract_rules=_flag(raw["miner"].get("extract_rules", True), "miner.extract_rules"),

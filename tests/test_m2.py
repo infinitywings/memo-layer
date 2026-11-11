@@ -47,9 +47,15 @@ def test_openai_compat_posts_the_prompt_and_reads_text_and_tokens(monkeypatch):
     assert seen["body"]["model"] == "deepseek-chat"
 
 
+def test_openai_compat_needs_a_model_because_the_default_is_the_cli_backends_own():
+    assert cfg().miner_model is None
+    with pytest.raises(ValueError, match="openai_compat needs miner.model"):
+        backends.openai_compat(cfg(miner={"backend": "openai_compat", "base_url": "http://llm/v1"}))
+
+
 def test_openai_compat_turns_http_errors_into_backend_errors(monkeypatch):
     monkeypatch.setattr(backends, "RETRY_SECONDS", 0)
-    c = cfg(miner={"backend": "openai_compat", "base_url": "http://llm/v1"})
+    c = cfg(miner={"backend": "openai_compat", "base_url": "http://llm/v1", "model": "m"})
     seen = []
     run = backends.openai_compat(c, transport=httpx.MockTransport(lambda r: seen.append(r) or httpx.Response(503, text="busy")))
     with pytest.raises(backends.BackendError, match="HTTP 503"):
@@ -59,7 +65,7 @@ def test_openai_compat_turns_http_errors_into_backend_errors(monkeypatch):
 
 def test_openai_compat_retries_a_transient_failure_once(monkeypatch):
     monkeypatch.setattr(backends, "RETRY_SECONDS", 0)
-    c = cfg(miner={"backend": "openai_compat", "base_url": "http://llm/v1"})
+    c = cfg(miner={"backend": "openai_compat", "base_url": "http://llm/v1", "model": "m"})
     replies = [httpx.Response(429, text="slow down"), httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})]
     run = backends.openai_compat(c, transport=httpx.MockTransport(lambda r: replies.pop(0)))
     assert run("x").text == "{}"
@@ -68,7 +74,7 @@ def test_openai_compat_retries_a_transient_failure_once(monkeypatch):
 
 def test_a_client_error_is_not_retried(monkeypatch):
     monkeypatch.setattr(backends, "RETRY_SECONDS", 0)
-    c = cfg(miner={"backend": "openai_compat", "base_url": "http://llm/v1"})
+    c = cfg(miner={"backend": "openai_compat", "base_url": "http://llm/v1", "model": "m"})
     seen = []
     run = backends.openai_compat(c, transport=httpx.MockTransport(lambda r: seen.append(r) or httpx.Response(401, text="bad key")))
     with pytest.raises(backends.BackendError, match="HTTP 401"):

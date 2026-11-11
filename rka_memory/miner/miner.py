@@ -91,6 +91,8 @@ class MinerView:
     # L1 records that apply and were not delivered: claims nothing has yet
     # shown to hold, listed apart so the miner does not build on them.
     unverified: tuple[RecordRow, ...] = ()
+    # Older events of the session that `events` leaves out to fit the prompt.
+    omitted: int = 0
 
     @property
     def listed(self) -> tuple[RecordRow, ...]:
@@ -204,8 +206,28 @@ def could_apply(scope: Scope, state: State) -> bool:
     return all(state.get(f) is None or scope.constraint(f).covers(state.get(f)) for f in SCOPE_FIELDS)
 
 
+def _line(event: Event) -> str:
+    return f"{event.id} {event.kind.value} {event.actor.value} {_short(dict(event.payload))}"
+
+
+def newest(events: list[Event], max_chars: int) -> tuple[Event, ...]:
+    """The newest events whose prompt lines fit in `max_chars`. A session can
+    run for days and thousands of events; one prompt cannot hold them all,
+    and the end of a session is where its outcomes are."""
+    start, used = len(events), 0
+    while start > 0:
+        used += len(_line(events[start - 1])) + 1
+        if used > max_chars:
+            break
+        start -= 1
+    return tuple(events[start:])
+
+
 def view_of(world: World, session_id: str, cfg: Config) -> MinerView:
     sess = world.sessions[session_id]
+    shown = [e for e in sess.events if e.kind in SHOWN_KINDS]
+    events = newest(shown, cfg.miner_events_max_chars)
+    touched = set().union(*(world.touches.get(e.id, ()) for e in events))
     delivered = delivered_records(world, session_id)
     seen = {r.id for r in delivered}
     applicable = [
@@ -217,11 +239,12 @@ def view_of(world: World, session_id: str, cfg: Config) -> MinerView:
         session_id=session_id,
         state=sess.state,
         task_classes=cfg.task_classes,
-        events=tuple(e for e in sess.events if e.kind in SHOWN_KINDS),
+        events=events,
         delivered=tuple(_row(r) for r in delivered),
         existing=tuple(_row(r) for r in applicable if r.rung is not Rung.L1),
-        anchors=tuple(sorted(sess.anchors)) if cfg.graph_anchors else (),
+        anchors=tuple(sorted(touched)) if cfg.graph_anchors else (),
         unverified=tuple(_row(r) for r in applicable if r.rung is Rung.L1),
+        omitted=len(shown) - len(events),
     )
 
 
@@ -238,6 +261,9 @@ def _rows(rows: tuple[RecordRow, ...]) -> str:
 
 
 def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
+    lines = [_line(e) for e in view.events]
+    if view.omitted:
+        lines.insert(0, f"({view.omitted} earlier events of this session are not shown)")
     return PROMPT.substitute(
         task_classes=", ".join(view.task_classes),
         session_id=view.session_id,
@@ -247,8 +273,7 @@ def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
         unverified=_rows(view.unverified),
         stated="\n".join(f"- stated-{n}: {q}" for n, q in enumerate(stated)) or "(none)",
         anchors=", ".join(view.anchors) or "(none)",
-        events="\n".join(f"{e.id} {e.kind.value} {e.actor.value} {_short(dict(e.payload))}" for e in view.events)
-        or "(none)",
+        events="\n".join(lines) or "(none)",
     )
 
 
