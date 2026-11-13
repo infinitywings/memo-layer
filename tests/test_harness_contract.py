@@ -44,14 +44,21 @@ def test_session_end_takes_reported_usage_when_there_is_no_transcript(memory, ca
 L3_STATE = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
 
 
-def l3_procedure(memory):
-    """A procedure confirmed, then followed with its check passing in two sessions: L3."""
+def l3_procedure(memory, confirmed=True):
+    """A procedure confirmed (or validated by two passing sessions), then
+    followed with its check passing in two sessions: L3."""
     st = L3_STATE
     lg = Ledger()
     lg.start("s1", **st)
     lg.propose("s1", "r_proc", scope=Scope.exact(State(**st)), kind=RecordKind.PROCEDURE,
                content="Run uv sync before tests", steps=(("Bash", "uv sync"),), acceptance_check="uv run pytest")
-    lg.confirm("cli", "r_proc")
+    if confirmed:
+        lg.confirm("cli", "r_proc")
+    else:
+        lg.link("r_proc", lg.test("s1", True, "uv run pytest"))
+        lg.start("s1b", **st)
+        lg.link("r_proc", lg.exit("s1b", 0))
+        lg.end("s1b")
     lg.end("s1")
     memory.append(*lg.events)
     memory.gate(now=lg.clock)
@@ -79,7 +86,16 @@ def test_session_skills_returns_only_l3_procedures_valid_for_the_state(memory):
     assert "Before finishing, run `uv run pytest`" in here[0]["body"]
     assert session_skills(world, memory.cfg, State(**{**st, "model_id": "m2"}), "gated") == []
     assert session_skills(world, memory.cfg, State(**st), "ungated") == here
+    assert session_skills(world, memory.cfg, State(**st), "stated") == here
     assert session_skills(world, memory.cfg, State(**st), "none") == []
+
+
+def test_the_stated_arm_gets_no_skill_the_user_never_affirmed(memory):
+    l3_procedure(memory, confirmed=False)
+    world = memory.world()
+    st = State(**L3_STATE)
+    assert [s["name"] for s in session_skills(world, memory.cfg, st, "gated")] == ["rka-r-proc"]
+    assert session_skills(world, memory.cfg, st, "stated") == []
 
 
 def test_skills_command_follows_the_sessions_packet_arm_and_logs_it(memory, capsys):

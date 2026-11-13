@@ -188,14 +188,17 @@ def render(rec: RecordState, world: World, cfg: Config, placement: Placement) ->
 def session_skills(world: World, cfg: Config, state: State, arm: str) -> list[dict[str, str]]:
     """L3 skills valid for one session's state, for a harness whose own skill
     provider is asked per session and so enforces the full scope itself. A
-    session in the `none` arm gets no memory, so no skills either."""
-    from rka_memory.validity.engine import valid
+    session in the `none` arm gets no memory, so no skills either, and one in
+    the `stated` arm only skills the user affirmed."""
+    from rka_memory.validity.engine import affirmed, valid
 
     if arm == "none":
         return []
     out = []
     for rec in sorted(exportable(world, cfg, state), key=lambda r: r.id):
         if rec.rung is not Rung.L3 or not valid(rec, state, world, cfg):
+            continue
+        if arm == "stated" and not affirmed(rec, world, cfg):
             continue
         text = render(rec, world, cfg, Placement(cfg.skills_dir, None, ()))
         _, front, body = text.split("---\n", 2)

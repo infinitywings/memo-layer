@@ -81,7 +81,10 @@ def merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-ARMS = frozenset({"gated", "none", "ungated"})
+# gated: valid records; stated: valid records the user affirmed (a confirm, or
+# a standing statement of the record's words); ungated: every L1-L3 record in
+# scope; none: no memory.
+ARMS = frozenset({"gated", "none", "stated", "ungated"})
 BACKGROUND = frozenset({"spawn", "inline", "off"})
 
 

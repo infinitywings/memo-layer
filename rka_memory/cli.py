@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from rka_memory.config import ARMS
 from rka_memory.domain import clock_now
 from pathlib import Path
 
@@ -315,7 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("packet", help="preview the packet a session in CWD would receive")
     s.add_argument("--cwd", default=".")
     s.add_argument("--model", default=None)
-    s.add_argument("--arm", choices=["gated", "none", "ungated"], default=None)
+    s.add_argument("--arm", choices=sorted(ARMS), default=None)
     s.set_defaults(fn=cmd_packet)
 
     s = sub.add_parser("replay", help="rebuild the projection from the ledger alone")

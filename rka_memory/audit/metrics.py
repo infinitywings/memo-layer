@@ -9,13 +9,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from rka_memory.config import ARMS as ARM_NAMES
 from rka_memory.config import Config
 from rka_memory.domain import Kind, Polarity, Rung, Scope
 from rka_memory.skills.gate import final_outcome, outcome_ok
 from rka_memory.world import RecordState, RungMove, Session, World
 
 PACKET_CHANNELS = frozenset({"session_start", "prompt", "mcp"})
-ARMS = ("gated", "none", "ungated")
+ARMS = tuple(sorted(ARM_NAMES))
 RUNG_KEYS = ("L0D", "L1", "L2", "L3", "L4", "pending")
 COST_KEYS = ("miner_tokens", "miner_seconds", "gate_seconds")
 

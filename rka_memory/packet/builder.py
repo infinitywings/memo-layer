@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rka_memory.config import Config
 from rka_memory.domain import DELIVERABLE, Polarity, Rung, State, parse_ts
-from rka_memory.validity.engine import assess, statement, valid
+from rka_memory.validity.engine import affirmed, assess, statement, valid
 from rka_memory.world import RecordState, World
 
 
@@ -212,7 +212,10 @@ def _select(world: World, cfg: Config, state: State, arm: str, exclude: frozense
     if arm == "ungated":
         pool = [r for r in world.records.values() if r.rung in (Rung.L1, Rung.L2, Rung.L3)]
         return [r for r in pool if r.id not in exclude and r.scope.covers(state)]
-    return [r for r in world.deliverable() if r.id not in exclude and valid(r, state, world, cfg)]
+    chosen = [r for r in world.deliverable() if r.id not in exclude and valid(r, state, world, cfg)]
+    if arm == "stated":
+        return [r for r in chosen if affirmed(r, world, cfg)]
+    return chosen
 
 
 def build(

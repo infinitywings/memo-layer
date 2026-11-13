@@ -315,3 +315,9 @@ def valid(rec: RecordState, state: State, world: World, cfg: Config) -> bool:
         return False
     a = assess(rec, world, cfg)
     return bool(a.support) and not a.counters and applicable(rec, state, world) is True
+
+
+def affirmed(rec: RecordState, world: World, cfg: Config) -> bool:
+    """The user confirmed the record, or stated its words as a standing rule,
+    and no counter-event inside scope came after."""
+    return assess(rec, world, cfg).last_confirm is not None
