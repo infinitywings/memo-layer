@@ -41,9 +41,7 @@ sessions:
       - {label: Summary rule recorded, record_contains: "Summary:"}
 
   - at: +1d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a divide(a, b) function to calc.py that raises ValueError when b is zero, with tests.
     user:
       - commit: "calc: add divide"
@@ -53,9 +51,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +2d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: >-
       Build a small feature: add a power(base, exponent) function to calc.py,
       with a test. And please remember the house rules: run pytest as
@@ -71,9 +67,7 @@ sessions:
       - {label: Summary rule recorded, record_contains: "Summary:"}
 
   - at: +3d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mean(values) function to calc.py that averages a list of numbers, with a test.
     user:
       - commit: "calc: add mean"
@@ -83,9 +77,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +4d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a median(values) function to calc.py, with tests.
     user:
       - commit: "calc: add median"
@@ -95,9 +87,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +5d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mode(values) function to calc.py that returns the most common value, with tests.
     user:
       - commit: "calc: add mode"
@@ -107,9 +97,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +6d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a clamp(value, low, high) function to calc.py, with tests.
     user:
       - commit: "calc: add clamp"
@@ -119,9 +107,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +7d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a percentage(part, whole) function to calc.py that raises ValueError when whole is zero, with tests.
     user:
       - commit: "calc: add percentage"
@@ -131,9 +117,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +8d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a absolute_difference(a, b) function to calc.py, with a test.
     user:
       - commit: "calc: add absolute_difference"
@@ -143,9 +127,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +9d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a factorial(n) function to calc.py that raises ValueError for a negative n, with tests.
     user:
       - commit: "calc: add factorial"
@@ -155,9 +137,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +10d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a gcd(a, b) function to calc.py, with tests.
     user:
       - commit: "calc: add gcd"
@@ -167,9 +147,7 @@ sessions:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
 
   - at: +11d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a lcm(a, b) function to calc.py, with tests.
     user:
       - commit: "calc: add lcm"

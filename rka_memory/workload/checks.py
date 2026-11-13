@@ -150,6 +150,17 @@ def _raw_line_absent(obs: Observed, line: str) -> Outcome:
     return not hits, f"found at lines {hits}" if hits else "absent"
 
 
+def _is_event_count(value: Any) -> None:
+    kinds = {k.value for k in Kind}
+    if not isinstance(value, dict) or set(value) != {"kind", "count"} or value["kind"] not in kinds or not isinstance(value["count"], int):
+        raise ValueError("expected {kind, count} with a ledger event kind")
+
+
+def _event_count(obs: Observed, value: dict[str, Any]) -> Outcome:
+    n = sum(1 for raw in obs.ledger_lines if raw.strip() and json.loads(raw).get("kind") == value["kind"])
+    return n == value["count"], f"{n} {value['kind']} events"
+
+
 def _is_path_text(value: Any) -> None:
     if not isinstance(value, dict) or set(value) != {"path", "text"} or not all(isinstance(v, str) for v in value.values()):
         raise ValueError("expected {path, text}")
@@ -311,6 +322,7 @@ CHECKS: dict[str, Check] = {
     "ran": Check(_is_str, _ran, False),
     "wrote": Check(_is_str, _wrote, False),
     "metrics": Check(_is_metric_conditions, _metrics, False),
+    "events": Check(_is_event_count, _event_count, False),
 }
 
 

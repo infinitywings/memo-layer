@@ -48,6 +48,9 @@ class Kind(StrEnum):
     SCOPE_NARROWED = "scope_narrowed"
     JUDGMENT = "judgment"
     COST = "cost"
+    # A test harness removed a path between sessions: housekeeping that must
+    # not read as the user undoing or editing what the agent wrote there.
+    WORKSPACE_RESET = "workspace_reset"
 
 
 # Which actor may author each kind. The adapter sets the actor, never the
@@ -73,6 +76,7 @@ KIND_ACTORS: dict[Kind, frozenset[Actor]] = {
     Kind.SCOPE_NARROWED: frozenset({Actor.RUNNER}),
     Kind.JUDGMENT: frozenset({Actor.MODEL, Actor.RUNNER}),
     Kind.COST: frozenset({Actor.RUNNER}),
+    Kind.WORKSPACE_RESET: frozenset({Actor.RUNNER}),
 }
 
 

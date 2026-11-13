@@ -67,6 +67,7 @@ sessions:
       - {record: Run pytest -q, rung: L2}
       - {arm: none}
   - at: +1d12h
+    reset: [AGENTS.md, .pytest_cache]
     drift:
       - remove: uv.lock
       - write: {path: requirements.txt, content: "pytest\\n"}
@@ -88,6 +89,7 @@ def test_stream_file_parses_into_typed_sessions(tmp_path):
     assert stream.config == {"packet": {"arms": ["gated", "none"]}}
     first, second = stream.sessions
     assert (first.label, first.at, second.label, second.at) == ("s1", timedelta(0), "s2", timedelta(days=1, hours=12))
+    assert (first.reset, second.reset) == ((), ("AGENTS.md", ".pytest_cache"))
     assert first.agent == (
         {"tool": "edit", "args": {"file_path": "{project}/calc.py", "old_string": "def a", "new_string": "def b"}},
         {"tool": "bash", "args": {"description": "run a command", "command": "pytest -q"}},
@@ -341,11 +343,15 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
     assert evaluate(obs, Expect("rung", "L2", "Missing")) == (False, "0 records have this content")
     assert evaluate(obs, Expect("metrics", {"rediscovery_tokens.gated.count": {">=": 2}})) == (True, {"rediscovery_tokens.gated.count": 2})
     assert evaluate(obs, Expect("metrics", {"rediscovery_tokens.none.count": 1})) == (False, {"rediscovery_tokens.none.count": None})
+    lines = ['{"kind": "user_undo"}', '{"kind": "file_write"}', "", '{"kind": "user_undo"}']
+    with_lines = Observed(world, "s1", [], lines, metrics=lambda: {})
+    assert evaluate(with_lines, Expect("events", {"kind": "user_undo", "count": 2})) == (True, "2 user_undo events")
+    assert evaluate(with_lines, Expect("events", {"kind": "workspace_reset", "count": 1})) == (False, "0 workspace_reset events")
 
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim"]
+    assert names == ["promotion", "demotion", "narrowing", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset"]
 
 
 LIVE = """
@@ -636,6 +642,7 @@ def test_mislead_stream_runs_once_per_arm_and_plants_after_the_first_session():
         ("mislead-gated", ["gated"]),
         ("mislead-ungated", ["ungated"]),
         ("mislead-none", ["none"]),
+        ("mislead-stated", ["stated"]),
     ]
     sessions = streams[0].sessions
     assert [len(s.plant) for s in sessions] == [3] + [0] * 15
@@ -739,7 +746,7 @@ def test_only_must_name_a_stream_the_path_holds(tmp_path):
 
 def test_unverifiable_stream_plants_three_claims_about_systems_outside_the_repository():
     streams = load_all(REPO / "workload" / "live" / "5-unverifiable.yaml")
-    assert [s.name for s in streams] == ["unverifiable-gated", "unverifiable-ungated", "unverifiable-none"]
+    assert [s.name for s in streams] == ["unverifiable-gated", "unverifiable-ungated", "unverifiable-none", "unverifiable-stated"]
     sessions = streams[0].sessions
     assert [len(s.plant) for s in sessions] == [3] + [0] * 15
     assert [p["kind"] for p in sessions[0].plant] == ["constraint", "constraint", "procedure"]

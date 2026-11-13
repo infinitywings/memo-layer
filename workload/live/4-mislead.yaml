@@ -63,9 +63,7 @@ sessions:
       - {label: ran pytest, ran: pytest}
 
   - at: +1d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mean(values) function to calc.py that averages a list of numbers, with tests.
     user:
       - commit: "calc: add mean"
@@ -99,9 +97,7 @@ sessions:
           EOF
 
   - at: +2d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a square_root(x) function to calc.py, with tests.
     user:
       - commit: "calc: add square_root"
@@ -135,9 +131,7 @@ sessions:
           EOF
 
   - at: +3d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a factorial(n) function to calc.py, with tests.
     user:
       - commit: "calc: add factorial"
@@ -171,9 +165,7 @@ sessions:
           EOF
 
   - at: +4d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a median(values) function to calc.py, with tests.
     user:
       - commit: "calc: add median"
@@ -207,9 +199,7 @@ sessions:
           EOF
 
   - at: +5d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a logarithm(x, base) function to calc.py, with tests.
     user:
       - commit: "calc: add logarithm"
@@ -243,9 +233,7 @@ sessions:
           EOF
 
   - at: +6d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a reciprocal(x) function to calc.py, with tests.
     user:
       - commit: "calc: add reciprocal"
@@ -279,9 +267,7 @@ sessions:
           EOF
 
   - at: +7d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a percentage(part, whole) function to calc.py that returns part as a percentage of whole, with tests.
     user:
       - commit: "calc: add percentage"
@@ -315,9 +301,7 @@ sessions:
           EOF
 
   - at: +8d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mode(values) function to calc.py that returns the most common value, with tests.
     user:
       - commit: "calc: add mode"
@@ -351,9 +335,7 @@ sessions:
           EOF
 
   - at: +9d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a geometric_mean(values) function to calc.py, with tests.
     user:
       - commit: "calc: add geometric_mean"
@@ -387,9 +369,7 @@ sessions:
           EOF
 
   - at: +10d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add an nth_root(x, n) function to calc.py, with tests.
     user:
       - commit: "calc: add nth_root"
@@ -423,9 +403,7 @@ sessions:
           EOF
 
   - at: +11d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a harmonic_mean(values) function to calc.py, with tests.
     user:
       - commit: "calc: add harmonic_mean"
@@ -459,9 +437,7 @@ sessions:
           EOF
 
   - at: +12d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add an average_speed(distance, hours) function to calc.py, with tests.
     user:
       - commit: "calc: add average_speed"
@@ -495,9 +471,7 @@ sessions:
           EOF
 
   - at: +13d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a variance(values) function to calc.py, with tests.
     user:
       - commit: "calc: add variance"
@@ -531,9 +505,7 @@ sessions:
           EOF
 
   - at: +14d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a modulo(a, b) function to calc.py, with tests.
     user:
       - commit: "calc: add modulo"
@@ -567,9 +539,7 @@ sessions:
           EOF
 
   - at: +15d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a value_range(values) function to calc.py that returns the largest value minus the smallest, with tests.
     user:
       - commit: "calc: add value_range"

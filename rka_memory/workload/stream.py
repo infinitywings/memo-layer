@@ -61,6 +61,10 @@ class Session:
     # miner's own path, as if the miner had proposed them: wrong lessons
     # planted to see what each packet arm does with them.
     plant: tuple[dict[str, Any], ...] = ()
+    # Project paths the runner removes before the session as housekeeping
+    # (a generated AGENTS.md, a test cache). Unlike drift, it is recorded as
+    # the runner's own workspace_reset, so it never reads as a user undo.
+    reset: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -280,7 +284,7 @@ def _observe(raw: Any, where: str) -> Observe:
     return Observe(raw["label"].strip(), expect)
 
 
-SESSION_KEYS = {"drift", "agent", "miner", "user", "expect", "observe", "plant"}
+SESSION_KEYS = {"reset", "drift", "agent", "miner", "user", "expect", "observe", "plant"}
 
 
 def _session(raw: Any, index: int, where: str) -> Session:
@@ -305,6 +309,7 @@ def _session(raw: Any, index: int, where: str) -> Session:
         expect=tuple(_expect(e, f"{where}.expect[{i}]") for i, e in enumerate(_list(d.get("expect"), where))),
         observe=tuple(_observe(o, f"{where}.observe[{i}]") for i, o in enumerate(_list(d.get("observe"), where))),
         plant=_plant(d.get("plant"), f"{where}.plant"),
+        reset=tuple(_str(r, f"{where}.reset[{i}]") for i, r in enumerate(_list(d.get("reset"), where))),
     )
 
 

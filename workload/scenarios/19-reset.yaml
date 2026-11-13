@@ -1,0 +1,40 @@
+name: reset
+description: >-
+  A path the runner resets between sessions is housekeeping, not the user
+  undoing what the agent wrote. The agent writes AGENTS.md in the first
+  session; the runner resets it before the second, which records no
+  user_undo. The agent writes AGENTS.md again in the second session; this
+  time drift removes it before the third, as a user would, and the third
+  session start records that as the user's undo.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - write: {path: "{project}/AGENTS.md", content: "Run pytest -q before finishing.\n"}
+      - bash: pytest -q
+    expect:
+      - {events: {kind: user_undo, count: 0}}
+
+  - at: +1d
+    reset: [AGENTS.md]
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - write: {path: "{project}/AGENTS.md", content: "Run pytest -q before finishing.\n"}
+      - bash: pytest -q
+    expect:
+      - {events: {kind: workspace_reset, count: 1}}
+      - {events: {kind: user_undo, count: 0}}
+
+  - at: +2d
+    drift:
+      - clean: AGENTS.md
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {events: {kind: user_undo, count: 1}}

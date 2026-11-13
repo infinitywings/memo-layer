@@ -34,9 +34,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +1d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a divide(a, b) function to calc.py that raises ValueError when b is zero, with tests.
     user:
       - commit: "calc: add divide"
@@ -47,9 +45,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +2d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a power(base, exponent) function to calc.py, with a test.
     user:
       - commit: "calc: add power"
@@ -60,9 +56,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +3d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mean(values) function to calc.py that averages a list of numbers, with a test.
     user:
       - commit: "calc: add mean"
@@ -73,9 +67,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +4d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a median(values) function to calc.py, with tests.
     user:
       - commit: "calc: add median"
@@ -86,9 +78,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +5d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mode(values) function to calc.py that returns the most common value, with tests.
     user:
       - commit: "calc: add mode"
@@ -99,9 +89,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +6d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a clamp(value, low, high) function to calc.py, with tests.
     user:
       - commit: "calc: add clamp"
@@ -112,9 +100,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +7d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a percentage(part, whole) function to calc.py that raises ValueError when whole is zero, with tests.
     user:
       - commit: "calc: add percentage"
@@ -125,9 +111,7 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +8d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a factorial(n) function to calc.py that raises ValueError for a negative n, with tests.
     user:
       - commit: "calc: add factorial"
@@ -138,9 +122,8 @@ sessions:
       - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
 
   - at: +9d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - move: {path: calc.py, to: src/calc.py}
       - move: {path: test_calc.py, to: tests/test_calc.py}
       - write: {path: pytest.ini, content: "[pytest]\npythonpath = src\ntestpaths = tests\n"}
@@ -156,9 +139,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +10d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add a lcm(a, b) function, with tests.
@@ -172,9 +154,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +11d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add an absolute_difference(a, b) function, with a test.
@@ -188,9 +169,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +12d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add an is_even(n) function, with tests.
@@ -204,9 +184,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +13d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add a square(x) function, with a test.
@@ -220,9 +199,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +14d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add a cube(x) function, with a test.
@@ -236,9 +214,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +15d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add a sign(x) function that returns -1, 0 or 1, with tests.
@@ -252,9 +229,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +16d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add a hypotenuse(a, b) function, with a test.
@@ -268,9 +244,8 @@ sessions:
       - {label: no calc.py at the root, file_absent: "{project}/calc.py"}
 
   - at: +17d
+    reset: [.pytest_cache, AGENTS.md]
     drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
       - clean: calc.py
       - clean: test_calc.py
     prompt: Add a reciprocal(x) function that raises ValueError when x is zero, with tests.

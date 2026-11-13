@@ -30,12 +30,13 @@ import yaml
 import rka_memory
 from rka_memory import config as config_mod
 from rka_memory import graph
-from rka_memory.domain import Event, Kind, clock_file_now
+from rka_memory.domain import Actor, Event, Kind, clock_file_now
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.miner import miner
 from rka_memory.miner.backends import DEEPSEEK, deepseek_miner
 from rka_memory.service import Memory
 from rka_memory.workload import files, report
+from rka_memory.workload.actions import Clean
 from rka_memory.workload.checks import Observed, evaluate, find_record
 from rka_memory.workload.stream import Session, Stream, Verdict, load_all
 from rka_memory.world import World, project
@@ -256,6 +257,17 @@ def _as_hooks(env: dict[str, str]) -> Iterator[None]:
         os.environ.update(saved)
 
 
+RUNNER_SESSION = "runner"
+
+
+def record_reset(paths: tuple[Path, ...], env: dict[str, str]) -> None:
+    """Log the runner's own housekeeping removals, so the next session start
+    does not read them as the user undoing what the agent wrote."""
+    with _as_hooks(env):
+        memory = Memory.open()
+        memory.append(*(Event.new(Kind.WORKSPACE_RESET, Actor.RUNNER, RUNNER_SESSION, {"path": str(p)}) for p in paths))
+
+
 def plant(session_id: str, wanted: tuple[dict[str, Any], ...], env: dict[str, str]) -> miner.MineResult:
     """Write `wanted` as if the miner of `session_id` had proposed them: the
     candidates go through the miner's parser and planner, so the gate sees
@@ -446,6 +458,10 @@ class StreamRun:
     def _session(self, s: Session, mock: MockModel | LiveModel) -> None:
         p = self.paths
         self._set_clock(self.stream.start + s.at)
+        for rel in s.reset:
+            files.apply(Clean(rel), p.project, self.before, self.confine)
+        if s.reset:
+            record_reset(tuple(files.target(p.project, rel) for rel in s.reset), self._env())
         for action in s.drift:
             files.apply(action, p.project, self.before, self.confine)
         self._own()

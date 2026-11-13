@@ -29,6 +29,7 @@ config:                            # optional rka-memory config overrides
   packet: {arms: [gated, none]}
 sessions:
   - at: +0d
+    reset: [AGENTS.md, .pytest_cache]
     drift: [...]
     prompt: Add a multiply function to calc.py
     agent: [...]
@@ -48,7 +49,7 @@ The fixture directory is copied into a fresh git repository with one commit. `wo
 Each session runs in this order:
 
 1. The runner sets the simulated clock to `start + at`, or leaves it where it is if it is already later.
-2. It applies `drift` to the project.
+2. It removes the `reset` paths and logs each as the runner's `workspace_reset` event, then applies `drift` to the project.
 3. It snapshots the project, writes the session script for the scripted model, and runs one headless dsh task with `prompt`.
 4. It checks the session, writes any `plant` records, evaluates `observe` on what the session left, then plays the `user` actions in order.
 5. It evaluates `expect`.
@@ -56,6 +57,10 @@ Each session runs in this order:
 `at` is an offset from `start`: `+0d`, `+61d`, `+1d12h`, `+90m`. Offsets must not decrease.
 
 `prompt` is the user's first message. rka-memory classifies the task from it with a keyword table, and records whose scope names a task class apply only to sessions of that class. The scenarios phrase every prompt as "Add a ... function to calc.py", which classifies as `coding`.
+
+### reset
+
+`reset` lists project paths the runner removes before the session as housekeeping, such as an `AGENTS.md` the agent wrote or the pytest cache. The runner logs each removal as a `workspace_reset` event of its own, and the next session start does not count a change to that path as the user undoing or editing what the agent wrote. A `clean` in `drift` is a change the user or the environment made, and the hooks detect it as one. Before `reset` existed, the live streams cleaned `AGENTS.md` through `drift`. In one stream of the step-1 runs of 2026-11-13, that read as the user undoing the agent's `AGENTS.md`, and the miner linked it as a counter-event that demoted the user's house rule.
 
 ### drift and user file actions
 
@@ -180,7 +185,7 @@ Before the first session, when the agent's tools are confined, the runner checks
 
 A stream with `model: live` runs against a real model. dsh uses its own default DeepSeek model, and the miner calls DeepSeek's OpenAI-compatible endpoint (`deepseek-flash`; set `RKM_MINER_MODEL` to change it). Both read the key from `DEEPSEEK_API_KEY`.
 
-A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `drift`, `prompt`, `plant` and the user's file actions. A live run keeps no log of the requests the model received, so a live stream cannot observe `model_saw`, `model_never_saw`, `in_prompt` or `skill_offered` either: they would never hold, or always hold, whatever happened. To check what a live agent saw, search dsh's session transcripts under the run's `dsh-home/sessions/`.
+A real model's output is not known in advance, so a live stream cannot use `agent`, `miner`, `expect` or typed verdicts, and a stream that does will not load. Sessions keep `at`, `reset`, `drift`, `prompt`, `plant` and the user's file actions. A live run keeps no log of the requests the model received, so a live stream cannot observe `model_saw`, `model_never_saw`, `in_prompt` or `skill_offered` either: they would never hold, or always hold, whatever happened. To check what a live agent saw, search dsh's session transcripts under the run's `dsh-home/sessions/`.
 
 The agent can write the user's rules into a file of its own. In one house-rules run it wrote them to `AGENTS.md`, which dsh loads into every session whatever the packet arm, and the no-memory sessions then kept the rules too. The live streams clean `AGENTS.md` before every session after the first and record whether the agent wrote one.
 

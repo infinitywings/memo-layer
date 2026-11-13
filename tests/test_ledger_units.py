@@ -131,6 +131,35 @@ def test_file_changes_compare_the_previous_sessions_writes_with_disk(tmp_path, m
     assert [e.id for e in again] == [e.id for e in changes]
 
 
+def test_a_harness_reset_after_the_write_is_not_a_user_undo(tmp_path, memory):
+    c = memory.cfg
+    notes, kept = tmp_path / "AGENTS.md", tmp_path / "keep.py"
+    events = [
+        start("a", tmp_path),
+        write_event("a", notes, "absent", "h-notes"),
+        write_event("a", kept, "absent", "h-kept"),
+        Event.new(Kind.WORKSPACE_RESET, Actor.RUNNER, "runner", {"path": str(notes)}),
+    ]
+    world = project(events)
+    changes = signals.detect_file_changes(world, "b", State(project=str(tmp_path)), c)
+    assert kinds_and_payloads(changes) == [
+        ("user_undo", {"path": str(kept), "write_event_id": events[2].id, "write_session_id": "a"}),
+    ]
+
+
+def test_a_reset_before_the_write_does_not_hide_a_later_undo(tmp_path, memory):
+    c = memory.cfg
+    notes = tmp_path / "AGENTS.md"
+    events = [
+        Event.new(Kind.WORKSPACE_RESET, Actor.RUNNER, "runner", {"path": str(tmp_path)}),
+        start("a", tmp_path),
+        write_event("a", notes, "absent", "h-notes"),
+    ]
+    world = project(events)
+    changes = signals.detect_file_changes(world, "b", State(project=str(tmp_path)), c)
+    assert [e.kind.value for e in changes] == ["user_undo"]
+
+
 def test_similarity_ignores_case_punctuation_and_rkm_commands():
     assert signals.similarity("Run the tests, then commit!", "run the TESTS then commit") == 1.0
     assert signals.similarity("run the tests then commit", "run the tests then push") == 4 / 6

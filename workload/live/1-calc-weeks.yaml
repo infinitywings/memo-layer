@@ -26,22 +26,19 @@ sessions:
   - at: +1d
     observe:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
-    drift:
-      - clean: AGENTS.md
+    reset: [AGENTS.md]
     prompt: Add a divide(a, b) function to calc.py that raises ValueError when b is zero, with tests.
 
   - at: +2d
     observe:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
-    drift:
-      - clean: AGENTS.md
+    reset: [AGENTS.md]
     prompt: Add a power(base, exponent) function to calc.py, with a test.
 
   - at: +3d
     observe:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
-    drift:
-      - clean: AGENTS.md
+    reset: [AGENTS.md]
     prompt: Add a mean(values) function to calc.py that averages a list of numbers, with a test.
     user:
       - append:
@@ -51,15 +48,14 @@ sessions:
   - at: +7d
     observe:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
-    drift:
-      - clean: AGENTS.md
+    reset: [AGENTS.md]
     prompt: Add a median(values) function to calc.py, with tests.
 
   - at: +8d
     observe:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
+    reset: [AGENTS.md]
     drift:
-      - clean: AGENTS.md
       - remove: uv.lock
       - write: {path: requirements.txt, content: "pytest\n"}
     prompt: Add a mode(values) function to calc.py that returns the most common value, with tests.
@@ -67,13 +63,11 @@ sessions:
   - at: +9d
     observe:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
-    drift:
-      - clean: AGENTS.md
+    reset: [AGENTS.md]
     prompt: Add a clamp(value, low, high) function to calc.py, with tests.
 
   - at: +14d
     observe:
       - {label: agent wrote no AGENTS.md, file_absent: "{project}/AGENTS.md"}
-    drift:
-      - clean: AGENTS.md
+    reset: [AGENTS.md]
     prompt: Add a percentage(part, whole) function to calc.py that raises ValueError when whole is zero, with tests.

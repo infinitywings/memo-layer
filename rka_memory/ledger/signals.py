@@ -86,6 +86,11 @@ def _last_write_session(world: World, session_id: str, project: str | None) -> S
     return max(candidates, key=lambda s: world.position[s.started.id], default=None)
 
 
+def _reset_since(path: str, after: int, resets: list[tuple[str, int]]) -> bool:
+    """A harness removed `path`, or a directory holding it, after position `after`."""
+    return any(at > after and (path == root or path.startswith(root.rstrip("/") + "/")) for root, at in resets)
+
+
 def detect_file_changes(world: World, session_id: str, state: State, cfg: Config) -> list[Event]:
     """Compare files the previous session in this project wrote with their content now.
 
@@ -95,8 +100,10 @@ def detect_file_changes(world: World, session_id: str, state: State, cfg: Config
 
     Unchanged since the agent's write is silent adoption, which grounds
     nothing. Back to the content before the session touched it is an undo;
-    anything else is an edit. Ids derive from the write, so detecting the same
-    change again appends a duplicate the projection ignores.
+    anything else is an edit. A path a test harness reset after the write
+    (`workspace_reset`) is skipped: the harness, not the user, changed it.
+    Ids derive from the write, so detecting the same change again appends a
+    duplicate the projection ignores.
     """
     prior = _last_write_session(world, session_id, state.project)
     if prior is None:
@@ -105,9 +112,12 @@ def detect_file_changes(world: World, session_id: str, state: State, cfg: Config
     for ev in prior.events:
         if ev.kind is Kind.FILE_WRITE:
             writes.setdefault(ev.payload["path"], []).append(ev)
+    resets = [(ev.payload.get("path") or "", world.position[ev.id]) for ev in world.events.values() if ev.kind is Kind.WORKSPACE_RESET]
     events = []
     for path_str, path_writes in writes.items():
         first, last = path_writes[0], path_writes[-1]
+        if _reset_since(path_str, world.position[last.id], resets):
+            continue
         path = Path(path_str)
         current = file_hash(path)
         if current == last.payload.get("post_hash"):

@@ -67,9 +67,7 @@ sessions:
           EOF
 
   - at: +1d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mean(values) function to calc.py that averages a list of numbers, with tests.
     user:
       - commit: "calc: add mean"
@@ -115,9 +113,7 @@ sessions:
           EOF
 
   - at: +2d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a square_root(x) function to calc.py, with tests.
     user:
       - commit: "calc: add square_root"
@@ -163,9 +159,7 @@ sessions:
           EOF
 
   - at: +3d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a logarithm(x, base) function to calc.py, with tests.
     user:
       - commit: "calc: add logarithm"
@@ -211,9 +205,7 @@ sessions:
           EOF
 
   - at: +4d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a percentage(part, whole) function to calc.py that returns part as a percentage of whole, with tests.
     user:
       - commit: "calc: add percentage"
@@ -259,9 +251,7 @@ sessions:
           EOF
 
   - at: +5d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a geometric_mean(values) function to calc.py, with tests.
     user:
       - commit: "calc: add geometric_mean"
@@ -307,9 +297,7 @@ sessions:
           EOF
 
   - at: +6d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a harmonic_mean(values) function to calc.py, with tests.
     user:
       - commit: "calc: add harmonic_mean"
@@ -355,9 +343,7 @@ sessions:
           EOF
 
   - at: +7d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add an average_speed(distance, hours) function to calc.py, with tests.
     user:
       - commit: "calc: add average_speed"
@@ -403,9 +389,7 @@ sessions:
           EOF
 
   - at: +8d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add an nth_root(x, n) function to calc.py, with tests.
     user:
       - commit: "calc: add nth_root"
@@ -451,9 +435,7 @@ sessions:
           EOF
 
   - at: +9d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a reciprocal(x) function to calc.py, with tests.
     user:
       - commit: "calc: add reciprocal"
@@ -499,9 +481,7 @@ sessions:
           EOF
 
   - at: +10d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a ratio(a, b) function to calc.py that returns a divided by b, with tests.
     user:
       - commit: "calc: add ratio"
@@ -547,9 +527,7 @@ sessions:
           EOF
 
   - at: +11d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a weighted_mean(values, weights) function to calc.py, with tests.
     user:
       - commit: "calc: add weighted_mean"
@@ -595,9 +573,7 @@ sessions:
           EOF
 
   - at: +12d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a root_mean_square(values) function to calc.py, with tests.
     user:
       - commit: "calc: add root_mean_square"
@@ -643,9 +619,7 @@ sessions:
           EOF
 
   - at: +13d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add an inverse_square(x) function to calc.py that returns 1 / x**2, with tests.
     user:
       - commit: "calc: add inverse_square"
@@ -691,9 +665,7 @@ sessions:
           EOF
 
   - at: +14d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a relative_change(old, new) function to calc.py that returns (new - old) / old, with tests.
     user:
       - commit: "calc: add relative_change"
@@ -739,9 +711,7 @@ sessions:
           EOF
 
   - at: +15d
-    drift:
-      - clean: .pytest_cache
-      - clean: AGENTS.md
+    reset: [.pytest_cache, AGENTS.md]
     prompt: Add a mean_absolute_deviation(values) function to calc.py that returns the mean distance of the values from their mean, with tests.
     user:
       - commit: "calc: add mean_absolute_deviation"
