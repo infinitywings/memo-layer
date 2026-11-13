@@ -9,7 +9,7 @@ from ledger_builder import Ledger, cfg
 from rka_memory.domain import Actor, Kind, RecordKind, Scope, State, Step
 from rka_memory.miner import backends, extract
 from rka_memory.miner.backends import BackendError, Completion
-from rka_memory.miner.miner import build_prompt, mine_session, view_of
+from rka_memory.miner.miner import build_prompt, mine_session, view_of, windows
 
 STATE = dict(project="/p/app", toolchain="uv", model_id="m1", user_context="default")
 
@@ -144,7 +144,7 @@ def test_mined_session_is_skipped_and_forced_remine_adds_no_duplicates(memory):
 
     idle = FakeBackend(reply)
     skipped = mine_session(memory, "s1", backend=idle)
-    assert (skipped.status, idle.prompts) == ("already_mined", [])
+    assert (skipped.status, idle.prompts) == ("nothing_new", [])
 
     again = mine_session(memory, "s1", force=True, backend=FakeBackend(reply))
     ids = [p["record_id"] for p in first.proposed]
@@ -438,27 +438,175 @@ def test_claude_cli_failure_raises_backend_error(memory, tmp_path, monkeypatch):
         backends.claude_cli(memory.cfg)("PROMPT TEXT")
 
 
-def test_a_long_session_shows_the_miner_its_newest_events_and_counts_the_rest():
+def long_session(memory):
+    """Seven shown events; at 400 characters the first prompt holds three, the second four."""
     lg = Ledger()
     lg.start("s1", **STATE)
     lg.tool_call("s1", "Bash", "ruff check .")
-    first, second, third = [lg.user_msg("s1", f"message {n}: " + "x" * 100) for n in range(3)]
-    tests = lg.tool_call("s1", "Bash", "pytest -q")
-    end = lg.end("s1")
+    for n in range(3):
+        lg.user_msg("s1", f"message {n}: " + "x" * 100)
+    lg.tool_call("s1", "Bash", "pytest -q")
+    lg.end("s1")
+    sync(memory, lg)
+    return lg
+
+
+def cost_events(memory, session_id="s1"):
+    return [
+        dict(e.payload)
+        for e in memory.ledger.read()
+        if e.kind is Kind.COST and e.payload.get("component") == "miner" and e.session_id == session_id
+    ]
+
+
+def test_a_long_session_is_mined_in_prompts_oldest_first_and_each_cost_names_its_last_event(memory):
+    long_session(memory)
+    memory.cfg = dataclasses.replace(memory.cfg, miner_events_max_chars=400)
+    backend = FakeBackend({"candidates": []}, {"candidates": []}, {"candidates": []})
+
+    result = mine_session(memory, "s1", backend=backend)
+
+    assert (result.status, result.prompts, result.tokens) == ("mined", 2, 3000)
+    assert [c["through"] for c in cost_events(memory)] == ["ev_0003", "ev_0007"]
+    first, second = backend.prompts
+    assert "earlier events of this session" not in first
+    assert "ev_0001 session_start runner" in first and "ev_0003 user_msg user" in first
+    assert "ev_0004 user_msg" not in first
+    assert "(3 earlier events of this session were mined before and are not shown)\nev_0004 user_msg user" in second
+    assert "ev_0003 user_msg" not in second
+    assert first.split("Anchors this session touched or its user named (files, commands, tools):\n")[1].startswith(
+        "command:ruff, tool:Bash\n"
+    )
+    assert second.split("Anchors this session touched or its user named (files, commands, tools):\n")[1].startswith(
+        "command:pytest, tool:Bash\n"
+    )
+    assert memory.world().to_mine("s1") == []
+
+
+def test_a_later_prompt_lists_what_an_earlier_prompt_of_the_same_run_proposed(memory):
+    long_session(memory)
+    memory.cfg = dataclasses.replace(memory.cfg, miner_events_max_chars=400)
+    lesson = {"content": "Messages here are numbered", "kind": "fact", "evidence": ["ev_0003"]}
+    backend = FakeBackend({"task_class": "coding", "candidates": [lesson]}, {"candidates": []})
+
+    result = mine_session(memory, "s1", backend=backend)
+
+    (proposed,) = result.proposed
+    assert result.moves == [
+        {"record_id": proposed["record_id"], "from": None, "to": "L1", "reason": "proposed with non-model grounding"}
+    ]
+    unverified = backend.prompts[1].split("Unverified claims that apply to this state (see rule 12):\n")[1]
+    assert unverified.startswith(f"- {proposed['record_id']} [L1 fact, unverified] Messages here are numbered\n")
+
+
+def test_the_rule_extractor_reads_only_the_user_messages_of_its_prompt(memory):
+    long_session(memory)
+    memory.cfg = dataclasses.replace(memory.cfg, miner_events_max_chars=400)
+    backend = FakeBackend({"candidates": []}, {"candidates": []}, rules={"rules": []})
+
+    mine_session(memory, "s1", backend=backend)
+
+    first, second = backend.rule_prompts
+    assert ("ev_0003: message 0" in first, "ev_0004: message 1" in first) == (True, False)
+    assert ("ev_0003: message 0" in second, "ev_0004: message 1" in second, "ev_0005: message 2" in second) == (
+        False,
+        True,
+        True,
+    )
+
+
+def test_a_backend_failure_keeps_the_prompts_mined_before_it_and_the_next_run_resumes(memory):
+    long_session(memory)
+    memory.cfg = dataclasses.replace(memory.cfg, miner_events_max_chars=400)
+
+    failed = mine_session(memory, "s1", backend=FakeBackend({"candidates": []}, BackendError("codex CLI timed out")))
+
+    assert (failed.status, failed.detail, failed.prompts) == ("backend_error", "codex CLI timed out", 1)
+    assert [c["through"] for c in cost_events(memory)] == ["ev_0003"]
+    assert [e.id for e in memory.world().to_mine("s1")] == ["ev_0004", "ev_0005", "ev_0006", "ev_0007"]
+
+    backend = FakeBackend({"candidates": []})
+    resumed = mine_session(memory, "s1", backend=backend)
+
+    assert (resumed.status, resumed.prompts) == ("mined", 1)
+    assert "(3 earlier events of this session were mined before and are not shown)" in backend.prompts[0]
+    assert [c["through"] for c in cost_events(memory)] == ["ev_0003", "ev_0007"]
+
+
+def test_a_resumed_session_is_mined_again_from_where_the_last_mine_stopped(memory):
+    lg = Ledger()
+    _, _, reply = session_one(memory, lg)
+    mine_session(memory, "s1", backend=FakeBackend(reply))
+    assert memory.world().to_mine("s1") == []
+
+    lg.start("s1", **STATE)
+    lg.end("s1")
+    sync(memory, lg)
+    idle = FakeBackend()
+    assert (mine_session(memory, "s1", backend=idle).status, idle.prompts) == ("nothing_new", [])
+
+    lg.start("s1", **STATE)
+    later = lg.user_msg("s1", "now also run ruff")
+    lg.end("s1")
+    sync(memory, lg)
+    backend = FakeBackend({"candidates": []})
+    again = mine_session(memory, "s1", backend=backend)
+
+    assert (again.status, again.prompts) == ("mined", 1)
+    events = backend.prompts[0].split("Events, oldest first, one per line as `id kind actor payload`:\n")[1]
+    assert [line.split(" ")[:2] for line in events.splitlines()] == [
+        ["(5", "earlier"],
+        ["ev_0006", "session_start"],
+        ["ev_0007", "session_end"],
+        ["ev_0008", "session_start"],
+        [later.id, "user_msg"],
+        ["ev_0010", "session_end"],
+    ]
+    assert [c["through"] for c in cost_events(memory)] == ["ev_0005", "ev_0010"]
+
+
+def test_markers_left_over_at_the_end_join_the_last_prompt_instead_of_costing_one():
+    lg = Ledger()
+    lg.start("s1", **STATE)
+    lg.user_msg("s1", "message 0")
+    lg.user_msg("s1", "message 1: " + "x" * 300)
+    lg.end("s1")
+    pending = lg.gate().to_mine("s1")
+
+    # Prompt lines of 136, 43, 266 and 30 characters: the end marker does not fit beside the long message.
+    assert [[e.id for e in w] for w in windows(pending, 266)] == [["ev_0001", "ev_0002"], ["ev_0003", "ev_0004"]]
+    assert [[e.id for e in w] for w in windows(pending, 10_000)] == [["ev_0001", "ev_0002", "ev_0003", "ev_0004"]]
+
+
+def test_a_forced_mine_covers_the_whole_session_again_and_never_moves_coverage_back(memory):
+    long_session(memory)
+    mine_session(memory, "s1", backend=FakeBackend({"candidates": []}))
+    memory.cfg = dataclasses.replace(memory.cfg, miner_events_max_chars=400)
+
+    backend = FakeBackend({"candidates": []}, BackendError("codex CLI timed out"))
+    stopped = mine_session(memory, "s1", force=True, backend=backend)
+    world = memory.world()
+
+    assert (stopped.status, stopped.prompts, len(backend.prompts)) == ("backend_error", 1, 2)
+    assert "earlier events of this session" not in backend.prompts[0]
+    assert [c["through"] for c in cost_events(memory)] == ["ev_0007", "ev_0003"]
+    assert (world.sessions["s1"].mined_through, world.to_mine("s1")) == (world.position["ev_0007"], [])
+
+
+def test_a_cost_event_without_through_covers_the_session_events_before_it():
+    lg = Ledger()
+    lg.start("s1", **STATE)
+    lg.user_msg("s1", "run the tests")
+    lg.end("s1")
+    lg._ev(Kind.COST, Actor.RUNNER, "s1", {"component": "miner", "session_id": "s1", "tokens": 10, "seconds": 1.0})
     world = lg.gate()
+    assert (world.sessions["s1"].mined, world.to_mine("s1")) == (True, [])
 
-    whole = view_of(world, "s1", cfg())
-    view = view_of(world, "s1", cfg(miner={"events_max_chars": 400}))
-
-    assert (len(whole.events), whole.omitted) == (7, 0)
-    assert whole.anchors == ("command:pytest", "command:ruff", "tool:Bash")
-    assert [e.id for e in view.events] == [second.id, third.id, tests.id, end.id]
-    assert view.omitted == 3
-    assert view.anchors == ("command:pytest", "tool:Bash")
-    prompt = build_prompt(view)
-    assert f"(3 earlier events of this session are not shown)\n{second.id} user_msg user" in prompt
-    assert f"{first.id} user_msg" not in prompt
-    assert "earlier events of this session are not shown" not in build_prompt(whole)
+    lg.start("s1", **STATE)
+    msg = lg.user_msg("s1", "and lint")
+    world = lg.gate()
+    assert [e.id for e in world.to_mine("s1")] == ["ev_0005", msg.id]
+    assert [e.id for e in world.to_mine("s1", again=True)][:2] == ["ev_0001", "ev_0002"]
 
 
 MINED = '{"task_class": "coding", "candidates": [], "counter_links": []}'
@@ -581,6 +729,7 @@ def test_the_prompt_lists_validated_records_apart_from_unverified_claims(memory,
     lg.link("r_claim", lg.user_msg("s1", "add mean"))
     lg.end("s1")
     lg.start("s2", **coding)
+    lg.user_msg("s2", "add a median")
     lg.end("s2")
     sync(memory, lg)
     memory.gate()

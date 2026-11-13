@@ -20,10 +20,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, Iterable
 
-from rka_memory.domain import QUOTE_CHARS, Actor, Kind, RecordKind, collapse, quoted, standing
-from rka_memory.world import World
+from rka_memory.domain import QUOTE_CHARS, Actor, Event, Kind, RecordKind, collapse, quoted, standing
 
 PROMPT = Template(Path(__file__).with_name("extract_prompt.md").read_text(encoding="utf-8"))
 PREFIX = "You are the rule extractor for rka-memory"
@@ -85,13 +84,10 @@ class Extraction:
     dropped: tuple[tuple[str, str], ...]
 
 
-def user_messages(world: World, session_id: str) -> list[Message]:
-    sess = world.sessions.get(session_id)
-    if sess is None:
-        return []
+def user_messages(events: Iterable[Event]) -> list[Message]:
     return [
         Message(e.id, collapse(e.payload.get("text") or ""))
-        for e in sess.events
+        for e in events
         if e.kind is Kind.USER_MSG and e.actor is Actor.USER and e.payload.get("text")
     ]
 

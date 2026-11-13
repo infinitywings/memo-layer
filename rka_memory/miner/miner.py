@@ -1,18 +1,21 @@
 """Session-end candidate miner.
 
-The model reads one session and proposes candidates; this module decides what
-reaches the ledger. First a narrow call lists the rules the user stated, each
-as a quote that code finds in a user message (see `extract`); then the full
-miner call proposes lessons in its own words. Both outputs are parsed at the
+The model reads a session, or the part of it no miner has covered yet, and
+proposes candidates; this module decides what reaches the ledger. A part too
+long for one prompt is mined in several, oldest events first. For each prompt,
+a narrow call first lists the rules the user stated, each as a quote that code
+finds in a user message (see `extract`); then the full miner call proposes
+lessons in its own words. Both outputs are parsed at the
 boundary into typed values, then `plan` turns them into the only event kinds
 the miner may write: RECORD_PROPOSED, EVIDENCE_LINKED, a session JUDGMENT and
-one COST.
+one COST per prompt, which names the last event the prompt covered.
 Rungs stay with the validity engine, which runs right after.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -24,6 +27,8 @@ from rka_memory.domain import (
     GROUNDING,
     REFUTING_KINDS,
     SCOPE_FIELDS,
+    SESSION_MARKERS,
+    SHOWN_KINDS,
     Actor,
     Event,
     Kind,
@@ -46,23 +51,6 @@ if TYPE_CHECKING:
 
 PROMPT = Template(Path(__file__).with_name("prompt.md").read_text(encoding="utf-8"))
 PAYLOAD_CHARS = 240
-
-# What the model sees of a session: observations, not rka-memory's own bookkeeping.
-SHOWN_KINDS = frozenset(
-    {
-        Kind.SESSION_START,
-        Kind.USER_MSG,
-        Kind.TOOL_CALL,
-        Kind.TOOL_RESULT,
-        Kind.FILE_WRITE,
-        Kind.EXIT_CODE,
-        Kind.TEST_RESULT,
-        Kind.USER_EDIT,
-        Kind.USER_UNDO,
-        Kind.USER_REPEAT,
-        Kind.SESSION_END,
-    }
-)
 VERDICT_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT)
 EXISTING_RUNGS = (Rung.L1, Rung.L2, Rung.L3)
 RULE_KINDS = frozenset(k.value for k in extract.RULE_KINDS)
@@ -79,7 +67,7 @@ class RecordRow:
 
 @dataclass(frozen=True)
 class MinerView:
-    """Everything the prompt shows about one session."""
+    """Everything one prompt shows about a session."""
 
     session_id: str
     state: State
@@ -91,8 +79,8 @@ class MinerView:
     # L1 records that apply and were not delivered: claims nothing has yet
     # shown to hold, listed apart so the miner does not build on them.
     unverified: tuple[RecordRow, ...] = ()
-    # Older events of the session that `events` leaves out to fit the prompt.
-    omitted: int = 0
+    # Events of the session before `events`: mined by earlier prompts.
+    earlier: int = 0
 
     @property
     def listed(self) -> tuple[RecordRow, ...]:
@@ -148,7 +136,7 @@ EMPTY = MinerOutput(task_class=None, candidates=(), counter_links=(), support_li
 
 class MineStatus(StrEnum):
     MINED = "mined"
-    ALREADY_MINED = "already_mined"
+    NOTHING_NEW = "nothing_new"
     UNKNOWN_SESSION = "unknown_session"
     NO_OUTPUT = "no_output"
     BACKEND_ERROR = "backend_error"
@@ -163,6 +151,7 @@ class MineResult:
     task_class: str | None = None
     tokens: int = 0
     seconds: float = 0.0
+    prompts: int = 0
     proposed: list[dict[str, Any]] = field(default_factory=list)
     merged: list[dict[str, Any]] = field(default_factory=list)
     links: list[dict[str, Any]] = field(default_factory=list)
@@ -180,6 +169,7 @@ class MineResult:
             "task_class": self.task_class,
             "tokens": self.tokens,
             "seconds": self.seconds,
+            "prompts": self.prompts,
             "proposed": self.proposed,
             "merged": self.merged,
             "links": self.links,
@@ -210,23 +200,35 @@ def _line(event: Event) -> str:
     return f"{event.id} {event.kind.value} {event.actor.value} {_short(dict(event.payload))}"
 
 
-def newest(events: list[Event], max_chars: int) -> tuple[Event, ...]:
-    """The newest events whose prompt lines fit in `max_chars`. A session can
-    run for days and thousands of events; one prompt cannot hold them all,
-    and the end of a session is where its outcomes are."""
-    start, used = len(events), 0
-    while start > 0:
-        used += len(_line(events[start - 1])) + 1
-        if used > max_chars:
-            break
-        start -= 1
-    return tuple(events[start:])
+def windows(events: Sequence[Event], max_chars: int) -> list[tuple[Event, ...]]:
+    """`events` cut, in order, into runs whose prompt lines fit in `max_chars`
+    each. A session can run for days and thousands of events; one prompt
+    cannot hold them all. Session markers left over at the end join the run
+    before them: alone they would cost a prompt with nothing to mine."""
+    out: list[tuple[Event, ...]] = []
+    run: list[Event] = []
+    used = 0
+    for ev in events:
+        size = len(_line(ev)) + 1
+        if run and used + size > max_chars:
+            out.append(tuple(run))
+            run, used = [], 0
+        run.append(ev)
+        used += size
+    if run and out and all(e.kind in SESSION_MARKERS for e in run):
+        out[-1] += tuple(run)
+    elif run:
+        out.append(tuple(run))
+    return out
 
 
-def view_of(world: World, session_id: str, cfg: Config) -> MinerView:
+def view_of(world: World, session_id: str, cfg: Config, window: Sequence[Event] | None = None) -> MinerView:
+    """The prompt's view of `window`, a run of the session's shown events; by
+    default all of them."""
     sess = world.sessions[session_id]
     shown = [e for e in sess.events if e.kind in SHOWN_KINDS]
-    events = newest(shown, cfg.miner_events_max_chars)
+    events = tuple(shown if window is None else window)
+    first = world.position[events[0].id] if events else 0
     touched = set().union(*(world.touches.get(e.id, ()) for e in events))
     delivered = delivered_records(world, session_id)
     seen = {r.id for r in delivered}
@@ -244,7 +246,7 @@ def view_of(world: World, session_id: str, cfg: Config) -> MinerView:
         existing=tuple(_row(r) for r in applicable if r.rung is not Rung.L1),
         anchors=tuple(sorted(touched)) if cfg.graph_anchors else (),
         unverified=tuple(_row(r) for r in applicable if r.rung is Rung.L1),
-        omitted=len(shown) - len(events),
+        earlier=sum(1 for e in shown if world.position[e.id] < first),
     )
 
 
@@ -262,8 +264,8 @@ def _rows(rows: tuple[RecordRow, ...]) -> str:
 
 def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
     lines = [_line(e) for e in view.events]
-    if view.omitted:
-        lines.insert(0, f"({view.omitted} earlier events of this session are not shown)")
+    if view.earlier:
+        lines.insert(0, f"({view.earlier} earlier events of this session were mined before and are not shown)")
     return PROMPT.substitute(
         task_classes=", ".join(view.task_classes),
         session_id=view.session_id,
@@ -621,15 +623,17 @@ def plan(
     cfg: Config,
     result: MineResult,
     extraction: extract.Extraction | None = None,
+    view: MinerView | None = None,
 ) -> list[Event]:
     """Validate parsed output against the ledger and return the events to append.
     Stated rules go first, so a miner candidate that repeats one merges into it.
+    `view` is what the prompt showed; by default the whole session.
 
     Mutates `world` (the events are folded in) and fills `result`.
     """
     planner = _Planner(world, session_id, cfg, result)
     result.dropped.extend(out.dropped)
-    view = view_of(world, session_id, cfg)
+    view = view or view_of(world, session_id, cfg)
     counterable = {r.id for r in (*view.delivered, *view.unverified)}
     listed = {r.id for r in view.listed}
     planner.judge_task_class(out.task_class)
@@ -658,18 +662,19 @@ def plan(
     return planner.events
 
 
-def _cost(session_id: str, tokens: int, seconds: float) -> Event:
+def _cost(session_id: str, tokens: int, seconds: float, through: str) -> Event:
     payload = {"component": "miner", "session_id": session_id, "tokens": tokens, "seconds": seconds}
+    payload["through"] = through
     return Event.new(Kind.COST, Actor.RUNNER, session_id, payload)
 
 
 def stated_rules(
-    world: World, view: MinerView, cfg: Config, backend: backends.Backend, result: MineResult
+    view: MinerView, cfg: Config, backend: backends.Backend, result: MineResult
 ) -> tuple[extract.Extraction | None, backends.Completion | None]:
-    """Ask which rules the user stated or withdrew in the session and keep
-    what quotes a user message. Returns that with the completion to bill.
+    """Ask which rules the user stated or withdrew in the prompt's events and
+    keep what quotes a user message. Returns that with the completion to bill.
     The rule records the extractor sees are the ones the miner prompt lists."""
-    messages = extract.user_messages(world, view.session_id)
+    messages = extract.user_messages(view.events)
     if not messages:
         return None, None
     records = [(r.id, r.content) for r in view.listed if r.kind in RULE_KINDS]
@@ -689,52 +694,75 @@ def stated_rules(
 def mine_session(
     memory: Memory, session_id: str, force: bool = False, backend: backends.Backend | None = None
 ) -> MineResult:
-    """Mine one session, append what survives validation, then gate and export skills."""
+    """Mine what no miner has covered of one session (with `force`, all of it),
+    in prompts that fit miner.events_max_chars, oldest events first. Each
+    prompt is mined as a mine of its own: it reads the ledger as the prompts
+    before it left it, appends what survives with a cost event that marks how
+    far the session is mined, and gates. A failure therefore keeps what earlier
+    prompts covered, and the next run resumes after it."""
     backend = backend or backends.backend_for(memory.cfg)
+    result = MineResult(session_id, MineStatus.MINED)
     with memory.ledger.exclusive("miner"):
         world = memory.world()
-        sess = world.sessions.get(session_id)
-        if sess is None:
+        if session_id not in world.sessions:
             return MineResult(session_id, MineStatus.UNKNOWN_SESSION, "no events for this session")
-        if sess.mined and not force:
-            return MineResult(session_id, MineStatus.ALREADY_MINED, "session was mined before; use --force")
-        view = view_of(world, session_id, memory.cfg)
-        result = MineResult(session_id, MineStatus.MINED)
-        extraction: extract.Extraction | None = None
-        spent: list[backends.Completion] = []
-        try:
-            if memory.cfg.miner_extract_rules:
-                extraction, asked = stated_rules(world, view, memory.cfg, backend, result)
-                if asked is not None:
-                    spent.append(asked)
-            stated = tuple(f.rule.quote for f in extraction.rules) if extraction else ()
-            completion = backend(build_prompt(view, stated))
-        except backends.BackendError as exc:
-            return MineResult(session_id, MineStatus.BACKEND_ERROR, str(exc))
-        if not completion.text.strip():
-            return MineResult(session_id, MineStatus.NO_OUTPUT, "backend returned no output")
-        spent.append(completion)
-        result.tokens = sum(c.tokens for c in spent)
-        result.seconds = sum(c.seconds for c in spent)
-        try:
-            out = parse_output(completion.text)
-        except ValueError as exc:
-            out = EMPTY
-            result.status, result.detail = MineStatus.PARSE_ERROR, str(exc)
-        events = plan(out, world, session_id, memory.cfg, result, extraction)
-        cost = _cost(session_id, result.tokens, result.seconds)
-        memory.append(*events, cost)
-        result.appended = [e.id for e in (*events, cost)]
-    moves = memory.gate(session_id=session_id)
-    result.moves = [
+        pending = world.to_mine(session_id, again=force)
+        if not pending:
+            why = "no events to mine since the last mine; use --force"
+            return MineResult(session_id, MineStatus.NOTHING_NEW, why)
+        for window in windows(pending, memory.cfg.miner_events_max_chars):
+            if not _mine_window(memory, window, backend, result):
+                break
+    if result.appended:
+        result.exported = export_skills(memory).to_json()
+    return result
+
+
+def _mine_window(
+    memory: Memory, window: tuple[Event, ...], backend: backends.Backend, result: MineResult
+) -> bool:
+    """Mine the events of one prompt, append what survives and gate. Returns
+    False when the backend failed, which leaves these events unmined."""
+    world = memory.world()
+    session_id = window[0].session_id
+    view = view_of(world, session_id, memory.cfg, window)
+    extraction: extract.Extraction | None = None
+    spent: list[backends.Completion] = []
+    try:
+        if memory.cfg.miner_extract_rules:
+            extraction, asked = stated_rules(view, memory.cfg, backend, result)
+            if asked is not None:
+                spent.append(asked)
+        stated = tuple(f.rule.quote for f in extraction.rules) if extraction else ()
+        completion = backend(build_prompt(view, stated))
+    except backends.BackendError as exc:
+        result.status, result.detail = MineStatus.BACKEND_ERROR, str(exc)
+        return False
+    if not completion.text.strip():
+        result.status, result.detail = MineStatus.NO_OUTPUT, "backend returned no output"
+        return False
+    spent.append(completion)
+    tokens, seconds = sum(c.tokens for c in spent), sum(c.seconds for c in spent)
+    try:
+        out = parse_output(completion.text)
+    except ValueError as exc:
+        out = EMPTY
+        result.status, result.detail = MineStatus.PARSE_ERROR, str(exc)
+    events = plan(out, world, session_id, memory.cfg, result, extraction, view)
+    cost = _cost(session_id, tokens, seconds, through=window[-1].id)
+    memory.append(*events, cost)
+    result.tokens += tokens
+    result.seconds += seconds
+    result.prompts += 1
+    result.appended += [e.id for e in (*events, cost)]
+    result.moves += [
         {
             "record_id": m.payload["record_id"],
             "from": m.payload["from"],
             "to": m.payload["to"],
             "reason": m.payload["reason"],
         }
-        for m in moves
+        for m in memory.gate(session_id=session_id)
         if m.kind is Kind.RUNG_CHANGE
     ]
-    result.exported = export_skills(memory).to_json()
-    return result
+    return True

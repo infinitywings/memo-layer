@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from ledger_builder import Ledger
-from rka_memory.domain import FieldConstraint, Kind, Scope
+from rka_memory.domain import Actor, FieldConstraint, Kind, Scope
 from rka_memory.ledger import hooks
 from rka_memory.world import project
 
@@ -218,8 +218,33 @@ def test_session_start_refire_counts_once_and_does_not_redetect(memory, proj, tm
 def test_catchup_mines_quiet_unmined_sessions_but_not_the_current_one(memory, proj, tmp_path, spawned, capsys, user_config):
     user_config(miner={"timeout_seconds": 0})
     fire(capsys, "SessionStart", {**base("old", proj, tmp_path), "source": "startup"})
+    fire(capsys, "UserPromptSubmit", {**base("old", proj, tmp_path), "prompt_id": "p1", "prompt": "fix the parser"})
     fire(capsys, "SessionStart", {**base("now", proj, tmp_path), "source": "startup"})
     assert spawned == [[[sys.executable, "-I", "-m", "rka_memory.cli", "mine", "old"]]]
+
+
+def test_catchup_mines_what_came_after_the_last_mine_and_skips_sessions_with_nothing_new(
+    memory, proj, tmp_path, spawned, capsys, user_config
+):
+    user_config(miner={"timeout_seconds": 0})
+    lg = Ledger()
+
+    def mined(session, through):
+        lg._ev(Kind.COST, Actor.RUNNER, session, {"component": "miner", "session_id": session, "through": through.id})
+
+    lg.start("bare", project=str(proj))
+    lg.start("done", project=str(proj))
+    mined("done", lg.user_msg("done", "fix the parser"))
+    lg.start("done", project=str(proj))
+    lg.end("done")
+    lg.start("resumed", project=str(proj))
+    mined("resumed", lg.user_msg("resumed", "fix the lexer"))
+    lg.start("resumed", project=str(proj))
+    lg.user_msg("resumed", "and its tests")
+    memory.append(*lg.events)
+
+    fire(capsys, "SessionStart", {**base("now", proj, tmp_path), "source": "startup"})
+    assert spawned == [[[sys.executable, "-I", "-m", "rka_memory.cli", "mine", "resumed"]]]
 
 
 def test_session_end_also_syncs_when_a_core_project_is_configured(memory, proj, tmp_path, spawned, capsys, user_config):

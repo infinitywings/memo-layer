@@ -16,6 +16,8 @@ from rka_memory import anchors
 from rka_memory.domain import (
     DELIVERABLE,
     FUZZY_FIELDS,
+    SESSION_MARKERS,
+    SHOWN_KINDS,
     Actor,
     TRANSITIONS,
     Event,
@@ -72,9 +74,14 @@ class Session:
     events: list[Event] = field(default_factory=list)
     started: Event | None = None
     ended: Event | None = None
-    mined: bool = False
+    # Ledger position of the last event a miner prompt covered; None until one did.
+    mined_through: int | None = None
     # Anchors this session's events touched or its user messages named.
     anchors: set[str] = field(default_factory=set)
+
+    @property
+    def mined(self) -> bool:
+        return self.mined_through is not None
 
 
 @dataclass
@@ -143,6 +150,17 @@ class World:
     def received_in(self, session_id: str) -> set[str]:
         """Records delivered in the session or in the sessions whose files the user edited or undid in it."""
         return set().union(*(self.delivered_in(s) for s in self.related_sessions(session_id)))
+
+    def to_mine(self, session_id: str, again: bool = False) -> list[Event]:
+        """The events of the session a miner prompt would show that no miner
+        has covered yet (with `again`, all of them). Empty when nothing but
+        the session's start and end markers came after the last mine."""
+        sess = self.sessions.get(session_id)
+        if sess is None:
+            return []
+        after = -1 if again or sess.mined_through is None else sess.mined_through
+        events = [e for e in sess.events if e.kind in SHOWN_KINDS and self.position[e.id] > after]
+        return events if any(e.kind not in SESSION_MARKERS for e in events) else []
 
     def deliverable(self) -> list[RecordState]:
         return [r for r in self.records.values() if r.rung in DELIVERABLE]
@@ -264,8 +282,13 @@ def _packet_delivered(world: World, ev: Event) -> None:
 
 
 def _cost(world: World, ev: Event) -> None:
-    if ev.payload.get("component") == "miner":
-        world.session(ev.payload.get("session_id", ev.session_id)).mined = True
+    """A miner cost event names the last event its prompt covered. One
+    written before prompts were split covered everything before it."""
+    if ev.payload.get("component") != "miner":
+        return
+    sess = world.session(ev.payload.get("session_id", ev.session_id))
+    through = world.position.get(ev.payload.get("through") or "", world.position[ev.id])
+    sess.mined_through = max(through, sess.mined_through if sess.mined_through is not None else -1)
 
 
 _FOLD = {

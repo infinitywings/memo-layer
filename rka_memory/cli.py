@@ -276,9 +276,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("gate", help="run the validity engine and persist rung changes").set_defaults(fn=cmd_gate)
 
-    s = sub.add_parser("mine", help="propose candidates from one session's events")
+    s = sub.add_parser("mine", help="propose candidates from the events of a session no miner has covered yet")
     s.add_argument("session_id")
-    s.add_argument("--force", action="store_true", help="mine even if this session was mined before")
+    s.add_argument("--force", action="store_true", help="mine the whole session again")
     s.set_defaults(fn=cmd_mine)
 
     sub.add_parser("export-skills", help="write SKILL.md files for L2/L3 procedures").set_defaults(

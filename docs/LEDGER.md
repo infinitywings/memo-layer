@@ -36,7 +36,7 @@ The Docker setup for dsh (`docker/dsh`, `scripts/dsh-docker`) mounts the same sp
 | rung_change | runner | `record_id`, `from`, `to`, `cause_ids`, `reason`, `acceptance_check` (on L3) | none |
 | scope_narrowed | runner | `record_id`, `field`, `value`, `cause_ids` | none |
 | judgment | model, runner | session: `target=session`, `session_id`, `field`, `value`, `judge`; record: `target=record`, `record_id`, `field`, `value`, `applies`, `judge` | none |
-| cost | runner | `component` (miner, gate), `session_id`, `tokens`, `seconds` | none |
+| cost | runner | `component` (miner, gate), `session_id`, `tokens`, `seconds`; a miner cost also names `through`, the last event its prompt covered | none |
 
 Grounding weights per kind live in `rka_memory/default.yaml` (`weights`). A kind with no weight never grounds. Model-authored events never ground, whatever the link says.
 

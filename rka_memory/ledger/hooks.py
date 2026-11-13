@@ -110,16 +110,17 @@ def _payload_model(payload: Mapping[str, Any]) -> str | None:
 
 
 def _spawn_catchup(memory: Memory, world: World, session_id: str) -> None:
-    """Mine earlier sessions that missed it, once they have been quiet for a
-    miner timeout: a session still running, or still being mined by its own
-    SessionEnd, must not be mined twice."""
+    """Mine earlier sessions that hold events no miner has covered (one that
+    missed its SessionEnd mine, or was resumed after it), once they have been
+    quiet for a miner timeout: a session still running, or still being mined
+    by its own SessionEnd, must not be mined twice."""
     quiet_since = clock_now() - timedelta(seconds=memory.cfg.miner_timeout_seconds)
     due = [
         s
         for s in world.sessions.values()
         if s.started is not None
-        and not s.mined
         and s.id != session_id
+        and world.to_mine(s.id)
         and parse_ts(s.events[-1].ts) <= quiet_since
     ]
     due.sort(key=lambda s: world.position[s.started.id], reverse=True)
@@ -284,7 +285,7 @@ def _mine_inline(memory: Memory, session_id: str, sync: bool) -> None:
     with contextlib.redirect_stdout(io.StringIO()):
         result = miner.mine_session(memory, session_id)
         if result.status in (miner.MineStatus.BACKEND_ERROR, miner.MineStatus.NO_OUTPUT):
-            # The session stays unmined; say why, where a run can find it.
+            # What the failed prompt held stays unmined; say why, where a run can find it.
             with open(memory.cfg.ledger_dir / MINER_ERRORS, "a") as fh:
                 fh.write(f"{session_id} {result.status.value}: {result.detail}\n")
         if sync:

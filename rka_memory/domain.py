@@ -109,6 +109,25 @@ GROUNDING: dict[Kind, Callable[[Mapping[str, Any]], frozenset[Polarity]]] = {
 # only events that can count against a claim the session never received.
 REFUTING_KINDS: frozenset[Kind] = frozenset({Kind.TOOL_RESULT, Kind.USER_MSG})
 
+# What a miner prompt shows of a session: observations, not rka-memory's own bookkeeping.
+SHOWN_KINDS: frozenset[Kind] = frozenset(
+    {
+        Kind.SESSION_START,
+        Kind.USER_MSG,
+        Kind.TOOL_CALL,
+        Kind.TOOL_RESULT,
+        Kind.FILE_WRITE,
+        Kind.EXIT_CODE,
+        Kind.TEST_RESULT,
+        Kind.USER_EDIT,
+        Kind.USER_UNDO,
+        Kind.USER_REPEAT,
+        Kind.SESSION_END,
+    }
+)
+# Shown for context, but nothing to mine on their own.
+SESSION_MARKERS: frozenset[Kind] = frozenset({Kind.SESSION_START, Kind.SESSION_END})
+
 
 def clock_now() -> datetime:
     """The current time, or a simulated one for workload runs.

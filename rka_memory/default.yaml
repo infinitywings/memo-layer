@@ -54,7 +54,7 @@ miner:
   backend: claude_cli         # claude_cli | codex_cli | openai_compat | none
   model: null                 # null: claude_cli uses haiku, codex_cli Codex's own default; openai_compat needs a model id
   timeout_seconds: 240
-  events_max_chars: 200000    # the miner prompt shows a session's newest events up to this size, and counts the rest
+  events_max_chars: 200000    # events per miner prompt, in characters; a longer session is mined in several prompts, oldest first
   base_url: ""                # openai_compat: e.g. https://api.deepseek.com/v1 (env RKA_MEMORY_MINER_BASE_URL)
   api_key_env: null           # openai_compat: name of the env var holding the key
   extract_rules: true         # also ask for the rules the user stated, as verbatim quotes
