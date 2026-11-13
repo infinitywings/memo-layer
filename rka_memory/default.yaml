@@ -15,7 +15,10 @@ gate:
   skill_min_sessions: 2       # later sessions that followed a procedure for L2 -> L3
   retire_after_days: 60       # untouched L1 records retire to L4
   confirm_overrides: true     # a user confirm promotes straight to L2
-  narrow_priority: [user_context, task_class, toolchain, model_id, project]
+  # Scope fields a counter-event may narrow away, in order of preference. Empty:
+  # a counter-event inside scope demotes. Off until a stream has more than one
+  # project or toolchain to tell apart; must be a subset of scope.fields.
+  narrow_priority: []
   # A user's quoted rule confirms its record only when the words the extractor
   # quotes as making it standing hold one of these phrases (case aside) and lie
   # within 200 characters of the rule in the same message.
@@ -40,6 +43,7 @@ packet:
   arms: [gated, none]         # rotated by calendar day; add `ungated` for the L1-everything baseline
 
 scope:
+  fields: [project, toolchain]  # the state fields a record's scope may constrain; the others are always open
   task_classes: [coding, debugging, refactoring, testing, writing, research, ops, data, other]
   user_context: default       # overridden by RKA_MEMORY_CONTEXT
 

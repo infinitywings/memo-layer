@@ -72,6 +72,7 @@ class MinerView:
     session_id: str
     state: State
     task_classes: tuple[str, ...]
+    scope_fields: tuple[str, ...]
     events: tuple[Event, ...]
     delivered: tuple[RecordRow, ...]
     existing: tuple[RecordRow, ...]
@@ -241,6 +242,7 @@ def view_of(world: World, session_id: str, cfg: Config, window: Sequence[Event] 
         session_id=session_id,
         state=sess.state,
         task_classes=cfg.task_classes,
+        scope_fields=cfg.scope_fields,
         events=events,
         delivered=tuple(_row(r) for r in delivered),
         existing=tuple(_row(r) for r in applicable if r.rung is not Rung.L1),
@@ -268,6 +270,7 @@ def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
         lines.insert(0, f"({view.earlier} earlier events of this session were mined before and are not shown)")
     return PROMPT.substitute(
         task_classes=", ".join(view.task_classes),
+        scope_fields=", ".join(view.scope_fields) or "(none)",
         session_id=view.session_id,
         state=canonical_json(view.state.to_json()),
         delivered=_rows(view.delivered),
@@ -508,7 +511,7 @@ class _Planner:
             record_id=new_id("r"),
             kind=c.kind,
             content=c.content,
-            scope=Scope.exact(state, broaden=c.broaden),
+            scope=Scope.exact(state, broaden=c.broaden | self.cfg.open_scope_fields),
             falsifier=c.falsifier,
             confidence=c.confidence,
             steps=c.steps,

@@ -4,9 +4,12 @@ description: >-
   then drifts to pip, where the suite fails and the miner links the failure
   as counter-evidence. Excluding pip from the scope keeps all the uv support,
   so the engine narrows instead of demoting: the record stays L2, is
-  delivered again in uv state, and is not delivered in pip state.
+  delivered again in uv state, and is not delivered in pip state. Narrowing is
+  off by default, so this stream turns it on.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
+config:
+  gate: {narrow_priority: [toolchain, project]}
 sessions:
   - at: +0d
     prompt: Add a multiply function to calc.py

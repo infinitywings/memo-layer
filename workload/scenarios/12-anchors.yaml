@@ -5,11 +5,16 @@ description: >-
   near is dropped. Two facts reach L2: one about calc.py, proposed first, and
   one about pytest, promoted last, which the default order puts first. When a
   prompt names calc.py, the packet opens with the calc.py fact instead. A
-  prompt that names nothing gets the default order.
+  prompt that names nothing gets the default order. The ordering applies to a
+  packet sent at a prompt. With the default scope a record already applies at
+  session start, before any prompt names a file, so this stream keeps
+  task_class in scope: the records then apply only once the first prompt has
+  been judged.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 config:
   packet: {arms: [gated]}
+  scope: {fields: [task_class, project, toolchain]}
 sessions:
   - at: +0d
     prompt: Add a divide function to calc.py that raises ValueError when b is zero

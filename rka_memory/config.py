@@ -27,7 +27,7 @@ class GateConfig:
     skill_min_sessions: int = 2
     retire_after_days: float = 60
     confirm_overrides: bool = True
-    narrow_priority: tuple[str, ...] = ("user_context", "task_class", "toolchain", "model_id", "project")
+    narrow_priority: tuple[str, ...] = ()
     standing_phrases: tuple[str, ...] = ()
 
 
@@ -42,6 +42,7 @@ class Config:
     budget_tokens: int
     hints_budget_tokens: int
     arms: tuple[str, ...]
+    scope_fields: tuple[str, ...]
     task_classes: tuple[str, ...]
     user_context: str
     repeat_threshold: float
@@ -64,6 +65,10 @@ class Config:
 
     def weight(self, kind: Kind) -> float:
         return self.weights.get(kind, 0.0)
+
+    @property
+    def open_scope_fields(self) -> frozenset[str]:
+        return frozenset(SCOPE_FIELDS) - frozenset(self.scope_fields)
 
 
 def merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
@@ -109,10 +114,15 @@ def load(path: Path | None = None, overrides: dict[str, Any] | None = None) -> C
 
 def from_dict(raw: dict[str, Any]) -> Config:
     gate_raw = raw.get("gate", {})
-    narrow = tuple(gate_raw.get("narrow_priority", GateConfig.narrow_priority))
-    unknown = set(narrow) - set(SCOPE_FIELDS)
+    scope_fields = tuple(raw["scope"].get("fields", SCOPE_FIELDS))
+    unknown = set(scope_fields) - set(SCOPE_FIELDS)
     if unknown:
-        raise ValueError(f"gate.narrow_priority has unknown fields: {sorted(unknown)}")
+        raise ValueError(f"scope.fields has unknown fields: {sorted(unknown)}")
+    narrow = tuple(gate_raw.get("narrow_priority", GateConfig.narrow_priority))
+    # Narrowing a field records may not constrain would put the constraint back.
+    outside = set(narrow) - set(scope_fields)
+    if outside:
+        raise ValueError(f"gate.narrow_priority names fields outside scope.fields: {sorted(outside)}")
     arms = tuple(raw["packet"]["arms"])
     if not arms or set(arms) - ARMS:
         raise ValueError(f"packet.arms must be a non-empty subset of {sorted(ARMS)}")
@@ -135,6 +145,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
         budget_tokens=int(raw["packet"]["budget_tokens"]),
         hints_budget_tokens=int(raw["packet"].get("hints_budget_tokens", 600)),
         arms=arms,
+        scope_fields=scope_fields,
         task_classes=tuple(raw["scope"]["task_classes"]),
         user_context=os.environ.get("RKA_MEMORY_CONTEXT", raw["scope"].get("user_context", "default")),
         repeat_threshold=float(raw["signals"]["repeat_threshold"]),

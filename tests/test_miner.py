@@ -89,9 +89,7 @@ def test_week2_grounded_candidates_reach_l1_model_cited_ones_l0d_and_duplicates_
     ]
     assert world.records[grounded].rung.value == "L1"
     assert world.records[ungrounded].rung.value == "L0D"
-    assert world.records[grounded].scope.describe() == (
-        "task_class=testing, project=/p/app, toolchain=uv, user_context=default"
-    )
+    assert world.records[grounded].scope.describe() == "project=/p/app, toolchain=uv"
     assert first.moves == [
         {"record_id": grounded, "from": None, "to": "L1", "reason": "proposed with non-model grounding"},
         {"record_id": ungrounded, "from": None, "to": "L0D", "reason": "proposed without non-model grounding"},
@@ -822,7 +820,7 @@ def test_a_stated_rule_becomes_a_record_in_the_users_own_words_cited_to_the_mess
     ]
     rec = memory.world().records[rid]
     assert rec.rung.value == "L1"
-    assert rec.scope.describe() == "project=/p/app, user_context=default"
+    assert rec.scope.describe() == "project=/p/app"
     assert f"{msg.id}: Add multiply. House rule: {SUMMARY_RULE}." in backend.rule_prompts[0]
     assert f"- stated-0: {SUMMARY_RULE}\n" in backend.prompts[0]
     assert (result.tokens, result.seconds) == (1800, 3.0)

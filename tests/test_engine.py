@@ -9,6 +9,13 @@ from rka_memory.world import World, project
 UV = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
 
 
+# Narrowing is off by default; these tests turn it on, over every scope field.
+NARROWING = cfg(
+    gate={"narrow_priority": ["user_context", "task_class", "toolchain", "model_id", "project"]},
+    scope={"fields": ["task_class", "project", "toolchain", "model_id", "user_context"]},
+)
+
+
 def two_strong_sessions(lg: Ledger, record_id: str = "r_a", scope: Scope | None = None) -> None:
     lg.start("s1", **UV)
     ok1 = lg.test("s1", True)
@@ -105,19 +112,38 @@ def test_evidence_outside_scope_does_not_count():
 def test_counter_event_narrows_scope_when_evidence_survives():
     lg = Ledger()
     two_strong_sessions(lg)
+    assert rung(lg.gate(NARROWING), "r_a") == "L2"
+    lg.start("s3", **{**UV, "toolchain": "pip"})
+    lg.deliver("s3", "r_a")
+    lg.link("r_a", lg.test("s3", False), "counter")
+    world = lg.gate(NARROWING)
+    rec = world.records["r_a"]
+    assert rec.rung.value == "L2"
+    assert [(n.field, n.value) for n in rec.narrowings] == [("toolchain", "pip")]
+    assert valid(rec, State(**UV), world, NARROWING)
+    assert not valid(rec, State(**{**UV, "toolchain": "pip"}), world, NARROWING)
+
+
+def test_by_default_a_counter_event_inside_scope_demotes_instead_of_narrowing():
+    lg = Ledger()
+    two_strong_sessions(lg)
     assert rung(lg.gate(), "r_a") == "L2"
     lg.start("s3", **{**UV, "toolchain": "pip"})
     lg.deliver("s3", "r_a")
     lg.link("r_a", lg.test("s3", False), "counter")
     world = lg.gate()
-    rec = world.records["r_a"]
-    assert rec.rung.value == "L2"
-    assert [(n.field, n.value) for n in rec.narrowings] == [("toolchain", "pip")]
-    assert valid(rec, State(**UV), world, cfg())
-    assert not valid(rec, State(**{**UV, "toolchain": "pip"}), world, cfg())
+    assert world.records["r_a"].narrowings == []
+    assert rung(world, "r_a") == "L1"
 
 
-def refuted_claim(lg: Ledger, counter_event) -> World:
+def test_scope_is_frozen_at_project_and_toolchain_and_narrowing_may_not_reopen_other_fields():
+    assert cfg().scope_fields == ("project", "toolchain")
+    assert cfg().gate.narrow_priority == ()
+    with pytest.raises(ValueError, match="outside scope.fields"):
+        cfg(gate={"narrow_priority": ["task_class"]})
+
+
+def refuted_claim(lg: Ledger, counter_event, config=None) -> World:
     """r_a at L1 from one session, then a counter link in a session of another
     task class that never received it, then two sessions of support."""
     lg.start("s1", **UV)
@@ -129,7 +155,7 @@ def refuted_claim(lg: Ledger, counter_event) -> World:
     for session in ("s3", "s4"):
         lg.start(session, **UV)
         lg.link("r_a", lg.test(session, True))
-    return lg.gate()
+    return lg.gate(config)
 
 
 def test_a_refutation_of_a_claim_the_session_never_received_is_not_scoped_away():
@@ -150,7 +176,7 @@ def test_a_counter_event_on_a_delivered_l1_record_narrows_its_scope():
         lg.deliver(s, "r_a")
         return lg.test(s, False)
 
-    world = refuted_claim(lg, failed_after_following)
+    world = refuted_claim(lg, failed_after_following, NARROWING)
     assert [(n.field, n.value) for n in world.records["r_a"].narrowings] == [("task_class", "debugging")]
     assert rung(world, "r_a") == "L2"
 

@@ -4,7 +4,7 @@ A memory layer for Claude Code that lets an agent improve across sessions, but o
 
     valid(r, s) = grounded(r) AND applicable(r, s)
 
-A record is grounded when it cites at least one event from a test, an exit code, a tool, or the user, never the model's own text. It is applicable when its scope covers the current state (project, toolchain, model, task class, user context) and no counter-event inside that scope has arrived since. Only valid records reach the agent. Everything else stays in the ledger for audit.
+A record is grounded when it cites at least one event from a test, an exit code, a tool, or the user, never the model's own text. It is applicable when its scope covers the current state (by default its project and toolchain) and no counter-event inside that scope has arrived since. Only valid records reach the agent. Everything else stays in the ledger for audit.
 
 The spec is [docs/SPEC.md](docs/SPEC.md). The event schema is [docs/LEDGER.md](docs/LEDGER.md). The promotion rules and every departure from the spec are in [docs/LADDER.md](docs/LADDER.md). The proposal to treat the memory as a knowledge graph is [docs/GRAPH.md](docs/GRAPH.md). Results of the live streams, including the spec's gated-against-ungated decision point, are in [docs/RESULTS.md](docs/RESULTS.md).
 
@@ -102,7 +102,7 @@ Other commands are `gate`, `mine <session-id>`, `export-skills`, `metrics --writ
 
 ## Configuration
 
-Defaults live in [rka_memory/default.yaml](rka_memory/default.yaml). Put overrides in `~/.rka-memory/config.yaml`. You can tune the promotion threshold `k`, the signal weights, the packet budget, the A/B arms, the task classes, and the retirement window. Set `RKA_MEMORY_CONTEXT` (for example `work` or `personal`) to scope records by user context.
+Defaults live in [rka_memory/default.yaml](rka_memory/default.yaml). Put overrides in `~/.rka-memory/config.yaml`. You can tune the promotion threshold `k`, the signal weights, the packet budget, the A/B arms, the task classes, and the retirement window. `scope.fields` lists the state fields a record's scope may constrain, `project` and `toolchain` by default. To keep work and personal records apart, add `user_context` there and set `RKA_MEMORY_CONTEXT` (for example `work` or `personal`).
 
 `miner.backend` chooses the model that mines sessions. `claude_cli`, the default, runs `claude -p`, and `codex_cli` runs `codex exec`. Each runs under that CLI's own login, so a Claude or a ChatGPT subscription pays for the mining, and each runs without tools in an empty directory. `miner.model` names the model. Without it `claude_cli` uses haiku and `codex_cli` uses the default model of the Codex CLI. The miner's prompt holds what the session's user typed and what its tools returned, so the backend you choose is where that text is sent. Each mine covers the events no earlier mine covered, so a session that is resumed after it was mined has its new events mined at its next end, or by a later session's catch-up. A part too long for one prompt is mined in several, oldest events first, each holding up to `miner.events_max_chars` of them. `core.sync_on_session_end: false` keeps the ledger out of RKA Core.
 
