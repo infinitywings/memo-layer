@@ -143,6 +143,25 @@ def test_a_model_linked_counter_demotes_its_target_and_never_cascades():
     assert labs.by_id["r_dep"].rung.value == "L2"
 
 
+def test_a_miner_linked_standing_statement_demotes_but_never_withdraws():
+    lg = Ledger()
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_root")
+    lg.link("r_root", lg.test("s1", True))
+    lg.propose("s1", "r_dep", depends_on=("r_root",))
+    lg.link("r_dep", lg.test("s1", True))
+    lg.end("s1")
+    supported_in(lg, "r_root", "s2")
+    supported_in(lg, "r_dep", "s2")
+    lg.start("s3", **UV)
+    msg = lg.user_msg("s3", "From now on: never use the old suite.")
+    lg.link("r_root", msg, "counter", statement={"quote": "never use the old suite", "marker": "From now on"})
+    lg.end("s3")
+    labs = labels_of(lg)
+    assert labs.withdrawn == frozenset()
+    assert [labs.by_id[r].rung.value for r in ("r_root", "r_dep")] == ["L1", "L2"]
+
+
 def test_a_record_learned_under_a_withdrawn_one_needs_support_from_outside_its_influence():
     lg = Ledger()
     lg.start("s1", **UV)

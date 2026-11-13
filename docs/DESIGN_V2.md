@@ -179,7 +179,7 @@ From most to least reliable: user statements of an approach, quoted verbatim and
 
 Only these may put a node into `W` or set a mode:
 
-- the user, by a typed verdict, a standing statement withdrawing an approach, or a typed amendment;
+- the user, by a typed verdict or a typed amendment that names its target. A standing statement withdrawing an approach is the user's words, but a miner link from it chose the target, so it counts as a counter (it demotes and is reported for the user to confirm) and never as a withdrawal;
 - the runner, when a runner-owned check (an executable falsifier, a hidden check, a verified citation) fails for a link it owns.
 
 The miner, the agent and the engine never retract. A model-linked counter demotes its target and is reported; it does not cascade. Mode proposed by a model is ignored; the authority's mode is used, and the user's default is `revision`.

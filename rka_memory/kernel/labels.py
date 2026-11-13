@@ -9,11 +9,12 @@ Records are labelled in log order. Every edge a record declares (depends_on,
 supersedes) points to an earlier record, so a record's dependencies are
 labelled before it.
 
-Stratum 1 is the withdrawn set W: records the user withdrew (a typed reject,
-or a standing statement withdrawing the rule, after the last affirmation),
-plus every record that depends on them. Only the user may withdraw; a
-model-linked counter demotes its target and never cascades. A dependency
-edge declared by the miner does not pull in a record the user affirmed.
+Stratum 1 is the withdrawn set W: records the user withdrew by a typed
+reject after the last affirmation, plus every record that depends on them.
+Only the user may withdraw, and only by naming the record; a model-linked
+counter, even one quoting the user's checked words, demotes its target and
+never cascades. A dependency edge declared by the miner does not pull in a
+record the user affirmed.
 
 Stratum 2 labels every other record:
 - support is counted by the evidence rules shared with v1 (non-model
@@ -41,7 +42,7 @@ from rka_memory.config import Config
 from rka_memory.domain import Actor, Kind, Polarity, RecordKind, Rung, State, parse_ts
 from rka_memory.kernel.influence import Influence, Reach
 from rka_memory.skills.gate import OUTCOME_KINDS, _used_skill, final_outcome, follows, normalize_command, outcome_ok
-from rka_memory.validity.engine import affirmation, counted, meets_l2, statement
+from rka_memory.validity.engine import affirmation, counted, meets_l2
 from rka_memory.validity.scope import Grounding, applicable, inside
 from rka_memory.world import RecordState, Session, World
 
@@ -90,22 +91,24 @@ def valid(labels: Labels, rec: RecordState, state: State, world: World) -> bool:
 def _withdrawals(rec: RecordState, world: World, cfg: Config) -> tuple[int, int]:
     """Positions of the latest affirmation and the latest withdrawal by the user (-1 if none).
 
-    A withdrawal is the user's own act: a typed reject naming the record, or
-    a user message whose quoted words the code checked when the link was
-    counted. A model link to a user message that merely contradicts the
-    record is a counter, not a withdrawal, and never cascades."""
+    A withdrawal is a typed reject naming the record, written only from paths
+    the user types into. A user message, even one whose words the code
+    checked, is not: the miner chose which record those words withdraw, and
+    the miner never retracts (DESIGN_V2 7.2). Such a link is a counter that
+    demotes its target and never cascades."""
     last_aff = max((world.position[g.event.id] for g in counted(rec, world, cfg, Polarity.SUPPORT) if affirmation(g)), default=-1)
-    last_wd = -1
-    for link in rec.links:
-        if link.polarity is not Polarity.COUNTER:
-            continue
-        ev, made_by = world.events.get(link.event_id), world.events.get(link.via)
-        if ev is None or ev.actor is not Actor.USER:
-            continue
-        if ev.kind is Kind.USER_REJECT and ev.payload.get("record_id") == rec.id:
-            last_wd = max(last_wd, world.position[ev.id])
-        elif ev.kind is Kind.USER_MSG and made_by is not None and statement(made_by, ev, cfg) is not None:
-            last_wd = max(last_wd, world.position[ev.id])
+    last_wd = max(
+        (
+            world.position[ev.id]
+            for link in rec.links
+            if link.polarity is Polarity.COUNTER
+            and (ev := world.events.get(link.event_id)) is not None
+            and ev.kind is Kind.USER_REJECT
+            and ev.actor is Actor.USER
+            and ev.payload.get("record_id") == rec.id
+        ),
+        default=-1,
+    )
     return last_aff, last_wd
 
 
