@@ -4,7 +4,7 @@
 
 **Date**: 2026-11-13. **Audience**: the principal investigator (PI), prospective collaborators and reviewers. **Repository**: `infinitywings/memo-layer` (GitHub, private), MIT licence. **Companion document**: `docs/RESEARCH_REPORT.zh.md` (the detailed Chinese report this text condenses and extends).
 
-**Pending item**: the final step-1 decision depends on runs C and D, which were still running when this report was written. Section 6.9 holds a marked placeholder.
+**Step 1**: complete. The pre-registered verdict is undecided, blocked only by a harness confound; both registered sensitivity analyses meet Case B (Section 6.9). The redesign that follows is `docs/DESIGN_V2.md`.
 
 ---
 
@@ -475,9 +475,30 @@ Gated saved 16,556 tokens per session over stated (20.0% of stated), 95% cluster
 
 **Extension.** Runs C and D add two runs per arm on the fixed harness, as the extension rule requires. The analysis plan was recorded before they started: the decision uses all four runs with the unchanged criterion; two sensitivity analyses are reported and do not decide: (i) A to D without the confounded cluster (unverifiable, run A); (ii) C and D only.
 
-### 6.9 Step 1 decision (placeholder)
+### 6.9 Step 1 decision
 
-> **PLACEHOLDER, to be completed when runs C and D finish.** Report: per-arm means and medians over runs A to D; gated minus stated saving with its 95% clustered bootstrap CI over eight clusters; the spread between runs of one arm; secondary observation counts; the verdict (Case A, Case B, or undecided) under the unchanged pre-registered criterion; and, as non-deciding context, sensitivity analyses (i) and (ii). Then record the verdict in RKA and state its consequence for step 2.
+Runs C (`workload-runs/20261113T220220Z`) and D (`20261113T220240Z`) ran on the fixed harness (commit 272f6f9); every stream passed its 98 checks.
+
+**Primary analysis, runs A to D (pre-registered, deciding).**
+
+| Arm | Mean tokens per session | Median | n |
+|---|---|---|---|
+| gated | 60,065 | 52,210 | 128 |
+| stated | 78,678 | 62,688 | 128 |
+| none | 80,511 | 62,396 | 128 |
+
+The gated saving over stated is 18,613 tokens per session (23.7% of stated), 95% clustered bootstrap CI [-2,692, 36,381] over eight stream x run clusters; the spread between runs of one arm is 23,535. Every observation is equal between gated and stated except the unverifiable stream's "reply ends with Summary" (gated 64/64, stated 51/64, none 4/64), and that difference lies entirely in the confounded cluster (stated 3/16 in run A; 16/16 in runs B, C and D). The extension rule has been used, so the criterion must now place the result in Case A or B. It meets neither: Case B fails because the CI includes 0, and Case A fails only because of the confounded observation. **The pre-registered verdict is undecided.** The pre-registration did not specify what follows an undecided result after the extension.
+
+**Sensitivity analyses (registered before runs C and D; non-deciding).**
+
+| Analysis | Saving per session | 95% CI | Spread between runs | Observations | Criterion applied |
+|---|---|---|---|---|---|
+| (i) A to D without the confounded cluster | 25,532 (31.4%) | [11,523, 40,228] | 19,092 | all equal | Case B |
+| (ii) C and D only | 20,671 (27.7%) | [2,352, 42,689] | 6,744 | all equal | Case B |
+
+Per cluster (stated minus gated, mean): mislead 35,500, 40,161, 49,721, 13,335; unverifiable -29,820 (the confounded cluster), 20,381, 2,531, 17,097. Seven of eight clusters favour gated.
+
+**Reading.** Both registered sensitivity analyses meet Case B, and the only obstacle in the primary analysis is the harness confound. The stated arm used as many tokens as no memory (means 78,678 and 80,511) while keeping the user's rule (64/64 in mislead against 4/64), so in these streams the two layers do different work: the user's rules carry behaviour, and the validated miner lessons carry the token saving. Treating the result as Case B is a recommendation for the PI, not a pre-registered verdict (RKA records it as such). Case B keeps the miner-lesson path and rebuilds its grounding (step 2), which Design v2 does through interventional trials for prescriptive lessons (`docs/DESIGN_V2.md` Section 5.3).
 
 ---
 
