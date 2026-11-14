@@ -48,7 +48,14 @@ export function fakeHost(config: Partial<Config>) {
   const listeners = new Map<string, Listener>()
   const sections: Array<{ text: (context: { agent?: unknown }) => string }> = []
   const disposers: Array<() => void> = []
+  const tools: Array<Record<string, any>> = []
   const ctx = {
+    tools: {
+      register(definition: Record<string, any>) {
+        tools.push(definition)
+        return () => {}
+      },
+    },
     on(event: string, listener: Listener) {
       listeners.set(event, listener)
       return () => listeners.delete(event)
@@ -74,6 +81,7 @@ export function fakeHost(config: Partial<Config>) {
     systemPrompt(agent: FakeAgent | undefined): string {
       return sections.map(section => section.text({ agent })).join('')
     },
+    tools,
     unload(): void {
       for (const dispose of disposers) dispose()
     },

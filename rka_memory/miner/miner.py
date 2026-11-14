@@ -102,6 +102,9 @@ class Candidate:
     about: tuple[str, ...] = ()
     supersedes: str | None = None
     refines: tuple[str, ...] = ()
+    implements: tuple[str, ...] = ()
+    alternatives: tuple[str, ...] = ()
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -183,7 +186,11 @@ class MineResult:
 
 
 def delivered_records(world: World, session_id: str) -> list[RecordState]:
-    recs = [world.records[i] for i in world.received_in(session_id) if i in world.records]
+    """Records the session received, and the decisions made in it, which are
+    in force there whatever their rung."""
+    ids = set(world.received_in(session_id))
+    ids |= {r.id for r in world.records.values() if r.spec.kind is RecordKind.DECISION and r.proposed.session_id == session_id}
+    recs = [world.records[i] for i in ids if i in world.records]
     return sorted(recs, key=lambda r: world.position[r.proposed.id])
 
 
@@ -324,6 +331,9 @@ def _candidate(raw: Any, index: int) -> Candidate | Drop:
         about=_strings(raw.get("about")),
         supersedes=str(raw["supersedes"]) if raw.get("supersedes") else None,
         refines=_strings(raw.get("refines")),
+        implements=_strings(raw.get("implements")),
+        alternatives=_strings(raw.get("alternatives")) if kind is RecordKind.DECISION else (),
+        reason=" ".join(str(raw.get("reason") or "").split()) if kind is RecordKind.DECISION else "",
     )
 
 
@@ -497,6 +507,12 @@ class _Planner:
                 depends_on.append(d)
             else:
                 self.result.dropped.append(Drop(f"{label} depends_on {d}", "no such record"))
+        implements = []
+        for d in c.implements:
+            if d in self.world.records and self.world.records[d].spec.kind is RecordKind.DECISION:
+                implements.append(d)
+            else:
+                self.result.dropped.append(Drop(f"{label} implements {d}", "not a decision on record"))
         # A record may be about only what this session touched or its user named.
         # File writes and tool calls never ground, so the cited evidence itself
         # rarely touches the file a fact describes.
@@ -520,6 +536,9 @@ class _Planner:
             about=tuple(about),
             supersedes=replaces,
             refines=tuple(self.refined(label, c)),
+            implements=tuple(implements),
+            alternatives=c.alternatives,
+            reason=c.reason,
         )
         self.emit(Kind.RECORD_PROPOSED, {**spec.to_json(), "mined_from_session": self.session_id})
         rec = self.world.records[spec.record_id]
@@ -574,6 +593,7 @@ class _Planner:
             c,
             depends_on=each(c.depends_on),
             refines=each(c.refines),
+            implements=each(c.implements),
             supersedes=one(c.supersedes) if c.supersedes else None,
         )
 

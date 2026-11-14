@@ -2,7 +2,8 @@
 
 `influence(world, ev)` is the set of record ids that were in the agent's
 context when `ev` arose (DESIGN_V2 4.3, prompt influence): every record
-delivered in the session before `ev`, on any channel. A user edit or undo
+delivered in the session before `ev`, on any channel, and every decision
+made in the session before `ev`. A user edit or undo
 reacts to files an earlier session wrote, so it also carries that session's
 influence. Artifact influence through files is added in layer 4.
 
@@ -19,7 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
 
-from rka_memory.domain import Event, Kind
+from rka_memory.domain import Event, Kind, RecordKind
 from rka_memory.world import World
 
 CROSS_SESSION_KINDS = frozenset({Kind.USER_EDIT, Kind.USER_UNDO})
@@ -35,6 +36,8 @@ class Influence:
         by_session: dict[str, list[tuple[int, frozenset[str]]]] = defaultdict(list)
         for d in self.world.deliveries:
             by_session[d.event.session_id].append((self.world.position[d.event.id], frozenset(d.record_ids)))
+        for rid, sid, pos in self._decisions():
+            by_session[sid].append((pos, frozenset({rid})))
         self._deliveries = {}
         for sid, rows in by_session.items():
             rows.sort()
@@ -54,13 +57,24 @@ class Influence:
             return own | self.in_session(ev.payload.get("write_session_id"))
         return own
 
+    def _decisions(self) -> list[tuple[str, str, int]]:
+        """A decision is in force in the session that made it from the moment
+        it was made, delivered or not (DESIGN_V2 4.2, 4.3)."""
+        return [
+            (rec.id, rec.proposed.session_id, self.world.position[rec.proposed.id])
+            for rec in self.world.records.values()
+            if rec.spec.kind is RecordKind.DECISION
+        ]
+
     @cached_property
     def sessions_holding(self) -> dict[str, frozenset[str]]:
-        """Record id -> sessions it was delivered in."""
+        """Record id -> sessions it was delivered in or, for a decision, made in."""
         out: dict[str, set[str]] = defaultdict(set)
         for d in self.world.deliveries:
             for rid in d.record_ids:
                 out[rid].add(d.event.session_id)
+        for rid, sid, _ in self._decisions():
+            out[rid].add(sid)
         return {rid: frozenset(s) for rid, s in out.items()}
 
 
@@ -74,7 +88,7 @@ class Reach:
         self._dependents = defaultdict(set)
         self._versions = defaultdict(set)
         for rec in self.world.records.values():
-            for dep in rec.spec.depends_on:
+            for dep in rec.spec.dependencies:
                 self._dependents[dep].add(rec.id)
             old = rec.spec.supersedes
             if old:

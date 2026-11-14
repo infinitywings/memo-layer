@@ -4,7 +4,9 @@ description: >-
   SQLite rather than Postgres. The decision is in force in that session at
   once but is not delivered until the user confirms it. In the same session
   the miner learns a fact without declaring any edge, and proposes a
-  procedure that implements the decision. A neighbouring fact is validated
+  procedure that implements the decision; its only evidence was observed
+  while the unconfirmed decision was in force, so it is set aside (L0D) until
+  the user confirms the decision (DESIGN_V2 5.2). A neighbouring fact is validated
   in sessions where the decision was never in force. The impact preview of
   retracting the decision names what would be withdrawn (the decision and
   the procedure that implements it), what would be withheld (the fact learned
@@ -34,7 +36,7 @@ sessions:
     expect:
       - {record: Store results in SQLite, rung: L0D}
       - {record: calc results live in results.db, rung: L1}
-      - {record: Run migrations against results.db with sqlite3, rung: L1}
+      - {record: Run migrations against results.db with sqlite3, rung: L0D}
 
   - at: +1d
     prompt: Add a divide function to calc.py
@@ -63,6 +65,7 @@ sessions:
       - confirm: Store results in SQLite
     expect:
       - {record: Store results in SQLite, rung: L2}
+      - {record: Run migrations against results.db with sqlite3, rung: L1}
       - {record: "calc.py's test suite passes with pytest -q", rung: L2}
       - impact:
           record: Store results in SQLite

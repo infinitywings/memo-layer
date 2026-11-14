@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from rka_memory.config import Config
-from rka_memory.domain import Actor, Event, Kind, State, canonical_json, derived_id
+from rka_memory.domain import Actor, Event, Kind, RecordKind, RecordSpec, Scope, State, canonical_json, derived_id
 
 WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 EXIT_CODE_FIELDS = ("exit_code", "exitCode", "returnCode", "return_code")
@@ -345,6 +345,40 @@ def tool_events(
             )
         )
     return events
+
+
+DECIDE_TOOLS = frozenset({"decide"})
+
+
+def decision_event(payload: Mapping[str, Any], state: State, cfg: Config, state_hash: str = "") -> Event | None:
+    """The decision a successful `decide` call recorded, proposed by the model
+    and in force in its session from now on (DESIGN_V2 7.1). None when the
+    call is not a well-formed decide call."""
+    use = ToolUse.parse(payload, failed=False)
+    args = use.tool_input
+    if use.tool.lower() not in DECIDE_TOOLS or not isinstance(args, Mapping):
+        return None
+    choice, alternatives, reason = args.get("choice"), args.get("alternatives"), args.get("reason")
+    if not isinstance(choice, str) or not choice.strip() or not isinstance(reason, str):
+        return None
+    if not isinstance(alternatives, list) or not all(isinstance(a, str) for a in alternatives):
+        return None
+    spec = RecordSpec(
+        derived_id("d", use.session_id, use.tool_use_id, choice),
+        RecordKind.DECISION,
+        _clip(" ".join(choice.split()), cfg),
+        Scope.exact(state, broaden=cfg.open_scope_fields),
+        alternatives=tuple(_clip(" ".join(a.split()), cfg) for a in alternatives if a.strip()),
+        reason=_clip(" ".join(reason.split()), cfg),
+    )
+    return Event.new(
+        Kind.RECORD_PROPOSED,
+        Actor.MODEL,
+        use.session_id,
+        {**spec.to_json(), "origin": "decide", "tool_use_id": use.tool_use_id},
+        state_hash=state_hash,
+        id=derived_id("ev", "decide", use.session_id, use.tool_use_id),
+    )
 
 
 def session_start_event(payload: Mapping[str, Any], state: State, model: str | None) -> Event:

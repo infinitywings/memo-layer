@@ -105,8 +105,16 @@ def stated(rec: RecordState, world: World, cfg: Config) -> bool:
 
 
 def text_of(rec: RecordState, world: World, cfg: Config) -> str:
-    """A record's text as a view shows it: the user's words as their quote."""
+    """A record's text as a view shows it: the user's words as their quote, a
+    decision as its choice, the options it set aside and its reason."""
     said = flatten(rec.spec.content)
+    if rec.spec.kind is RecordKind.DECISION:
+        parts = [f"Decided: {said.rstrip('.')}."]
+        if rec.spec.alternatives:
+            parts.append(f"Instead of: {flatten(', '.join(rec.spec.alternatives)).rstrip('.')}.")
+        if rec.spec.reason:
+            parts.append(f"Because: {flatten(rec.spec.reason).rstrip('.')}.")
+        return " ".join(parts)
     return f'The user said: "{said}"' if stated(rec, world, cfg) else said
 
 
@@ -195,7 +203,7 @@ def superseded(world: World, labels: Labels, cfg: Config, state: State | None = 
 
 
 def _groups(records: list[RecordState]) -> list[list[RecordState]]:
-    """Connected components of depends_on and refines among `records`."""
+    """Connected components of dependencies and refines among `records`."""
     by_id = {r.id: r for r in records}
     parent = {rid: rid for rid in by_id}
 
@@ -206,7 +214,7 @@ def _groups(records: list[RecordState]) -> list[list[RecordState]]:
         return x
 
     for r in records:
-        for d in (*r.spec.depends_on, *r.spec.refines):
+        for d in (*r.spec.dependencies, *r.spec.refines):
             if d in by_id:
                 parent[find(r.id)] = find(d)
     groups: dict[str, list[RecordState]] = {}
@@ -374,6 +382,14 @@ def skill(
     if rules:
         body += ["", "## Rules this procedure follows", ""]
         body += [line.render() for line in rules]
+    decisions = [
+        Line(d, text_of(world.records[d], world, cfg))
+        for d in rec.spec.implements
+        if d in world.records and labels.by_id[d].deliverable
+    ]
+    if decisions:
+        body += ["", "## Decisions this procedure carries out", ""]
+        body += [line.render() for line in decisions]
     body.append("")
     if lab.rung is Rung.L3 and check:
         body += [f"Before finishing, run `{_code(check)}`; rka-memory records the result.", ""]

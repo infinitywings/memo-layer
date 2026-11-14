@@ -69,5 +69,18 @@ class Verdict:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class Typed:
+    """A typed `rkm <op>` amendment (rka_memory/commands.py). `record` is the
+    record's content; `from_session` names the session whose evidence links a
+    `defeat` withdraws."""
+
+    op: str
+    record: str
+    text: str = ""
+    when: tuple[str, str] | None = None
+    from_session: str | None = None
+
+
 FileAction = Write | Remove | Append | Replace | Restore | Clean | Commit | Move
-UserAction = FileAction | Verdict
+UserAction = FileAction | Verdict | Typed

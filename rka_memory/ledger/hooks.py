@@ -21,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from rka_memory import commands
+from rka_memory.commands import CommandError
 from rka_memory.domain import Kind, State, clock_now, parse_ts
 from rka_memory.ledger import signals
 from rka_memory.ledger import state as state_mod
@@ -29,7 +31,6 @@ from rka_memory.service import Memory
 from rka_memory.world import World
 
 DISABLE_ENV = "RKA_MEMORY_DISABLE"
-RKM_VERDICT = re.compile(r"^\s*rkm\s+(confirm|reject)\s+(\S+)(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
 CATCHUP_MINES = 3
 
 Output = dict[str, Any] | None
@@ -153,17 +154,10 @@ def on_session_start(memory: Memory, payload: Mapping[str, Any]) -> Output:
 
 
 def _rkm_command(memory: Memory, session_id: str, prompt: str) -> Output:
-    match = RKM_VERDICT.match(prompt)
-    if match is None:
-        return _block("rka-memory: use `rkm confirm <id>` or `rkm reject <id> <reason>`")
-    verb, record_id, reason = match.group(1).lower(), match.group(2), (match.group(3) or "").strip()
     try:
-        memory.verdict(record_id, confirm=verb == "confirm", session_id=session_id, reason=reason)
-    except KeyError:
-        return _block(f"rka-memory: unknown record {record_id}; nothing recorded")
-    memory.gate(session_id=session_id)
-    rung = memory.world().records[record_id].rung
-    return _block(f"rka-memory recorded {verb} for {record_id}; now {rung.value if rung else 'unrated'}")
+        return _block(commands.run(memory, prompt, session_id))
+    except CommandError as err:
+        return _block(str(err))
 
 
 def on_user_prompt_submit(memory: Memory, payload: Mapping[str, Any]) -> Output:
@@ -236,6 +230,10 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
                 tracked[written] = now
     if path and post_hash is not None:
         tracked[path] = post_hash
+    if not failed:
+        decision = adapter.decision_event(payload, memory.session_state(use.session_id), memory.cfg, state_hash)
+        if decision is not None:
+            events.append(decision)
     memory.append(*events)
     if tracked:
         _write_json(tracked_path, tracked)

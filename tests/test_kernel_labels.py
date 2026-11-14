@@ -345,4 +345,4 @@ def test_labelling_never_fails_and_never_delivers_a_withdrawn_record():
         labs = labels_of(lg)
         assert not (labs.withdrawn & set(labs.deliverable())), seed
         for lab in labs.by_id.values():
-            assert (lab.since is not None) == lab.deliverable, (seed, lab)
+            assert (lab.since is not None) == lab.valid, (seed, lab)

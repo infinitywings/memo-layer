@@ -28,7 +28,8 @@ from rka_memory.domain import (
 )
 from rka_memory.world import RecordState, World
 
-TARGETED_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT)
+# Events that name the one record they bear on: a miner cannot cite them for another.
+TARGETED_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT, Kind.USER_AMEND)
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
     """The links of one polarity that count, one per cited event, in log order."""
     out = []
     for link in rec.links:
-        if link.polarity is not polarity:
+        if link.polarity is not polarity or link.via in world.defeated:
             continue
         ev = world.events.get(link.event_id)
         if ev is None or ev.actor is Actor.MODEL:
@@ -122,8 +123,9 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
 
 
 def affirmation(g: Grounding) -> bool:
-    """A user confirm, or a standing statement of exactly what the record says."""
-    return g.event.kind is Kind.USER_CONFIRM or g.affirms
+    """A user confirm, a standing statement of exactly what the record says,
+    or the user's typed amendment that wrote the record."""
+    return g.event.kind in (Kind.USER_CONFIRM, Kind.USER_AMEND) or g.affirms
 
 
 def meets_l2(support: list[Grounding], cfg: Config) -> bool:

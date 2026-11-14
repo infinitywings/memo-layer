@@ -26,6 +26,7 @@ from rka_memory.workload.actions import (
     Remove,
     Replace,
     Restore,
+    Typed,
     UserAction,
     Verdict,
     Write,
@@ -144,13 +145,37 @@ def _file_action(key: str, value: Any, where: str) -> FileAction:
 FILE_ACTIONS = {"write", "remove", "append", "replace", "restore", "clean", "commit", "move"}
 
 
+TYPED_OPS = {"qualify", "correct", "replace", "update", "close", "defeat"}
+
+
+def _typed(value: Any, where: str) -> Typed:
+    d = _keys(value, where, {"op", "record"}, {"text", "when", "from_session"})
+    op = d["op"]
+    if op not in TYPED_OPS:
+        raise StreamError(f"{where}: rkm op must be one of {sorted(TYPED_OPS)}")
+    when = None
+    if op in ("update", "close"):
+        w = d.get("when")
+        if not isinstance(w, dict) or len(w) != 1 or next(iter(w)) not in SCOPE_FIELDS:
+            raise StreamError(f"{where}: `rkm {op}` needs `when` with one scope field of {list(SCOPE_FIELDS)}")
+        when = (next(iter(w)), _str(next(iter(w.values())), where))
+    text = _str(d["text"], where) if d.get("text") else ""
+    if op in ("qualify", "correct", "replace", "update") and not text:
+        raise StreamError(f"{where}: `rkm {op}` needs `text`")
+    if op == "defeat" and not d.get("from_session"):
+        raise StreamError(f"{where}: `rkm defeat` needs `from_session`, the session whose evidence links it withdraws")
+    return Typed(op, _str(d["record"], where), text, when, d.get("from_session"))
+
+
 def _user_action(raw: Any, where: str) -> UserAction:
-    key, value = _single(raw, where, FILE_ACTIONS | {"confirm", "reject"})
+    key, value = _single(raw, where, FILE_ACTIONS | {"confirm", "reject", "rkm"})
     if key == "confirm":
         return Verdict(True, _str(value, where))
     if key == "reject":
         d = _keys(value, where, {"record", "reason"})
         return Verdict(False, _str(d["record"], where), _str(d["reason"], where))
+    if key == "rkm":
+        return _typed(value, where)
     return _file_action(key, value, where)
 
 
@@ -191,7 +216,7 @@ RULE_KINDS = ("preference", "constraint")
 REQUEST_CHECKS = frozenset({"model_saw", "model_never_saw", "in_prompt", "skill_offered"})
 CANDIDATE_KEYS = {
     "broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on", "about", "supersedes",
-    "refines",
+    "refines", "implements", "alternatives", "reason",
 }
 
 
@@ -212,7 +237,7 @@ def _plant(raw: Any, where: str) -> tuple[dict[str, Any], ...]:
         c = _candidate(c, f"{where}[{i}]")
         if not c["evidence"]:
             raise StreamError(f"{where}[{i}]: a planted record cites evidence, or the gate leaves it at L0D and no arm delivers it")
-        if c["depends_on"] or c.get("supersedes") or c.get("refines"):
+        if c["depends_on"] or c.get("supersedes") or c.get("refines") or c.get("implements"):
             raise StreamError(f"{where}[{i}]: a planted record names no other record; their ids are not known in advance")
         planted.append(c)
     return tuple(planted)

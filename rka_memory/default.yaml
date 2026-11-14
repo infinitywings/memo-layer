@@ -26,6 +26,7 @@ weights:                      # grounding weight per event kind (absent kinds ne
   test_result: 1.0
   user_confirm: 1.0
   user_reject: 1.0
+  user_amend: 1.0
   user_edit: "1/3"
   user_undo: "1/3"
   user_repeat: "1/3"

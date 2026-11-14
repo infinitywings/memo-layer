@@ -38,7 +38,7 @@ from rka_memory.service import Memory
 from rka_memory.workload import files, report
 from rka_memory.workload.actions import Clean
 from rka_memory.workload.checks import Observed, evaluate, find_record
-from rka_memory.workload.stream import Session, Stream, Verdict, load_all
+from rka_memory.workload.stream import Session, Stream, Typed, Verdict, load_all
 from rka_memory.world import World, project
 
 REPO = Path(rka_memory.__file__).resolve().parent.parent
@@ -435,6 +435,10 @@ class StreamRun:
         path = self.paths.ledger_dir / "hook-errors.log"
         return path.read_text() if path.exists() else ""
 
+    def _impact(self, record_id: str) -> dict[str, Any]:
+        out = subprocess.run([str(rka_bin()), "impact", record_id], env=self._env(), capture_output=True, text=True, check=True)
+        return json.loads(out.stdout)
+
     def _metrics(self) -> dict[str, Any]:
         out = subprocess.run([str(rka_bin()), "metrics"], env=self._env(), capture_output=True, text=True, check=True)
         return json.loads(out.stdout)
@@ -454,6 +458,32 @@ class StreamRun:
         kind = Kind.USER_CONFIRM if v.confirm else Kind.USER_REJECT
         recorded = [e for e in self.world().events.values() if e.kind is kind and e.payload.get("record_id") == rid]
         self.check(s.label, f"{name} recorded as {kind.value}", len(recorded) == 1, f"{len(recorded)} events")
+
+    def _typed(self, s: Session, n: int, t: Typed, mock: MockModel | LiveModel) -> None:
+        name = f"rkm {t.op} {t.record!r}"
+        world = self.world()
+        try:
+            rid = find_record(world, t.record).id
+        except LookupError as exc:
+            self.check(s.label, name, False, str(exc))
+            return
+        if t.op == "defeat":
+            sid = next((r["session_id"] for r in self.rows if r["session"] == t.from_session), None)
+            targets = [
+                link.via for link in world.records[rid].links
+                if link.via != link.event_id and (ev := world.events.get(link.event_id)) is not None and ev.session_id == sid
+            ]
+            prompts = [f"rkm defeat {via}" for via in targets]
+        else:
+            cond = f" {t.when[0]}={t.when[1]}" if t.when else ""
+            prompts = [f"rkm {t.op} {rid}{cond}" + (f" {t.text}" if t.text else "")]
+        before = sum(1 for e in world.events.values() if e.kind is Kind.USER_AMEND)
+        for i, prompt in enumerate(prompts):
+            label = f"{s.label}-rkm{n}-{i}"
+            mock.script(label=label)
+            self._run_dsh(prompt, label)
+        recorded = sum(1 for e in self.world().events.values() if e.kind is Kind.USER_AMEND) - before
+        self.check(s.label, f"{name} recorded as {len(prompts)} user_amend", bool(prompts) and recorded == len(prompts), f"{recorded} events")
 
     def _session(self, s: Session, mock: MockModel | LiveModel) -> None:
         p = self.paths
@@ -500,6 +530,9 @@ class StreamRun:
             if isinstance(action, Verdict):
                 verdicts += 1
                 self._verdict(s, verdicts, action, mock)
+            elif isinstance(action, Typed):
+                verdicts += 1
+                self._typed(s, verdicts, action, mock)
             else:
                 files.apply(action, p.project, self.before, self.confine)
         new_errors = self._hook_errors()[len(errors):]
@@ -521,6 +554,7 @@ class StreamRun:
             requests=mock.requests(label),
             ledger_lines=p.ledger.read_text().splitlines() if p.ledger.exists() else [],
             metrics=self._metrics,
+            impact=self._impact,
             project=p.project,
             run_as=self.confine,
         )

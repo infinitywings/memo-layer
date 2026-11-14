@@ -10,12 +10,13 @@ from typing import Any
 from rka_memory import config as config_mod
 from rka_memory import relations
 from rka_memory.config import Config
-from rka_memory.domain import Actor, Event, Kind, Polarity, State, clock_now
+from rka_memory.domain import Actor, Event, Kind, Polarity, State, clock_now, derived_id
 from rka_memory.kernel import views
 from rka_memory.kernel.evidence import counted, inside, statement
+from rka_memory.kernel.impact import impact
 from rka_memory.kernel.labels import ENGINE_SESSION, Labels, audit_events, label
 from rka_memory.ledger.jsonl import JsonlLedger
-from rka_memory.world import World, project
+from rka_memory.world import NODE_OPS, World, project
 
 CLI_SESSION = "cli"
 
@@ -129,6 +130,37 @@ class Memory:
         ev = Event.new(kind, Actor.USER, session_id, payload)
         self.append(ev)
         return ev
+
+    def amend(
+        self,
+        op: str,
+        target: str,
+        *,
+        text: str = "",
+        condition: dict[str, str] | None = None,
+        link: str | None = None,
+        session_id: str = CLI_SESSION,
+    ) -> Event:
+        """Record a user amendment. Call only from paths the user types into
+        (`commands.run`). An op that creates a node names it here."""
+        if target not in self.world().records:
+            raise KeyError(f"unknown record {target}")
+        payload: dict[str, Any] = {"op": op, "target": target}
+        if text:
+            payload["text"] = text
+        if condition:
+            payload["condition"] = condition
+        if link:
+            payload["link"] = link
+        if op in NODE_OPS:
+            payload["record_id"] = derived_id("r", "amend", op, target, text, clock_now().isoformat())
+        ev = Event.new(Kind.USER_AMEND, Actor.USER, session_id, payload)
+        self.append(ev)
+        return ev
+
+    def impact(self, record_id: str, now: datetime | None = None) -> dict[str, Any]:
+        """What rejecting `record_id` would do. Records nothing."""
+        return impact(self.world(), self.cfg, now or clock_now(), record_id)
 
     def session_state(self, session_id: str, world: World | None = None) -> State:
         return (world or self.world()).session(session_id).state

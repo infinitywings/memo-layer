@@ -17,6 +17,7 @@ from rka_memory import anchors
 from rka_memory.domain import (
     DELIVERABLE,
     FUZZY_FIELDS,
+    SCOPE_FIELDS,
     SESSION_MARKERS,
     SHOWN_KINDS,
     Actor,
@@ -57,6 +58,27 @@ class Narrowing:
     field: str
     value: str
     cause_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Amendment:
+    """A user's typed amendment: `op` on `target`, creating `record_id` for
+    qualify, correct, replace and update. Revision ops (correct, replace)
+    retire the target; update and close exclude `condition`'s state from it."""
+
+    event: Event
+    op: str
+    target: str
+    record_id: str | None = None
+    condition: tuple[str, str] | None = None
+
+    @property
+    def revision(self) -> bool:
+        return self.op in ("correct", "replace")
+
+
+AMEND_OPS = frozenset({"qualify", "correct", "replace", "update", "close", "defeat"})
+NODE_OPS = frozenset({"qualify", "correct", "replace", "update"})
 
 
 @dataclass(frozen=True)
@@ -119,6 +141,14 @@ class World:
     touches: dict[str, frozenset[str]] = field(default_factory=dict)
     # Project -> every anchor its events have touched so far.
     known: dict[str, set[str]] = field(default_factory=dict)
+    # The user's typed amendments, in log order.
+    amendments: list[Amendment] = field(default_factory=list)
+    # Evidence links (their linking event ids) the user withdrew.
+    defeated: set[str] = field(default_factory=set)
+
+    def replaced_by(self, record_id: str) -> list[Amendment]:
+        """The user's revision-mode replacements of a record, oldest first."""
+        return [a for a in self.amendments if a.revision and a.target == record_id]
 
     @property
     def revision(self) -> int:
@@ -251,6 +281,49 @@ def _user_verdict(world: World, ev: Event) -> None:
     rec.links.append(Link(event_id=ev.id, record_id=rec.id, polarity=polarity, via=ev.id))
 
 
+def _user_amend(world: World, ev: Event) -> None:
+    """Only a user-authored event folds here (KIND_ACTORS). A malformed one,
+    or one naming an unknown target, changes nothing."""
+    p = ev.payload
+    op, target = p.get("op"), world.records.get(str(p.get("target") or ""))
+    if op not in AMEND_OPS or target is None:
+        return
+    condition = None
+    if op in ("update", "close"):
+        cond = p.get("condition")
+        if not isinstance(cond, dict) or len(cond) != 1:
+            return
+        (name, value), = cond.items()
+        if name not in SCOPE_FIELDS or not isinstance(value, str):
+            return
+        condition = (name, value)
+    if op == "defeat":
+        link = str(p.get("link") or "")
+        if any(l.via == link for l in target.links):
+            world.defeated.add(link)
+            world.amendments.append(Amendment(ev, op, target.id))
+        return
+    new_id = None
+    if op in NODE_OPS:
+        new_id, text = str(p.get("record_id") or ""), str(p.get("text") or "").strip()
+        if not new_id or new_id in world.records or not text:
+            return
+        scope = target.scope.only(*condition) if condition else target.scope
+        spec = RecordSpec(
+            new_id,
+            target.spec.kind,
+            text,
+            scope,
+            refines=(target.id,) if op == "qualify" else (),
+            supersedes=target.id if op != "qualify" else None,
+        )
+        world.records[new_id] = RecordState(spec=spec, proposed=ev, scope=scope)
+        world.records[new_id].links.append(Link(event_id=ev.id, record_id=new_id, polarity=Polarity.SUPPORT, via=ev.id))
+    if condition:
+        target.scope = target.scope.without(*condition)
+    world.amendments.append(Amendment(ev, op, target.id, new_id, condition))
+
+
 def _rung_change(world: World, ev: Event) -> None:
     p = ev.payload
     rec = world.records[p["record_id"]]
@@ -299,6 +372,7 @@ _FOLD = {
     Kind.EVIDENCE_LINKED: _evidence_linked,
     Kind.USER_CONFIRM: _user_verdict,
     Kind.USER_REJECT: _user_verdict,
+    Kind.USER_AMEND: _user_amend,
     Kind.RUNG_CHANGE: _rung_change,
     Kind.SCOPE_NARROWED: _scope_narrowed,
     Kind.PACKET_DELIVERED: _packet_delivered,

@@ -77,9 +77,32 @@ class Ledger:
         kind: RecordKind = RecordKind.FACT,
         **spec: Any,
     ) -> Event:
+        """`mode` is a field a model might add that no rule reads; it lands in the payload."""
         steps = tuple(Step(*s) for s in spec.pop("steps", ()))
+        extra = {k: spec.pop(k) for k in ("mode",) if k in spec}
         rs = RecordSpec(record_id, kind, spec.pop("content", f"content of {record_id}"), scope or Scope(), steps=steps, **spec)
-        return self._ev(Kind.RECORD_PROPOSED, Actor.MODEL, session, rs.to_json())
+        return self._ev(Kind.RECORD_PROPOSED, Actor.MODEL, session, {**rs.to_json(), **extra})
+
+    def decide(self, session: str, record_id: str, choice: str, alternatives: tuple[str, ...] = (), reason: str = "") -> Event:
+        """The agent's `decide` tool call, as the hook logs it."""
+        rs = RecordSpec(record_id, RecordKind.DECISION, choice, Scope(), alternatives=alternatives, reason=reason)
+        return self._ev(Kind.RECORD_PROPOSED, Actor.MODEL, session, {**rs.to_json(), "origin": "decide"})
+
+    def amend(self, session: str, op: str, target: str, text: str = "", new_id: str | None = None,
+              condition: dict[str, str] | None = None, link: str | None = None) -> Event:
+        payload: dict[str, Any] = {"op": op, "target": target}
+        if new_id:
+            payload["record_id"] = new_id
+        if text:
+            payload["text"] = text
+        if condition:
+            payload["condition"] = condition
+        if link:
+            payload["link"] = link
+        return self._ev(Kind.USER_AMEND, Actor.USER, session, payload)
+
+    def write(self, session: str, path: str) -> Event:
+        return self._ev(Kind.FILE_WRITE, Actor.TOOL, session, {"tool": "write", "tool_use_id": f"w{self.n}", "path": path})
 
     def link(self, record_id: str, event: Event, polarity: str = "support", statement: dict | None = None) -> Event:
         payload = {"record_id": record_id, "event_id": event.id, "polarity": polarity}

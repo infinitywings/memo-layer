@@ -57,6 +57,8 @@ class Observed:
     ledger_lines: list[str]
     metrics: Callable[[], dict[str, Any]]
     project: Path | None = None
+    # What rejecting a record would do, from `rka-memory impact`.
+    impact: Callable[[str], dict[str, Any]] | None = None
     # The agent user's uid and gid, when the runner confines the agent.
     run_as: tuple[int, int] | None = None
 
@@ -110,6 +112,37 @@ def _first_in_packet(obs: Observed, rec: RecordState, want: bool) -> Outcome:
     """The record opened a packet delivered in this session."""
     got = any(d.record_ids[:1] == (rec.id,) for d in obs.deliveries())
     return got == want, [list(d.record_ids) for d in obs.deliveries() if d.record_ids]
+
+
+IMPACT_KEYS = {"withdrawn", "withheld", "kept", "files"}
+
+
+def _is_impact(value: Any) -> None:
+    if not isinstance(value, dict) or "record" not in value or not set(value) - {"record"} <= IMPACT_KEYS:
+        raise ValueError(f"expected {{record, and any of {sorted(IMPACT_KEYS)}}}, records named by content")
+    for k in set(value) - {"record"}:
+        if not isinstance(value[k], list) or not all(isinstance(x, str) for x in value[k]):
+            raise ValueError(f"{k}: expected a list of strings")
+
+
+def _impact(obs: Observed, want: dict[str, Any]) -> Outcome:
+    """`rka-memory impact` for the record, compared by content: what rejecting
+    it would withdraw, withhold and keep, and the files written while it was
+    in force (relative to the project)."""
+    if obs.impact is None:
+        return False, "no impact preview in this run"
+    rec = find_record(obs.world, want["record"])
+    report = obs.impact(rec.id)
+    content = {rid: normalize(r.spec.content) for rid, r in obs.world.records.items()}
+    project = str(obs.project or "")
+    got = {
+        "withdrawn": sorted(content[r] for r in report["withdrawn"]),
+        "withheld": sorted(content[w["record_id"]] for w in report["withheld"]),
+        "kept": sorted(content[k["record_id"]] for k in report["kept"]),
+        "files": sorted(f.removeprefix(project).lstrip("/") for f in report["files_written_while_in_force"]),
+    }
+    diff = {k: got[k] for k in IMPACT_KEYS & set(want) if got[k] != sorted(normalize(x) if k != "files" else x for x in want[k])}
+    return not diff, diff or got
 
 
 def _skill_offered(obs: Observed, rec: RecordState, want: bool) -> Outcome:
@@ -325,6 +358,7 @@ CHECKS: dict[str, Check] = {
     "model_never_saw": Check(_is_str, _model_never_saw, False),
     "record_contains": Check(_is_str, _record_contains, False),
     "model_saw": Check(_is_str, _model_saw, False),
+    "impact": Check(_is_impact, _impact, False),
     "command_passes": Check(_is_str, _command_passes, False),
     "ran": Check(_is_str, _ran, False),
     "wrote": Check(_is_str, _wrote, False),

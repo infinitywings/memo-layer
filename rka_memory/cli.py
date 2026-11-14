@@ -104,6 +104,28 @@ def cmd_verdict(args) -> int:
     return 0
 
 
+def cmd_rkm(args) -> int:
+    """A typed rkm command from the user's own shell (rka_memory/commands.py)."""
+    from rka_memory.commands import CommandError, run
+    from rka_memory.service import CLI_SESSION
+
+    try:
+        print(run(_memory(), "rkm " + " ".join(args.words), CLI_SESSION))
+    except CommandError as err:
+        print(str(err), file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_impact(args) -> int:
+    mem = _memory()
+    if args.record_id not in mem.world().records:
+        print(f"unknown record {args.record_id}", file=sys.stderr)
+        return 1
+    _print(mem.impact(args.record_id))
+    return 0
+
+
 def cmd_packet(args) -> int:
     from rka_memory.ledger import state as state_mod
 
@@ -307,10 +329,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("record_id")
     s.set_defaults(fn=cmd_verdict)
 
-    s = sub.add_parser("reject", help="user reject: a counter-event for a record")
+    s = sub.add_parser("reject", help="user reject: withdraw a record and what depends on it")
     s.add_argument("record_id")
     s.add_argument("reason")
     s.set_defaults(fn=cmd_verdict)
+
+    s = sub.add_parser("rkm", help="a typed amendment or verdict, e.g. `rka-memory rkm update r_x toolchain=pip new text`")
+    s.add_argument("words", nargs="+")
+    s.set_defaults(fn=cmd_rkm)
+
+    s = sub.add_parser("impact", help="what rejecting a record would withdraw, withhold and keep; records nothing")
+    s.add_argument("record_id")
+    s.set_defaults(fn=cmd_impact)
 
     s = sub.add_parser("packet", help="preview the packet a session in CWD would receive")
     s.add_argument("--cwd", default=".")

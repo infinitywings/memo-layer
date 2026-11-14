@@ -51,6 +51,9 @@ class Kind(StrEnum):
     # A test harness removed a path between sessions: housekeeping that must
     # not read as the user undoing or editing what the agent wrote there.
     WORKSPACE_RESET = "workspace_reset"
+    # An amendment the user typed: qualify, correct, replace, update, close,
+    # or defeat an evidence link (DESIGN_V2 6.1).
+    USER_AMEND = "user_amend"
 
 
 # Which actor may author each kind. The adapter sets the actor, never the
@@ -77,6 +80,7 @@ KIND_ACTORS: dict[Kind, frozenset[Actor]] = {
     Kind.JUDGMENT: frozenset({Actor.MODEL, Actor.RUNNER}),
     Kind.COST: frozenset({Actor.RUNNER}),
     Kind.WORKSPACE_RESET: frozenset({Actor.RUNNER}),
+    Kind.USER_AMEND: frozenset({Actor.USER}),
 }
 
 
@@ -102,6 +106,7 @@ GROUNDING: dict[Kind, Callable[[Mapping[str, Any]], frozenset[Polarity]]] = {
     Kind.TEST_RESULT: lambda p: _outcome(bool(p.get("passed"))),
     Kind.USER_CONFIRM: lambda p: SUPPORT_ONLY,
     Kind.USER_REJECT: lambda p: COUNTER_ONLY,
+    Kind.USER_AMEND: lambda p: SUPPORT_ONLY,
     Kind.USER_EDIT: lambda p: BOTH,
     Kind.USER_UNDO: lambda p: COUNTER_ONLY,
     Kind.USER_REPEAT: lambda p: SUPPORT_ONLY,
@@ -380,6 +385,12 @@ class Scope:
     def without(self, name: str, value: str) -> Scope:
         return replace(self, **{name: self.constraint(name).without(value)})
 
+    def only(self, name: str, value: str) -> Scope:
+        """This scope restricted to states where `name` is `value`."""
+        c = self.constraint(name)
+        include = frozenset({value}) if c.include is None else c.include & {value}
+        return replace(self, **{name: FieldConstraint(include, c.exclude)})
+
     @classmethod
     def exact(cls, state: State, broaden: frozenset[str] = frozenset()) -> Scope:
         """The narrowest scope that covers `state`, with `broaden` fields left open."""
@@ -427,6 +438,9 @@ class RecordKind(StrEnum):
     PREFERENCE = "preference"
     PROCEDURE = "procedure"
     CONSTRAINT = "constraint"
+    # A chosen approach: in force from when it is made, deliverable only once
+    # the user affirms it (DESIGN_V2 4.2).
+    DECISION = "decision"
 
 
 @dataclass(frozen=True)
@@ -462,6 +476,16 @@ class RecordSpec:
     about: tuple[str, ...] = ()
     # Records this one qualifies or narrows; views keep them together.
     refines: tuple[str, ...] = ()
+    # Decisions this record carries out: a validity dependency, like depends_on.
+    implements: tuple[str, ...] = ()
+    # For a decision: the options not chosen, and why this one.
+    alternatives: tuple[str, ...] = ()
+    reason: str = ""
+
+    @property
+    def dependencies(self) -> tuple[str, ...]:
+        """Every record this one's validity rests on."""
+        return (*self.depends_on, *self.implements)
 
     def to_json(self) -> dict[str, Any]:
         out = {
@@ -480,6 +504,12 @@ class RecordSpec:
             out["about"] = list(self.about)
         if self.refines:
             out["refines"] = list(self.refines)
+        if self.implements:
+            out["implements"] = list(self.implements)
+        if self.alternatives:
+            out["alternatives"] = list(self.alternatives)
+        if self.reason:
+            out["reason"] = self.reason
         return out
 
     @classmethod
@@ -497,4 +527,7 @@ class RecordSpec:
             supersedes=d.get("supersedes"),
             about=tuple(str(a) for a in d.get("about") or ()),
             refines=tuple(str(r) for r in d.get("refines") or ()),
+            implements=tuple(str(r) for r in d.get("implements") or ()),
+            alternatives=tuple(str(a) for a in d.get("alternatives") or ()),
+            reason=str(d.get("reason") or ""),
         )

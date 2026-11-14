@@ -359,3 +359,17 @@ test('a path spelled as a file:// URL or with ~ is checked as the path it names'
   const roots = [realPathOf(homedir())]
   assert.deepEqual(protectedTarget({ path: '~/notes.txt' }, '/', roots), { named: `${homedir()}/notes.txt`, root: roots[0] })
 })
+
+test('the plugin gives the agent a decide tool that checks its arguments and is never policed as a path', async (t) => {
+  captureStderr(t)
+  const host = fakeHost({ command: ['true'] })
+  const decide = host.tools.find(tool => tool.name === 'decide')
+  assert.ok(decide)
+  assert.deepEqual(decide.parameters.required, ['choice', 'alternatives', 'reason'])
+  assert.deepEqual(await decide.execute({ choice: 'Use SQLite', alternatives: ['Postgres'], reason: 'no server' }), { recorded: true })
+  await assert.rejects(decide.execute({ choice: 'Use SQLite' }), /decide needs choice/)
+  const agent = fakeAgent('s-dec', CWD)
+  const allow = async () => ({ kind: 'allow' })
+  const named = { callId: 'c-dec', name: 'decide', arguments: { choice: 'keep /rka-memory/ledger as is', alternatives: [], reason: 'x' }, agent }
+  assert.deepEqual(await host.emit('tools/pre-execute', named, allow), { kind: 'allow' })
+})

@@ -15,13 +15,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
-import type { PreToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import type { PreToolDecision, ToolDefinition, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-working-directory'
 
 export const name = 'rka-memory'
-export const inject = ['systemPrompt']
+export const inject = ['systemPrompt', 'tools']
 
 export interface Config {
   /** argv that starts rka-memory, for example `['uv', 'run', '--project', '/src/rka-memory', 'rka-memory']`. */
@@ -99,8 +99,47 @@ const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'apply
  * Tools whose arguments are not paths the plugin should police: the shell
  * tools run under the OS sandbox, which confines them whatever their command
  * text says, and a command may mention a protected path without touching it.
+ * `decide` takes prose, which may name any path and opens none.
  */
-const OS_CONFINED_TOOLS: ReadonlySet<string> = new Set(['bash', 'pwsh'])
+const UNPOLICED_TOOLS: ReadonlySet<string> = new Set(['bash', 'pwsh', 'decide'])
+
+/**
+ * The agent records a decision: the option it chose, the ones it set aside,
+ * and why. The handler only checks the arguments, which dsh does not check
+ * for a hand-built definition; the tools/result listener logs the call like
+ * any other, and rka-memory turns it into a decision in force in the session
+ * (DESIGN_V2 7.1). Shown to the user only after they confirm it.
+ */
+export const DECIDE: ToolDefinition = {
+  name: 'decide',
+  description:
+    'Record a decision you are making about how to do this work: the option you chose, the options you considered and set aside, and why. '
+    + 'Use it when you pick one approach over others that would also have worked.',
+  parameters: {
+    type: 'object',
+    properties: {
+      choice: { type: 'string', description: 'The option chosen, as one sentence.' },
+      alternatives: { type: 'array', items: { type: 'string' }, description: 'Options considered and not chosen.' },
+      reason: { type: 'string', description: 'Why this option.' },
+    },
+    required: ['choice', 'alternatives', 'reason'],
+    additionalProperties: false,
+  },
+  output: {
+    schema: { type: 'object', properties: { recorded: { type: 'boolean' } }, required: ['recorded'], additionalProperties: false },
+    render: () => [{ type: 'text', text: 'Decision recorded.' }],
+  },
+  async execute(args: unknown) {
+    if (
+      !isRecord(args) || typeof args.choice !== 'string' || args.choice.trim() === ''
+      || !Array.isArray(args.alternatives) || !args.alternatives.every(a => typeof a === 'string')
+      || typeof args.reason !== 'string'
+    ) {
+      throw new Error('decide needs choice (a string), alternatives (an array of strings) and reason (a string)')
+    }
+    return { recorded: true }
+  },
+} as unknown as ToolDefinition
 
 /** Every string inside a tool's arguments, a few levels deep. */
 function stringsIn(value: unknown, depth = 0): string[] {
@@ -564,6 +603,8 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     sessions.clear()
   })
 
+  ctx.tools.register(DECIDE)
+
   ctx.on('agent/created', async ({ agent, source }) => {
     await guard('SessionStart', async () => {
       const state = sessionOf(agent.id)
@@ -611,7 +652,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
 
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next): Promise<PreToolDecision> => {
     const agent = exec.agent
-    if (!OS_CONFINED_TOOLS.has(exec.name)) {
+    if (!UNPOLICED_TOOLS.has(exec.name)) {
       const hit = protectedTarget(exec.arguments, agent === undefined ? process.cwd() : cwdOf(agent), protectedRoots)
       if (hit !== undefined) {
         const reason = `rka-memory: ${hit.named} is inside ${hit.root}, which the agent's tools may not read or change`

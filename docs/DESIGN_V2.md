@@ -304,3 +304,21 @@ An adversarial review of revision 1 (2026-11-13) found the core structure sound 
 | Cache rules conflicted with amendments and budgets | trailing amendments, trial tail, deterministic core selection (9) |
 | Gates could not fail; upcaster incomplete; module name collision | pre-registered gates and property tests; full upcaster mapping; `kernel/` package (10, 12) |
 | Novelty claimed against preprints read once | claims limited to the combination; rollback repair's finer read logging acknowledged (3) |
+
+## 16. Changes made while building
+
+Decisions taken during the build, each recorded with its layer's gate in the RKA project.
+
+| Layer | Change | Why |
+|---|---|---|
+| 1 | Only a typed reject puts a record into `W`. A miner link from the user's checked words is a counter. | The words are the user's, but the miner chose which record they withdraw (7.2). |
+| 1 | Withdrawal and labelling read one list of affirmations: the user's confirms and standing statements inside the record's scope. | Two different lists could disagree and crash the labelling in the hooks. |
+| 2 | Labels are the only source of rungs; `rung_change` is a derived audit trail. Views read only the log, so the missing-file note is gone. | 4.1, 10. |
+| 2 | Retirement is terminal: a record untouched for the window before it became valid stays L4 when evidence arrives later; only the user's affirmation restores it. | v1's rule, kept; without it a re-learned stale lesson revives on its own. |
+| 2 | "The user said" renders only when a counted link's checked quote is the record's own text. | Otherwise model text could be put in the user's mouth. |
+| 3 | A miner restriction gates its target only when it has counted evidence (L1) and the target is not user-affirmed. | A zero-evidence proposal would otherwise suppress memory for free, and affirmations are exempt from model edges (5.1, 5.4). |
+| 3 | A dependency is met by the user's standing replacement (correct, replace) of what it depends on. | A correction keeps the claim; what rests on the claim follows its current wording. Labels are computed in log order, so the replacement is read from the user's act, not from its later label. |
+| 3 | An affirmed record is never pulled into `W` by a dependency edge the miner or the agent declared, including `implements`; the impact preview lists it as kept. | 5.4, applied to decisions. |
+| 3 | `decide` is a dsh plugin tool (`ctx.tools.register`); the hook turns its call into a decision node in force in the session. Not an MCP tool. | MCP calls carry no session identity, and the server runs outside the agent's confinement. |
+| 3 | The user amends by typing `rkm qualify|correct|replace|update|close|defeat`, logged as `user_amend`, which only the user may author; `rkm impact` previews a reject and records nothing. | 6.1, 7.2, 7.3. |
+| 3 | The laundered-dependent case of the decision-retraction gate moves to layer 4. | It needs artifact influence, which layer 4 builds. |

@@ -35,7 +35,7 @@ Stratum 2 labels every other record:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 from rka_memory.config import Config
@@ -65,10 +65,19 @@ class Label:
     affirmed: bool = False
     withdrawn: bool = False
     learned_under: tuple[str, ...] = ()
+    # Miner restrictions of this record that have evidence but are not yet
+    # valid: the record keeps its rung but is not delivered (DESIGN_V2 6.1).
+    withheld_by: tuple[str, ...] = ()
+
+    @property
+    def valid(self) -> bool:
+        """At L2 or L3: what dependencies and independence read."""
+        return self.rung in DELIVERABLE
 
     @property
     def deliverable(self) -> bool:
-        return self.rung in DELIVERABLE
+        """Valid and not withheld: what views read."""
+        return self.valid and not self.withheld_by
 
 
 @dataclass
@@ -132,6 +141,15 @@ def _withdrawn_set(world: World, cfg: Config, reach: Reach) -> tuple[frozenset[s
             affirmed.add(rec.id)
     closure = reach.dependents(frozenset(roots))
     return frozenset(roots | {rid for rid in closure if rid not in affirmed}), frozenset(roots)
+
+
+def _met(dep: str, world: World, done: Labels, withdrawn: frozenset[str]) -> bool:
+    """A dependency is met by the record or by the user's standing
+    replacement of it: a correction keeps the claim, so what depends on the
+    claim follows the current wording."""
+    if done.by_id[dep].valid:
+        return True
+    return any(a.record_id not in withdrawn for a in world.replaced_by(dep))
 
 
 def _touches(rec: RecordState, world: World) -> list[tuple[int, datetime]]:
@@ -214,7 +232,28 @@ def label(world: World, cfg: Config, now: datetime) -> Labels:
     ordered = list(world.events.values())
     for rec in sorted(world.records.values(), key=lambda r: world.position[r.proposed.id]):
         out.by_id[rec.id] = _label_one(rec, world, cfg, now, influence, reach, withdrawn, roots, held, out, ordered)
+    _withhold_pending_restrictions(world, out)
     return out
+
+
+def _withhold_pending_restrictions(world: World, labels: Labels) -> None:
+    """A model-proposed qualification with evidence of its own (L1) may be
+    true, and delivering its target alone would deliver the unqualified claim,
+    so the target is withheld until the qualification is valid or withdrawn.
+    A target the user affirmed is never withheld, and a proposal with no
+    counted evidence withholds nothing: a model proposal can withhold only at
+    the cost of evidence, and never over the user's word."""
+    pending: dict[str, list[str]] = {}
+    for rec in world.records.values():
+        lab = labels.by_id[rec.id]
+        if rec.proposed.kind is not Kind.RECORD_PROPOSED or lab.rung is not Rung.L1:
+            continue
+        for target in rec.spec.refines:
+            held = labels.by_id.get(target)
+            if held is not None and held.valid and not held.affirmed:
+                pending.setdefault(target, []).append(rec.id)
+    for target, by in pending.items():
+        labels.by_id[target] = replace(labels.by_id[target], withheld_by=tuple(sorted(by)))
 
 
 def _label_one(
@@ -234,11 +273,17 @@ def _label_one(
     if rid in withdrawn:
         why = "withdrawn by the user" if rid in roots else "depends on a record the user withdrew"
         return Label(rid, Rung.L4, why, withdrawn=True)
+    standing = [a for a in world.replaced_by(rid) if a.record_id not in withdrawn]
+    if standing:
+        # The user's replacement stands; it reopens the old version only if
+        # the user withdraws it, not if it merely loses support.
+        a = standing[-1]
+        return Label(rid, Rung.L4, f"{'corrected' if a.op == 'correct' else 'replaced'} by the user with {a.record_id}")
 
     set_aside: list[tuple[str, str]] = []
     support = [g for g in counted(rec, world, cfg, Polarity.SUPPORT) if inside(rec.scope, g)]
 
-    bad_deps = [d for d in rec.spec.depends_on if d in done.by_id and not done.by_id[d].deliverable]
+    bad_deps = [d for d in rec.spec.dependencies if d in done.by_id and not _met(d, world, done, withdrawn)]
     tainted = set().union(*(held.get(d, frozenset()) for d in bad_deps)) if bad_deps else set()
     kept = []
     for g in support:
@@ -291,7 +336,12 @@ def _label_one(
         why = "counter-evidence after the last affirmation"
     elif affirmations:
         l2 = True
-        why = "user confirmed" if any(g.event.kind is Kind.USER_CONFIRM for g in affirmations) else "the user stated it as a standing rule"
+        kinds = {g.event.kind for g in affirmations}
+        why = (
+            "user confirmed" if Kind.USER_CONFIRM in kinds
+            else "written by the user" if Kind.USER_AMEND in kinds
+            else "the user stated it as a standing rule"
+        )
         # The stretch at L2 began at the first affirmation after the record
         # last fell (a counter, or the user's withdrawal), or, if it never
         # fell, when it first met the threshold, if that came earlier.

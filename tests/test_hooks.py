@@ -408,3 +408,40 @@ def test_background_commands_never_import_from_the_project_directory(tmp_path):
     out = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert "planted" not in out.stdout + out.stderr
+
+
+def test_a_decide_call_becomes_a_decision_in_force_and_rkm_commands_amend(memory, proj, tmp_path, spawned, capsys):
+    from rka_memory.domain import Kind as K, RecordKind
+
+    sid = "dec-1"
+    fire(capsys, "SessionStart", {**base(sid, proj, tmp_path), "source": "startup"})
+    use = {
+        **base(sid, proj, tmp_path),
+        "tool_name": "decide",
+        "tool_use_id": "call_dec1",
+        "tool_input": {"choice": "Store results in SQLite", "alternatives": ["Postgres"], "reason": "no server"},
+        "tool_response": {"recorded": True},
+    }
+    fire(capsys, "PostToolUse", use)
+    fire(capsys, "PostToolUse", {**use, "tool_use_id": "call_dec2", "tool_input": {"choice": "x"}})
+    world = memory.world()
+    (dec,) = [r for r in world.records.values() if r.spec.kind is RecordKind.DECISION]
+    assert (dec.spec.content, dec.spec.alternatives, dec.spec.reason, dec.proposed.session_id) == (
+        "Store results in SQLite", ("Postgres",), "no server", sid
+    )
+    assert memory.labels().by_id[dec.id].rung.value == "L0D"
+
+    def typed(text):
+        return fire(capsys, "UserPromptSubmit", {**base(sid, proj, tmp_path), "prompt": text})
+
+    assert typed(f"rkm confirm {dec.id}") == {"decision": "block", "reason": f"rka-memory recorded confirm for {dec.id}; now L2"}
+    assert typed(f"rkm impact {dec.id}")["reason"] == f"rka-memory: rejecting {dec.id} would withdraw {dec.id}. Nothing was recorded."
+    assert typed(f"rkm close {dec.id} toolchain") == {
+        "decision": "block",
+        "reason": "rka-memory: `rkm close` needs <field>=<value> with a field of ['task_class', 'project', 'toolchain', 'model_id', 'user_context']",
+    }
+    reply = typed(f"rkm qualify {dec.id} only for the results store")["reason"]
+    (amend,) = [e for e in memory.ledger.read() if e.kind is K.USER_AMEND]
+    new = amend.payload["record_id"]
+    assert reply == f"rka-memory recorded qualify of {dec.id}; {dec.id} now L2; {new} now L2"
+    assert [e for e in memory.ledger.read() if e.session_id == sid and e.kind is K.USER_MSG] == []
