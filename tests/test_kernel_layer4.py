@@ -230,18 +230,21 @@ def test_a_trial_without_a_positive_contrast_closes_and_never_reopens():
     assert candidates(project(lg.events), labels_of(lg), cfg()) == []
 
 
-def test_a_session_that_changed_its_tests_counts_in_neither_arm():
+def test_a_session_that_changed_its_tests_counts_against_promotion_in_either_arm():
+    """t0 (treated) and t5 (withheld) edited the tests: t0's pass counts as a
+    failure, t5's failure as a pass. Counted as observed, the trial would be
+    positive (treated 3/3, withheld 2/3)."""
     lg = Ledger()
     proposed_with_support(lg)
-    for i, arm in enumerate(["treated", "withheld"] * 3):
+    for i, (arm, ok) in enumerate([("treated", True), ("withheld", True), ("treated", True), ("withheld", True), ("treated", True), ("withheld", False)]):
         sid = f"t{i}"
         lg.start(sid, **UV)
         lg.assign(sid, "r_proc", arm)
-        if sid == "t0":
+        if sid in ("t0", "t5"):
             lg.write(sid, "/p/app/test_calc.py")
-        lg.test(sid, arm == "treated", "uv run pytest")
+        lg.test(sid, ok, "uv run pytest")
         lg.end(sid)
-    assert rr(lg, "r_proc") == ("L1", "in trial: treated 2, withheld 3 sessions")
+    assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 2/3, withheld 3/3")
 
 
 def test_a_rules_outcome_is_whether_the_user_corrected_the_session():

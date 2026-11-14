@@ -373,10 +373,10 @@ def _label_one(
     elif meets_l2(support, cfg):
         # Its own evidence would validate a fact, so it may be tested: a
         # randomized trial decides (DESIGN_V2 5.3).
-        excluded = modified_sessions(world, cfg) | {
+        suspect = modified_sessions(world, cfg) | {
             sid for sid in {e.session_id for e in world.trials} if influence.session(sid) & withdrawn
         }
-        tr = trials.evaluate(rec, world, cfg, frozenset(excluded))
+        tr = trials.evaluate(rec, world, cfg, frozenset(suspect))
         common["trial"] = tr.status
         why = tr.reason()
         if tr.status == "positive":

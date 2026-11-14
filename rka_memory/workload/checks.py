@@ -154,12 +154,13 @@ def _trial_status(world: World, arms: dict[str, str], before: int | None) -> str
     """A procedure's trial recomputed from the log: sessions with a coin, in
     the order they ended (before position `before` if given), each counted
     as passing if its last test or exit result passed. A session whose
-    modification check found its tests changed counts in neither arm."""
+    modification check found its tests changed counts against promotion: a
+    failure if treated, a pass if withheld."""
     n = {"treated": [0, 0], "withheld": [0, 0]}
     changed = {e.session_id for e in world.checks if e.payload.get("check") == "modification" and not e.payload.get("passed")}
     ended = sorted(
         (world.position[s.ended.id], s)
-        for s in (world.sessions.get(x) for x in arms if x not in changed)
+        for s in (world.sessions.get(x) for x in arms)
         if s is not None and s.ended is not None and (before is None or world.position[s.ended.id] < before)
     )
     for _, s in ended:
@@ -170,7 +171,7 @@ def _trial_status(world: World, arms: dict[str, str], before: int | None) -> str
         if arm is None:
             continue
         arm[0] += 1
-        arm[1] += ok
+        arm[1] += (arms[s.id] == "withheld") if s.id in changed else ok
         if n["treated"][0] >= TRIAL_M and n["withheld"][0] >= TRIAL_M:
             gap = n["treated"][1] / n["treated"][0] - n["withheld"][1] / n["withheld"][0]
             return "positive" if gap >= TRIAL_DELTA - 1e-9 else "closed"

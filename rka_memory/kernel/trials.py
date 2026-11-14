@@ -65,11 +65,16 @@ def outcome(rec: RecordState, world: World, session: Session) -> bool:
     return not _corrected(world, session)
 
 
-def evaluate(rec: RecordState, world: World, cfg: Config, excluded: frozenset[str] = frozenset()) -> Trial:
+def evaluate(rec: RecordState, world: World, cfg: Config, suspect: frozenset[str] = frozenset()) -> Trial:
     """The record's trial, from the logged coins and the ended sessions.
-    `excluded` sessions count in neither arm: those that changed their own
-    tests, whose checks then prove nothing, and those that had a withdrawn
-    record in context."""
+
+    A `suspect` session still counts in its arm, but its outcome is set
+    against promotion: a failure if treated, a success if withheld. These
+    are sessions that changed their own tests, whose checks then prove
+    nothing, and sessions that had a withdrawn record in context. Dropping
+    them instead would let what happens after the coin (an agent editing the
+    tests of a treated session that was failing) choose which sessions
+    count; scored this way, no such session can help a record pass."""
     arms: dict[str, str] = {}
     for ev in world.trials:
         if ev.payload.get("record_id") == rec.id and ev.session_id not in arms:
@@ -77,7 +82,7 @@ def evaluate(rec: RecordState, world: World, cfg: Config, excluded: frozenset[st
     ended = sorted(
         (world.position[s.ended.id], s)
         for sid in arms
-        if sid not in excluded and (s := world.sessions.get(sid)) is not None and s.ended is not None
+        if (s := world.sessions.get(sid)) is not None and s.ended is not None
     )
     counts = {"treated": [0, 0], "withheld": [0, 0]}
     m = cfg.trials.m
@@ -86,7 +91,7 @@ def evaluate(rec: RecordState, world: World, cfg: Config, excluded: frozenset[st
         if arm is None:
             continue
         arm[0] += 1
-        arm[1] += outcome(rec, world, sess)
+        arm[1] += (arms[sess.id] == "withheld") if sess.id in suspect else outcome(rec, world, sess)
         if counts["treated"][0] >= m and counts["withheld"][0] >= m:
             (tn, tk), (wn, wk) = counts["treated"], counts["withheld"]
             positive = tk / tn - wk / wn >= cfg.trials.delta - 1e-9
