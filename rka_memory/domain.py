@@ -114,7 +114,10 @@ GROUNDING: dict[Kind, Callable[[Mapping[str, Any]], frozenset[Polarity]]] = {
     Kind.USER_CONFIRM: lambda p: SUPPORT_ONLY,
     Kind.USER_REJECT: lambda p: COUNTER_ONLY,
     Kind.USER_AMEND: lambda p: SUPPORT_ONLY,
-    Kind.CHECK: lambda p: _outcome(bool(p.get("passed"))),
+    # A passing citation or falsifier shows only that the words the model
+    # chose are (or are not) in the file, not that the record follows from
+    # them, so it grounds nothing; a failing one counts against the record.
+    Kind.CHECK: lambda p: frozenset() if p.get("passed") else COUNTER_ONLY,
     Kind.USER_EDIT: lambda p: BOTH,
     Kind.USER_UNDO: lambda p: COUNTER_ONLY,
     Kind.USER_REPEAT: lambda p: SUPPORT_ONLY,

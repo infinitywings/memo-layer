@@ -153,11 +153,13 @@ TRIAL_M, TRIAL_DELTA = 3, 1 / 3
 def _trial_status(world: World, arms: dict[str, str], before: int | None) -> str:
     """A procedure's trial recomputed from the log: sessions with a coin, in
     the order they ended (before position `before` if given), each counted
-    as passing if its last test or exit result passed."""
+    as passing if its last test or exit result passed. A session whose
+    modification check found its tests changed counts in neither arm."""
     n = {"treated": [0, 0], "withheld": [0, 0]}
+    changed = {e.session_id for e in world.checks if e.payload.get("check") == "modification" and not e.payload.get("passed")}
     ended = sorted(
         (world.position[s.ended.id], s)
-        for s in (world.sessions.get(x) for x in arms)
+        for s in (world.sessions.get(x) for x in arms if x not in changed)
         if s is not None and s.ended is not None and (before is None or world.position[s.ended.id] < before)
     )
     for _, s in ended:

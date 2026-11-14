@@ -328,14 +328,14 @@ def _user_amend(world: World, ev: Event) -> None:
 
 
 def _check(world: World, ev: Event) -> None:
-    """A check that names a record is evidence for it, like a verdict: it
-    passed (support) or failed (counter). A modification check names a
+    """A failed check that names a record counts against it, like a verdict.
+    A passing one links nothing: the model chose the words it checks, so it
+    is no evidence that the record holds. A modification check names a
     session, not a record."""
     world.checks.append(ev)
     rec = world.records.get(str(ev.payload.get("record_id") or ""))
-    if rec is not None:
-        polarity = Polarity.SUPPORT if ev.payload.get("passed") else Polarity.COUNTER
-        rec.links.append(Link(event_id=ev.id, record_id=rec.id, polarity=polarity, via=ev.id))
+    if rec is not None and not ev.payload.get("passed"):
+        rec.links.append(Link(event_id=ev.id, record_id=rec.id, polarity=Polarity.COUNTER, via=ev.id))
 
 
 def _trial(world: World, ev: Event) -> None:

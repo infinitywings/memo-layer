@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 
 from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, Polarity, RecordKind, Rung, State, derived_id, parse_ts
-from rka_memory.kernel.evidence import Grounding, affirmation, applicable, counted, inside, meets_l2
+from rka_memory.kernel.evidence import Grounding, affirmation, applicable, counted, inside, meets_l2, modified_sessions
 from rka_memory.kernel import trials
 from rka_memory.kernel.influence import Influence, Reach
 from rka_memory.skills.gate import OUTCOME_KINDS, _used_skill, final_outcome, follows, normalize_command, outcome_ok
@@ -373,7 +373,10 @@ def _label_one(
     elif meets_l2(support, cfg):
         # Its own evidence would validate a fact, so it may be tested: a
         # randomized trial decides (DESIGN_V2 5.3).
-        tr = trials.evaluate(rec, world, cfg)
+        excluded = modified_sessions(world, cfg) | {
+            sid for sid in {e.session_id for e in world.trials} if influence.session(sid) & withdrawn
+        }
+        tr = trials.evaluate(rec, world, cfg, frozenset(excluded))
         common["trial"] = tr.status
         why = tr.reason()
         if tr.status == "positive":

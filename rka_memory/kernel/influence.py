@@ -146,9 +146,11 @@ class Influence:
         w = self.world
         pos = w.position[ev.id]
         if ev.kind is Kind.CHECK:
+            # Looked up by the file anchors writes are indexed by, so a path
+            # spelled differently cannot slip past them.
             out: set[str] = set()
-            for path in ev.payload.get("paths") or ():
-                out |= self.written_under(str(path), pos)
+            for key in (*(ev.payload.get("anchors") or ()), *(ev.payload.get("paths") or ())):
+                out |= self.written_under(str(key), pos)
             return frozenset(out)
         out = set(self.in_session(ev.session_id, pos)) | self.artifact(ev.session_id, pos)
         if ev.kind in CROSS_SESSION_KINDS:

@@ -65,8 +65,11 @@ def outcome(rec: RecordState, world: World, session: Session) -> bool:
     return not _corrected(world, session)
 
 
-def evaluate(rec: RecordState, world: World, cfg: Config) -> Trial:
-    """The record's trial, from the logged coins and the ended sessions."""
+def evaluate(rec: RecordState, world: World, cfg: Config, excluded: frozenset[str] = frozenset()) -> Trial:
+    """The record's trial, from the logged coins and the ended sessions.
+    `excluded` sessions count in neither arm: those that changed their own
+    tests, whose checks then prove nothing, and those that had a withdrawn
+    record in context."""
     arms: dict[str, str] = {}
     for ev in world.trials:
         if ev.payload.get("record_id") == rec.id and ev.session_id not in arms:
@@ -74,7 +77,7 @@ def evaluate(rec: RecordState, world: World, cfg: Config) -> Trial:
     ended = sorted(
         (world.position[s.ended.id], s)
         for sid in arms
-        if (s := world.sessions.get(sid)) is not None and s.ended is not None
+        if sid not in excluded and (s := world.sessions.get(sid)) is not None and s.ended is not None
     )
     counts = {"treated": [0, 0], "withheld": [0, 0]}
     m = cfg.trials.m

@@ -5,14 +5,13 @@ description: >-
   session's packet is built. Each check is logged before any label reads
   it, in the session it ran in; each session also logs its modification
   check, so a session adds one check event besides the citation's. The
-  proposal's test and its first check
-  fall in one session, so the fact reaches L2 at the next session's check,
-  before that packet is built. A passing check is evidence the agent did not author, but only if the
-  file was not last written while the fact was in context (4.3). When the
-  user deletes the cited file, the next check fails, and a failed
-  runner-owned check withdraws the fact (7.2): it goes to L4 and is not
-  delivered. This replaces v1's note that a file no longer exists, which
-  read the live filesystem at render time.
+  model chose the words, so a passing check shows only that they are in the
+  file: it is no evidence that the fact holds, and the fact validates on
+  passing tests in two sessions as any fact does. When the user deletes the
+  cited file, the next check fails, and a failed runner-owned check
+  withdraws the fact (7.2): it goes to L4 and is not delivered. This
+  replaces v1's note that a file no longer exists, which read the live
+  filesystem at render time.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 sessions:
@@ -25,7 +24,8 @@ sessions:
       - bash: pytest -q
     miner:
       candidates:
-        - content: helpers.clamp keeps a value between two bounds
+        - &clamp
+          content: helpers.clamp keeps a value between two bounds
           kind: fact
           evidence: [{kind: test_result, passed: true}]
           cites: [{path: helpers.py, quote: "return max(low, min(value, high))"}]
@@ -38,17 +38,27 @@ sessions:
     agent:
       - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
       - bash: pytest -q
+    miner:
+      candidates: [*clamp]
     expect:
-      - {record: helpers.clamp keeps a value between two bounds, delivered: true}
+      - {record: helpers.clamp keeps a value between two bounds, delivered: false}
       - {record: helpers.clamp keeps a value between two bounds, rung: L2}
       - {events: {kind: check, count: 4}}
 
   - at: +2d
-    drift:
-      - remove: helpers.py
     prompt: Add a power function to calc.py
     agent:
       - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: helpers.clamp keeps a value between two bounds, delivered: true}
+
+  - at: +3d
+    drift:
+      - remove: helpers.py
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
       - bash: pytest -q
     expect:
       - {record: helpers.clamp keeps a value between two bounds, delivered: false}

@@ -143,7 +143,7 @@ def test_a_test_result_from_a_session_that_changed_its_tests_is_weak():
 # Runner-owned checks (8.2, 7.2)
 
 
-def test_a_passing_citation_counts_as_support_and_a_failing_one_withdraws_the_record():
+def test_a_passing_citation_is_no_evidence_and_a_failing_one_withdraws_the_record():
     lg = Ledger()
     lg.start("s1", **UV)
     lg.propose("s1", "r_a", content="helpers.clamp keeps a value between bounds")
@@ -152,21 +152,22 @@ def test_a_passing_citation_counts_as_support_and_a_failing_one_withdraws_the_re
     lg.link("r_dep", lg.test("s1", True))
     lg.end("s1")
     lg.check("s2", "citation", record_id="r_a", passed=True, paths=["/p/app/helpers.py"])
-    assert rr(lg, "r_a") == ("L2", "independent grounding in enough distinct sessions")
+    assert rr(lg, "r_a") == ("L1", "independent grounding below threshold")
     lg.check("s3", "citation", record_id="r_a", passed=False, paths=["/p/app/helpers.py"])
     assert rr(lg, "r_a") == ("L4", "a runner-owned check failed: citation")
     assert rr(lg, "r_dep") == ("L4", "depends on a record a failed check withdrew")
 
 
-def test_a_passing_check_of_a_file_written_while_the_record_was_in_context_is_not_independent():
+def test_a_citation_the_model_chose_never_validates_a_claim_however_often_it_passes():
     lg = Ledger()
-    lg.start("s0", **UV)
-    lg.propose("s0", "r_a", content="helpers.clamp keeps a value between bounds")
-    lg.link("r_a", lg.test("s0", True))
-    lg.end("s0")
-    written_while_in_context(lg, "r_a", "/p/app/helpers.py")
-    lg.check("s2", "falsifier", record_id="r_a", passed=True, paths=["/p/app/helpers.py"])
-    assert labels_of(lg).by_id["r_a"].rung.value == "L1"
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_claim", kind=RecordKind.CONSTRAINT, content="Register every function in OPERATIONS")
+    lg.link("r_claim", lg.tool_result("s1"))
+    lg.end("s1")
+    for i in range(2, 7):
+        lg.check(f"s{i}", "citation", record_id="r_claim", passed=True, paths=["/p/app/calc.py"])
+    assert rr(lg, "r_claim") == ("L1", "prescriptive: needs the user's affirmation or a trial")
+    assert candidates(project(lg.events), labels_of(lg), cfg()) == []
 
 
 # Randomized trials (5.3)
@@ -227,6 +228,20 @@ def test_a_trial_without_a_positive_contrast_closes_and_never_reopens():
         trial_session(lg, f"t{i}", arm, True)
     assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 3/3, withheld 3/3")
     assert candidates(project(lg.events), labels_of(lg), cfg()) == []
+
+
+def test_a_session_that_changed_its_tests_counts_in_neither_arm():
+    lg = Ledger()
+    proposed_with_support(lg)
+    for i, arm in enumerate(["treated", "withheld"] * 3):
+        sid = f"t{i}"
+        lg.start(sid, **UV)
+        lg.assign(sid, "r_proc", arm)
+        if sid == "t0":
+            lg.write(sid, "/p/app/test_calc.py")
+        lg.test(sid, arm == "treated", "uv run pytest")
+        lg.end(sid)
+    assert rr(lg, "r_proc") == ("L1", "in trial: treated 2, withheld 3 sessions")
 
 
 def test_a_rules_outcome_is_whether_the_user_corrected_the_session():

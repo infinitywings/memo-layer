@@ -54,6 +54,9 @@ class Ledger:
     def test(self, session: str, passed: bool, command: str = "uv run pytest") -> Event:
         return self._ev(Kind.TEST_RESULT, Actor.TOOL, session, {"passed": passed, "command": command})
 
+    def tool_result(self, session: str, ok: bool = True) -> Event:
+        return self._ev(Kind.TOOL_RESULT, Actor.TOOL, session, {"tool": "Bash", "tool_use_id": f"tr{self.n}", "ok": ok})
+
     def user_msg(self, session: str, text: str) -> Event:
         return self._ev(Kind.USER_MSG, Actor.USER, session, {"text": text})
 

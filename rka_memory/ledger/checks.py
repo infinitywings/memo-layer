@@ -3,9 +3,10 @@ label reads them (DESIGN_V2 4.1, 8).
 
 - Citations and falsifiers: a record names a file and words in it; the
   check reads the file and logs whether the words are there (a citation) or
-  absent (a falsifier). The paths come from the model, so a path that is not
-  a relative path inside the project is never read; its check is logged as
-  failed.
+  absent (a falsifier). The model chose the words, so a passing check is no
+  evidence; a failing one withdraws the record (its cited basis is gone).
+  The paths come from the model, so a path that is not a relative path
+  inside the project is never read; its check is logged as failed.
 - Modification: the hashes of the files matching `checks.globs`, taken at
   session start and compared at session end. A session that changed any
   makes its own test and exit results weak.
@@ -18,6 +19,7 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from rka_memory import anchors
 from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, State
 from rka_memory.kernel.evidence import _matches
@@ -67,6 +69,7 @@ def citation_events(records: Iterable[RecordState], state: State, session_id: st
                         "record_id": rec.id,
                         "passed": passed,
                         "paths": [str(target)] if target is not None else [],
+                        "anchors": [a for a in [anchors.file_anchor(str(root / cite.path), state.project)] if a] if target is not None else [],
                         "path": cite.path,
                         "quote": cite.quote,
                     },
