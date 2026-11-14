@@ -90,6 +90,14 @@ def valid(labels: Labels, rec: RecordState, state: State, world: World) -> bool:
     return label is not None and label.deliverable and applicable(rec, state, world) is True
 
 
+def _affirmations(rec: RecordState, world: World, cfg: Config) -> list[Grounding]:
+    """The user's affirmations of the record inside its scope: typed confirms,
+    and standing statements of exactly its words. Both the withdrawn set and
+    the label read this one list, so they cannot disagree about whether the
+    user affirmed the record after withdrawing it."""
+    return [g for g in counted(rec, world, cfg, Polarity.SUPPORT) if affirmation(g) and inside(rec.scope, g)]
+
+
 def _withdrawals(rec: RecordState, world: World, cfg: Config) -> tuple[int, int]:
     """Positions of the latest affirmation and the latest withdrawal by the user (-1 if none).
 
@@ -98,7 +106,7 @@ def _withdrawals(rec: RecordState, world: World, cfg: Config) -> tuple[int, int]
     checked, is not: the miner chose which record those words withdraw, and
     the miner never retracts (DESIGN_V2 7.2). Such a link is a counter that
     demotes its target and never cascades."""
-    last_aff = max((world.position[g.event.id] for g in counted(rec, world, cfg, Polarity.SUPPORT) if affirmation(g)), default=-1)
+    last_aff = max((world.position[g.event.id] for g in _affirmations(rec, world, cfg)), default=-1)
     last_wd = max(
         (
             world.position[ev.id]
@@ -234,7 +242,7 @@ def _label_one(
     tainted = set().union(*(held.get(d, frozenset()) for d in bad_deps)) if bad_deps else set()
     kept = []
     for g in support:
-        if g.session_id in tainted and not g.targeted:
+        if g.session_id in tainted and not g.targeted and not affirmation(g):
             set_aside.append((g.event.id, "observed where an invalid dependency was delivered"))
         else:
             kept.append(g)
@@ -246,7 +254,7 @@ def _label_one(
         why = "all support was observed where an invalid dependency was delivered" if set_aside else "no counted non-model evidence"
         return Label(rid, Rung.L0D, why, set_aside=tuple(set_aside))
 
-    affirmations = [g for g in support if affirmation(g)]
+    affirmations = _affirmations(rec, world, cfg)
     last_aff = max((world.position[g.event.id] for g in affirmations), default=-1)
 
     learned_under = tuple(sorted(w for w in withdrawn if w in influence.in_session(rec.proposed.session_id)))

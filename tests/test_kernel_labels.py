@@ -3,7 +3,7 @@
 import random
 
 from ledger_builder import Ledger, cfg
-from rka_memory.domain import RecordKind
+from rka_memory.domain import FieldConstraint, RecordKind, Scope
 from rka_memory.kernel.labels import label
 from rka_memory.world import project
 
@@ -183,6 +183,31 @@ def test_a_record_learned_under_a_withdrawn_one_needs_support_from_outside_its_i
     assert labels_of(lg).by_id["r_learned"].rung.value == "L2"
 
 
+def test_withdrawal_and_affirmation_read_the_same_affirmations():
+    """A reject set aside as a counter (typed where a withdrawn record was in
+    context), then the user's statement of the record's words outside its
+    scope: the statement counts nowhere, so the reject withdraws."""
+    lg = Ledger()
+    app = Scope(project=FieldConstraint(frozenset({"/p/app"})))
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_w")
+    lg.link("r_w", lg.test("s1", True))
+    lg.propose("s1", "r_rule", scope=app, kind=RecordKind.PREFERENCE, content="End every reply with a Summary line")
+    lg.confirm("s1", "r_rule")
+    lg.end("s1")
+    lg.reject("cli", "r_w")
+    lg.start("s2", **UV)
+    lg.deliver("s2", "r_w")
+    lg.reject("s2", "r_rule")
+    lg.end("s2")
+    lg.start("s3", **{**UV, "project": "/p/other"})
+    msg = lg.user_msg("s3", "From now on: End every reply with a Summary line.")
+    lg.link("r_rule", msg, statement=STATEMENT)
+    lg.end("s3")
+    lab = labels_of(lg).by_id["r_rule"]
+    assert (lab.rung.value, lab.reason) == ("L4", "withdrawn by the user")
+
+
 def test_labels_ignore_v1_rung_events_and_are_deterministic():
     lg = Ledger()
     lg.start("s1", **UV)
@@ -281,3 +306,43 @@ def test_no_withdrawn_record_is_deliverable():
             lg.reject("cli", sorted(world.records)[0])
         labs = labels_of(lg)
         assert not (labs.withdrawn & set(labs.deliverable())), seed
+
+
+def verdict_ledger(rng: random.Random, sessions: int = 10) -> Ledger:
+    """Records in two projects, with confirms, rejects, deliveries and the
+    user's statements of a record's words, interleaved at random."""
+    lg = Ledger()
+    app = Scope(project=FieldConstraint(frozenset({"/p/app"})))
+    proposed: list[str] = []
+    for s in range(sessions):
+        sid = f"s{s}"
+        lg.start(sid, **{**UV, "project": rng.choice(["/p/app", "/p/other"])})
+        if proposed and rng.random() < 0.6:
+            lg.deliver(sid, *rng.sample(proposed, k=rng.randint(1, len(proposed))))
+        if len(proposed) < 5 and rng.random() < 0.7:
+            rid = f"r{len(proposed)}"
+            deps = tuple(rng.sample(proposed, k=1)) if proposed and rng.random() < 0.4 else ()
+            lg.propose(sid, rid, scope=app if rng.random() < 0.5 else None, content=f"rule {rid}", depends_on=deps)
+            proposed.append(rid)
+        for rid in rng.sample(proposed, k=min(len(proposed), rng.randint(0, 2))):
+            roll = rng.random()
+            if roll < 0.3:
+                lg.link(rid, lg.test(sid, rng.random() < 0.8), "support" if rng.random() < 0.8 else "counter")
+            elif roll < 0.5:
+                lg.confirm(sid, rid)
+            elif roll < 0.7:
+                lg.reject(sid, rid)
+            else:
+                msg = lg.user_msg(sid, f"From now on: rule {rid}.")
+                lg.link(rid, msg, statement={"quote": f"rule {rid}", "marker": "From now on"})
+        lg.end(sid)
+    return lg
+
+
+def test_labelling_never_fails_and_never_delivers_a_withdrawn_record():
+    for seed in range(300):
+        lg = verdict_ledger(random.Random(seed))
+        labs = labels_of(lg)
+        assert not (labs.withdrawn & set(labs.deliverable())), seed
+        for lab in labs.by_id.values():
+            assert (lab.since is not None) == lab.deliverable, (seed, lab)
