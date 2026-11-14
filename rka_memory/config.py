@@ -26,8 +26,6 @@ class GateConfig:
     weak_only_min_sessions: int = 3
     skill_min_sessions: int = 2
     retire_after_days: float = 60
-    confirm_overrides: bool = True
-    narrow_priority: tuple[str, ...] = ()
     standing_phrases: tuple[str, ...] = ()
 
 
@@ -40,7 +38,6 @@ class Config:
     gate: GateConfig
     weights: dict[Kind, float]
     budget_tokens: int
-    hints_budget_tokens: int
     arms: tuple[str, ...]
     scope_fields: tuple[str, ...]
     task_classes: tuple[str, ...]
@@ -121,11 +118,6 @@ def from_dict(raw: dict[str, Any]) -> Config:
     unknown = set(scope_fields) - set(SCOPE_FIELDS)
     if unknown:
         raise ValueError(f"scope.fields has unknown fields: {sorted(unknown)}")
-    narrow = tuple(gate_raw.get("narrow_priority", GateConfig.narrow_priority))
-    # Narrowing a field records may not constrain would put the constraint back.
-    outside = set(narrow) - set(scope_fields)
-    if outside:
-        raise ValueError(f"gate.narrow_priority names fields outside scope.fields: {sorted(outside)}")
     arms = tuple(raw["packet"]["arms"])
     if not arms or set(arms) - ARMS:
         raise ValueError(f"packet.arms must be a non-empty subset of {sorted(ARMS)}")
@@ -140,13 +132,10 @@ def from_dict(raw: dict[str, Any]) -> Config:
             weak_only_min_sessions=int(gate_raw.get("weak_only_min_sessions", 3)),
             skill_min_sessions=int(gate_raw.get("skill_min_sessions", 2)),
             retire_after_days=float(gate_raw.get("retire_after_days", 60)),
-            confirm_overrides=bool(gate_raw.get("confirm_overrides", True)),
-            narrow_priority=narrow,
             standing_phrases=tuple(str(p) for p in gate_raw.get("standing_phrases") or ()),
         ),
         weights={Kind(k): _number(v) for k, v in raw.get("weights", {}).items()},
         budget_tokens=int(raw["packet"]["budget_tokens"]),
-        hints_budget_tokens=int(raw["packet"].get("hints_budget_tokens", 600)),
         arms=arms,
         scope_fields=scope_fields,
         task_classes=tuple(raw["scope"]["task_classes"]),

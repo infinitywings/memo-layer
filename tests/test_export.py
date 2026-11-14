@@ -68,8 +68,9 @@ def procedure(lg, st, broaden=OPEN_SESSION_FIELDS):
     lg.start("s2", **st)
     ok2 = lg.test("s2", True)
     lg.link("r_proc", ok2)
+    confirm = lg.confirm("s2", "r_proc")
     lg.end("s2")
-    return ok1, ok2
+    return ok1, ok2, confirm
 
 
 def to_l3(memory, lg, st, **kw):
@@ -86,7 +87,7 @@ def test_week5_project_skill_lives_in_the_project_auto_loads_at_l3_and_is_remove
     global_mine.mkdir(parents=True)
     (global_mine / "SKILL.md").write_text("---\nname: my-skill\n---\nmine\n")
     lg = Ledger()
-    ok1, ok2 = procedure(lg, st)
+    ok1, ok2, confirm = procedure(lg, st)
     assert gate(memory, lg) == "L2"
 
     target = proj / ".claude" / "skills" / "rka-r-proc"
@@ -103,7 +104,7 @@ def test_week5_project_skill_lives_in_the_project_auto_loads_at_l3_and_is_remove
             "version": 1,
             "scope": {"project": str(proj), "toolchain": "uv"},
             "auto_load": False,
-            "evidence": [ok1.id, ok2.id],
+            "evidence": [ok1.id, ok2.id, confirm.id],
             "acceptance_check": "uv run pytest",
         },
     }

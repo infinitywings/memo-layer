@@ -91,8 +91,8 @@ def test_week2_grounded_candidates_reach_l1_model_cited_ones_l0d_and_duplicates_
     assert world.records[ungrounded].rung.value == "L0D"
     assert world.records[grounded].scope.describe() == "project=/p/app, toolchain=uv"
     assert first.moves == [
-        {"record_id": grounded, "from": None, "to": "L1", "reason": "proposed with non-model grounding"},
-        {"record_id": ungrounded, "from": None, "to": "L0D", "reason": "proposed without non-model grounding"},
+        {"record_id": grounded, "from": None, "to": "L1", "reason": "independent grounding below threshold"},
+        {"record_id": ungrounded, "from": None, "to": "L0D", "reason": "no counted non-model evidence"},
     ]
     events = appended(memory, first)
     assert [e.kind for e in events] == [
@@ -122,7 +122,7 @@ def test_week2_grounded_candidates_reach_l1_model_cited_ones_l0d_and_duplicates_
     assert second.dropped == []
     assert second.links == []
     assert second.moves == [
-        {"record_id": grounded, "from": "L1", "to": "L2", "reason": "grounded in enough distinct sessions"}
+        {"record_id": grounded, "from": "L1", "to": "L2", "reason": "independent grounding in enough distinct sessions"}
     ]
     assert memory.world().records[grounded].rung.value == "L2"
     kinds = [e.kind for e in appended(memory, second)]
@@ -261,7 +261,7 @@ def test_counter_link_refutes_an_unverified_claim_with_what_the_session_observed
     assert [r.rung.value for r in map(memory.world().records.get, ("r_claim", "r_valid"))] == ["L1", "L2"]
 
 
-def test_duplicate_of_a_retired_record_merges_into_it_and_stays_retired(memory):
+def test_duplicate_of_a_retired_record_merges_into_it_and_stays_retired(memory, monkeypatch):
     lg = Ledger()
     coding = dict(STATE, task_class="coding")
     lg.start("s0", **coding)
@@ -285,6 +285,7 @@ def test_duplicate_of_a_retired_record_merges_into_it_and_stays_retired(memory):
     assert memory.world().records["r_old"].rung.value == "L4"
 
     reply = {"candidates": [{"content": "Install dependencies with pip install", "kind": "fact", "evidence": [ok9.id]}]}
+    monkeypatch.setenv("RKA_MEMORY_NOW", lg.clock.isoformat())
     result = mine_session(memory, "s9", backend=FakeBackend(reply))
 
     assert result.proposed == []
@@ -491,7 +492,7 @@ def test_a_later_prompt_lists_what_an_earlier_prompt_of_the_same_run_proposed(me
 
     (proposed,) = result.proposed
     assert result.moves == [
-        {"record_id": proposed["record_id"], "from": None, "to": "L1", "reason": "proposed with non-model grounding"}
+        {"record_id": proposed["record_id"], "from": None, "to": "L1", "reason": "independent grounding below threshold"}
     ]
     unverified = backend.prompts[1].split("Unverified claims that apply to this state (see rule 12):\n")[1]
     assert unverified.startswith(f"- {proposed['record_id']} [L1 fact, unverified] Messages here are numbered\n")
@@ -911,9 +912,8 @@ def test_standing_words_confirm_a_stated_rule_and_the_users_withdrawal_demotes_i
     rid, other = (p["record_id"] for p in first.proposed)
 
     assert [(m["record_id"], m["to"], m["reason"]) for m in first.moves] == [
-        (rid, "L1", "proposed with non-model grounding"),
-        (other, "L1", "proposed with non-model grounding"),
         (rid, "L2", "the user stated it as a standing rule"),
+        (other, "L1", "prescriptive: needs the user's affirmation or a trial"),
     ]
     assert first.dropped == [Drop("rule 1: keep the tests green standing 'always'", "no standing phrase next to the rule in its message")]
     links = [e.payload for e in appended(memory, first) if e.kind is Kind.EVIDENCE_LINKED]

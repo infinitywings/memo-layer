@@ -1,10 +1,11 @@
 """Projection of the ledger: fold events into sessions, records and links.
 
-`project(events)` is the only way to obtain records. Rungs and scopes change
-only when RUNG_CHANGE and SCOPE_NARROWED events are folded in, so replaying
-the same ledger always yields the same world. A rung change that does not
-start from the record's current rung (a lost race between two gates) is
-skipped and listed in `anomalies`, never applied.
+`project(events)` is the only way to obtain records. A record's `rung` and
+`history` are a cache of the audit trail the gate derives from kernel labels
+(`kernel.labels.audit_events`); the kernel never reads them. A rung change
+that does not start from the cached rung (a lost race between two gates) is
+skipped and listed in `anomalies`. SCOPE_NARROWED events from v1 ledgers
+still fold into the record's scope as an applicability condition.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from rka_memory.domain import (
     SESSION_MARKERS,
     SHOWN_KINDS,
     Actor,
-    TRANSITIONS,
     Event,
     Kind,
     Polarity,
@@ -256,7 +256,7 @@ def _rung_change(world: World, ev: Event) -> None:
     rec = world.records[p["record_id"]]
     from_rung = Rung(p["from"]) if p.get("from") else None
     to_rung = Rung(p["to"])
-    if from_rung != rec.rung or (from_rung, to_rung) not in TRANSITIONS:
+    if from_rung != rec.rung:
         world.anomalies.append((ev.id, f"{rec.id}: {from_rung} -> {to_rung} while at {rec.rung}"))
         return
     rec.rung = to_rung

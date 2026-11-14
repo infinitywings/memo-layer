@@ -188,7 +188,7 @@ def main() -> int:
     check("typed `rkm reject` became a user_reject by the user", len(rejects) == 1 and rejects[0].actor is Actor.USER, rejects)
     leaked = [b for b in bodies[sent_before_reject:] if "rkm reject" in json.dumps(b)]
     check("`rkm` command never reached the model", not leaked, len(leaked))
-    check("rejected record demoted L2 -> L1", world.records["r_e2e"].rung.value == "L1", world.records["r_e2e"].rung)
+    check("rejected record withdrawn to L4", world.records["r_e2e"].rung.value == "L4", world.records["r_e2e"].rung)
     errors = tmp / "ledger" / "hook-errors.log"
     check("no hook errors", not errors.exists() or not errors.read_text().strip(), errors.read_text()[-500:] if errors.exists() else "")
     print(f"\nledger: {tmp / 'ledger' / 'ledger.jsonl'}\nrequests: {requests}")

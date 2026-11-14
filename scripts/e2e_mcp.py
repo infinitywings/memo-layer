@@ -18,7 +18,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 REPO = Path(__file__).resolve().parent.parent
-EXPECTED = {"memory_packet", "memory_hints", "memory_confirm", "memory_reject", "memory_explain", "memory_state"}
+EXPECTED = {"memory_packet", "memory_confirm", "memory_reject", "memory_explain", "memory_state"}
 
 
 async def run(tmp: Path, project: Path) -> list[bool]:

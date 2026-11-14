@@ -1,6 +1,12 @@
-"""Layer-1 gate of docs/DESIGN_V2.md: label saved ledgers with the v2 kernel
-and check the predictions registered before the kernel was written (RKA
-jrn_01M7BN44F0GXVWJP7Z0ZCPFRMS).
+"""Layer-1 and layer-2 gates of docs/DESIGN_V2.md over saved ledgers.
+
+Labels every saved ledger with the v2 kernel and checks the predictions
+registered before the kernel was written (P1-P6, RKA
+jrn_01M7BN44F0GXVWJP7Z0ZCPFRMS), then renders the gated session-start view
+for every recorded session state and checks the layer-2 predictions
+registered before the views were written (V3 is P1-P6 again; V4: two renders
+give the same bytes and no view holds a withdrawn record; RKA
+jrn_01M7BP7B4QRV4ZCFNEVTWWC5MQ).
 
 Usage: python scripts/v2_replay.py [ledger.jsonl ...]
 Without arguments it reads every workload-runs/*/*/ledger/ledger.jsonl.
@@ -19,8 +25,8 @@ from pathlib import Path
 
 from rka_memory import config as config_mod
 from rka_memory.domain import Event, RecordKind, Rung, parse_ts
+from rka_memory.kernel import views
 from rka_memory.kernel.labels import label
-from rka_memory.validity.engine import affirmed
 from rka_memory.world import project
 
 PRESCRIPTIVE = {RecordKind.PROCEDURE, RecordKind.CONSTRAINT, RecordKind.PREFERENCE}
@@ -37,7 +43,8 @@ def load(path: Path):
 def main(argv: list[str]) -> int:
     paths = [Path(p) for p in (argv or sorted(glob.glob("workload-runs/*/*/ledger/ledger.jsonl")))]
     tally: Counter = Counter()
-    misses: dict[str, list[str]] = {f"P{i}": [] for i in range(1, 7)}
+    misses: dict[str, list[str]] = {**{f"P{i}": [] for i in range(1, 7)}, "V4": []}
+    rendered = 0
     slowest = (0.0, "")
     for path in paths:
         events, cfg, name = load(path)
@@ -60,7 +67,7 @@ def main(argv: list[str]) -> int:
                 continue
             if v1 not in AT_LEAST:
                 continue
-            if affirmed(rec, world, cfg):
+            if labels.by_id[rec.id].affirmed:
                 tally[("affirmed", rec.spec.kind.value, v2.value)] += 1
                 if v2 not in AT_LEAST:
                     misses["P2"].append(f"{name}: {rec.id} {v2.value} ({labels.by_id[rec.id].reason})")
@@ -68,6 +75,17 @@ def main(argv: list[str]) -> int:
             tally[("mined", rec.spec.kind.value, v2.value)] += 1
             if rec.spec.kind in PRESCRIPTIVE and v2 in AT_LEAST:
                 misses["P4"].append(f"{name}: {rec.id} {v2.value} ({labels.by_id[rec.id].reason})")
+
+        for sess in world.sessions.values():
+            if sess.started is None:
+                continue
+            first = views.packet(world, labels, cfg, sess.state, arm="gated", channel="session_start")
+            again = views.packet(project(events), label(project(events), cfg, now), cfg, sess.state, arm="gated", channel="session_start")
+            rendered += 1
+            if first.render() != again.render():
+                misses["V4"].append(f"{name}: {sess.id} renders differently")
+            if set(first.record_ids) & labels.withdrawn:
+                misses["V4"].append(f"{name}: {sess.id} delivers {sorted(set(first.record_ids) & labels.withdrawn)}")
 
     facts = {k[2]: n for k, n in tally.items() if k[0] == "mined" and k[1] == "fact"}
     kept = facts.get("L2", 0) + facts.get("L3", 0)
@@ -82,9 +100,10 @@ def main(argv: list[str]) -> int:
         print(f"  {key[0]:9} {key[1]:11} {key[2]:7} {tally[key]}")
     print(f"mined facts staying at L2 or L3: {kept}/{total}")
     print(f"slowest labelling: {slowest[0]:.2f}s ({slowest[1]})")
+    print(f"session-start views rendered twice: {rendered}")
     for p, found in misses.items():
         print(f"{p}: {'held' if not found else 'MISSED'}" + ("".join(f"\n    {m}" for m in found[:12])))
-    return 1 if misses["P1"] or misses["P2"] or misses["P5"] else 0
+    return 1 if misses["P1"] or misses["P2"] or misses["P5"] or misses["V4"] else 0
 
 
 if __name__ == "__main__":

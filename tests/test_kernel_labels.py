@@ -3,7 +3,7 @@
 import random
 
 from ledger_builder import Ledger, cfg
-from rka_memory.domain import RecordKind, Scope, State
+from rka_memory.domain import RecordKind
 from rka_memory.kernel.labels import label
 from rka_memory.world import project
 

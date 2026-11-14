@@ -86,7 +86,7 @@ def test_explain_shows_relations_and_the_users_quoted_words(memory):
         "depends_on": [{"record_id": "r_rule", "rung": "L2"}],
         "dependents": [],
         "supersedes": None,
-        "superseded_by": [{"record_id": "r_proc2", "rung": None}],
+        "superseded_by": [{"record_id": "r_proc2", "rung": "L0D"}],
         "refines": [],
         "refined_by": [],
         "governed_by": [],

@@ -109,7 +109,7 @@ def main() -> int:
     msgs = [e for e in world.events.values() if e.kind is Kind.USER_MSG and "rkm" in str(e.payload.get("text", ""))]
     check("`rkm` command never reached the ledger as a prompt", not msgs, msgs)
     rec = world.records["r_e2e"]
-    check("rejected record demoted L2 -> L1", rec.rung.value == "L1", rec.rung)
+    check("rejected record withdrawn to L4", rec.rung.value == "L4", rec.rung)
     check("no hook errors", not errors.exists() or not errors.read_text().strip(), errors.read_text()[-500:] if errors.exists() else "")
     print(f"\nledger: {tmp / 'ledger' / 'ledger.jsonl'}")
     return 0 if all(checks) else 1

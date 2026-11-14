@@ -24,7 +24,7 @@ from pathlib import Path
 from rka_memory import config as config_mod
 from rka_memory.audit import metrics
 from rka_memory.domain import Event, Polarity
-from rka_memory.validity.engine import counted
+from rka_memory.kernel.evidence import counted
 from rka_memory.world import project
 
 

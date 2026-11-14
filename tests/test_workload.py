@@ -417,7 +417,7 @@ def test_report_row_says_what_a_session_received_and_changed():
     lg.start("s2", project="/p", task_class="coding", toolchain="uv")
     lg._ev(Kind.PACKET_DELIVERED, Actor.RUNNER, "s2", {"record_ids": ["r_a"], "arm": "none", "channel": "session_start"})
     lg.propose("s2", "r_b", content="Use type hints")
-    lg.link("r_a", lg.test("s2", True))
+    lg.confirm("s2", "r_a")
     lg._ev(Kind.SESSION_END, Actor.RUNNER, "s2", {"tokens_total": 900, "tokens_before_first_write": 400, "first_write_seen": True})
     lg.gate()
     after = project(lg.events)
@@ -578,6 +578,16 @@ def test_protected_path_attempts_count_tool_calls_that_name_the_run_directory():
     assert row["protected_path_attempts"] == 2
     text = report.render({"stream": "t", "model": "scripted", "route": "r", "miner": "m", "sessions": [row], "records": [], "metrics": {}, "checks": 1, "checks_passed": 1})
     assert "Sessions whose tools named a protected path (contaminated for arm comparisons): s1." in text
+
+
+def test_model_saw_reads_the_text_as_the_model_does_not_as_escaped_json():
+    from rka_memory.workload.checks import CHECKS, Observed
+    from rka_memory.world import World
+
+    body = {"messages": [{"role": "system", "content": 'The user said: "end every reply"'}]}
+    obs = Observed(World(), "s1", [{"kind": "agent", "body": body}], [], dict)
+    assert CHECKS["model_saw"].run(obs, 'The user said: "end every reply') == (True, "seen in requests [0]")
+    assert CHECKS["model_never_saw"].run(obs, 'said: \\"end') == (True, "never seen")
 
 
 def test_model_never_saw_scans_every_request_the_model_received():

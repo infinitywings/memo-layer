@@ -49,32 +49,10 @@ def packet(
     *,
     detect: Detector = detect_cwd,
 ) -> dict[str, Any]:
-    pkt = memory.deliver(
+    view = memory.deliver(
         bound_session(memory, session_id), _state(memory, state, detect), channel="mcp", budget_tokens=budget_tokens
     )
-    return {
-        "records": [i.to_json() for i in pkt.items],
-        "omitted_count": pkt.omitted_count,
-        "ledger_revision": pkt.ledger_revision,
-        "arm": pkt.arm,
-        "text": pkt.render(),
-    }
-
-
-def hints(
-    memory: Memory,
-    state: dict[str, Any] | None = None,
-    session_id: str | None = None,
-    *,
-    detect: Detector = detect_cwd,
-) -> dict[str, Any]:
-    pkt = memory.deliver(bound_session(memory, session_id), _state(memory, state, detect), channel="hints")
-    return {
-        "records": [{**i.to_json(), "tag": "unvalidated"} for i in pkt.items],
-        "omitted_count": pkt.omitted_count,
-        "ledger_revision": pkt.ledger_revision,
-        "text": pkt.render(),
-    }
+    return {**view.to_json(), "text": view.render()}
 
 
 def request_verdict(memory: Memory, record_id: str, verdict: str, reason: str = "") -> dict[str, Any]:
@@ -130,14 +108,6 @@ def build_server(open_memory: Callable[[], Memory] = Memory.open) -> FastMCP:
         return packet(open_memory(), state, budget_tokens, session_id)
 
     @server.tool()
-    def memory_hints(state: dict[str, Any] | None = None, session_id: str | None = None) -> dict[str, Any]:
-        """Unvalidated L1 hints for the current state.
-
-        Each hint is grounded but not validated, so check it before relying on it.
-        """
-        return hints(open_memory(), state, session_id)
-
-    @server.tool()
     def memory_confirm(record_id: str) -> dict[str, Any]:
         """Ask the user to confirm a record. The agent cannot confirm records itself."""
         return request_verdict(open_memory(), record_id, "confirm")
@@ -149,7 +119,7 @@ def build_server(open_memory: Callable[[], Memory] = Memory.open) -> FastMCP:
 
     @server.tool()
     def memory_explain(record_id: str) -> dict[str, Any]:
-        """Rung history, scope, evidence and deliveries of one record."""
+        """Label and its reason, scope, evidence and deliveries of one record."""
         return explain(open_memory(), record_id)
 
     @server.tool()

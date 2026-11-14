@@ -4,7 +4,6 @@ from ledger_builder import Ledger, cfg
 from rka_memory import anchors
 from rka_memory.domain import Actor, Kind, State
 from rka_memory.miner.miner import Drop, mine_session
-from rka_memory.packet import builder
 from test_miner import FakeBackend, sync
 
 APP = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
@@ -75,19 +74,3 @@ def test_a_record_is_about_only_what_its_session_touched_or_named(memory):
     rid = result.proposed[0]["record_id"]
     assert memory.world().records[rid].spec.about == ("file:calc.py",)
     assert result.dropped == [Drop("candidate 0 about file:README.md", "the session did not touch or name it")]
-
-
-def test_a_packet_puts_records_about_the_sessions_anchors_first():
-    lg = Ledger()
-    for rid, content, about in (("r_calc", "calc.divide raises on zero", ("file:calc.py",)), ("r_tests", "Tests run with pytest -q", ())):
-        lg.start(f"{rid}-a", **APP)
-        ok = lg.test(f"{rid}-a", True)
-        lg.propose(f"{rid}-a", rid, content=content, about=about)
-        lg.link(rid, ok)
-        lg.start(f"{rid}-b", **APP)
-        lg.link(rid, lg.exit(f"{rid}-b", 0))
-    world = lg.gate()
-
-    plain = builder.build(world, cfg(), State(**APP), arm="gated", channel="prompt")
-    named = builder.build(world, cfg(), State(**APP), arm="gated", channel="prompt", anchors=frozenset({"file:calc.py"}))
-    assert (plain.record_ids, named.record_ids) == (["r_tests", "r_calc"], ["r_calc", "r_tests"])

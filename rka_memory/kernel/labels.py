@@ -39,15 +39,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from rka_memory.config import Config
-from rka_memory.domain import Actor, Kind, Polarity, RecordKind, Rung, State, parse_ts
+from rka_memory.domain import Actor, Event, Kind, Polarity, RecordKind, Rung, State, derived_id, parse_ts
+from rka_memory.kernel.evidence import Grounding, affirmation, applicable, counted, inside, meets_l2
 from rka_memory.kernel.influence import Influence, Reach
 from rka_memory.skills.gate import OUTCOME_KINDS, _used_skill, final_outcome, follows, normalize_command, outcome_ok
-from rka_memory.validity.engine import affirmation, counted, meets_l2
-from rka_memory.validity.scope import Grounding, applicable, inside
 from rka_memory.world import RecordState, Session, World
 
 DESCRIPTIVE = frozenset({RecordKind.FACT})
 DELIVERABLE = frozenset({Rung.L2, Rung.L3})
+ENGINE_SESSION = "engine"
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,9 @@ class Label:
     record_id: str
     rung: Rung
     reason: str
-    # Ledger position at which the evidence for the current L2 or L3 was complete.
+    # For L2 and L3: the ledger position at which the record's current
+    # unbroken stretch at L2 or above began. Views order by it, so a record
+    # keeps its place until it falls, and takes a new one when it returns.
     since: int | None = None
     support: tuple[str, ...] = ()
     set_aside: tuple[tuple[str, str], ...] = ()
@@ -124,12 +126,28 @@ def _withdrawn_set(world: World, cfg: Config, reach: Reach) -> tuple[frozenset[s
     return frozenset(roots | {rid for rid in closure if rid not in affirmed}), frozenset(roots)
 
 
-def _last_touched(rec: RecordState, world: World) -> datetime:
-    stamps = [rec.proposed.ts] + [
-        world.events[link.via].ts for link in rec.links if link.polarity is Polarity.SUPPORT and link.via in world.events
+def _touches(rec: RecordState, world: World) -> list[tuple[int, datetime]]:
+    """When the record was touched: proposed, given support, or delivered on
+    a channel the runner drives. A counter link is not a touch, or a claim the
+    miner keeps refuting would never retire; nor is an MCP request, or the
+    agent could keep a record alive by asking for it."""
+    events = [rec.proposed] + [
+        world.events[link.via] for link in rec.links if link.polarity is Polarity.SUPPORT and link.via in world.events
     ]
-    stamps += [d.event.ts for d in world.deliveries if rec.id in d.record_ids and d.channel not in ("hints", "mcp")]
-    return max(parse_ts(ts) for ts in stamps)
+    events += [d.event for d in world.deliveries if rec.id in d.record_ids and d.channel not in ("hints", "mcp")]
+    return sorted((world.position[e.id], parse_ts(e.ts)) for e in events)
+
+
+def _retired(rec: RecordState, world: World, cfg: Config, now: datetime, valid_from: Event | None) -> bool:
+    """Untouched for the retirement window before the record first became
+    valid (at event `valid_from`), or, if it is not valid, at any time up to
+    now. Retirement is terminal: evidence that arrives after it does not
+    revive the record; only the user's affirmation does."""
+    window = timedelta(days=cfg.gate.retire_after_days)
+    cut = world.position[valid_from.id] if valid_from is not None else len(world.position)
+    stamps = [t for p, t in _touches(rec, world) if p <= cut]
+    stamps.append(parse_ts(valid_from.ts) if valid_from is not None else now)
+    return any(b - a > window for a, b in zip(stamps, stamps[1:]))
 
 
 def _since(support: list[Grounding], world: World, cfg: Config) -> int | None:
@@ -185,8 +203,9 @@ def label(world: World, cfg: Config, now: datetime) -> Labels:
     withdrawn, roots = _withdrawn_set(world, cfg, reach)
     out = Labels(withdrawn=withdrawn)
     held = influence.sessions_holding
+    ordered = list(world.events.values())
     for rec in sorted(world.records.values(), key=lambda r: world.position[r.proposed.id]):
-        out.by_id[rec.id] = _label_one(rec, world, cfg, now, influence, reach, withdrawn, roots, held, out)
+        out.by_id[rec.id] = _label_one(rec, world, cfg, now, influence, reach, withdrawn, roots, held, out, ordered)
     return out
 
 
@@ -201,6 +220,7 @@ def _label_one(
     roots: frozenset[str],
     held: dict[str, frozenset[str]],
     done: Labels,
+    ordered: list[Event],
 ) -> Label:
     rid = rec.id
     if rid in withdrawn:
@@ -230,14 +250,15 @@ def _label_one(
     last_aff = max((world.position[g.event.id] for g in affirmations), default=-1)
 
     learned_under = tuple(sorted(w for w in withdrawn if w in influence.in_session(rec.proposed.session_id)))
-    counters = []
+    counters, earlier = [], []
     for g in counted(rec, world, cfg, Polarity.COUNTER):
-        if not inside(rec.scope, g) or world.position[g.event.id] < last_aff:
+        if not inside(rec.scope, g):
             continue
         if influence.of(g.event) & withdrawn:
-            set_aside.append((g.event.id, "counter observed under a withdrawn record"))
+            if world.position[g.event.id] > last_aff:
+                set_aside.append((g.event.id, "counter observed under a withdrawn record"))
             continue
-        counters.append(g.event.id)
+        (earlier if world.position[g.event.id] < last_aff else counters).append(g.event.id)
 
     usable = []
     own_reach = reach.of(rid)
@@ -256,22 +277,31 @@ def _label_one(
 
     common = dict(support=tuple(g.event.id for g in usable), set_aside=tuple(set_aside), counters=tuple(counters),
                   affirmed=bool(affirmations), learned_under=learned_under)
+    threshold = _since([g for g in usable if not affirmation(g)], world, cfg) if rec.spec.kind in DESCRIPTIVE else None
     l2, since, why = False, None, ""
     if counters:
         why = "counter-evidence after the last affirmation"
     elif affirmations:
-        l2, since = True, last_aff
+        l2 = True
         why = "user confirmed" if any(g.event.kind is Kind.USER_CONFIRM for g in affirmations) else "the user stated it as a standing rule"
+        # The stretch at L2 began at the first affirmation after the record
+        # last fell (a counter, or the user's withdrawal), or, if it never
+        # fell, when it first met the threshold, if that came earlier.
+        fall = max([world.position[e] for e in earlier] + [_withdrawals(rec, world, cfg)[1]], default=-1)
+        since = min(world.position[g.event.id] for g in affirmations if world.position[g.event.id] > fall)
+        if fall < 0 and threshold is not None:
+            since = min(since, threshold)
+    elif threshold is not None:
+        l2, since, why = True, threshold, "independent grounding in enough distinct sessions"
     elif rec.spec.kind in DESCRIPTIVE:
-        independent = [g for g in usable if not affirmation(g)]
-        since = _since(independent, world, cfg)
-        if since is not None:
-            l2, why = True, "independent grounding in enough distinct sessions"
-        else:
-            why = "independent grounding below threshold"
+        why = "independent grounding below threshold"
     else:
         why = "prescriptive: needs the user's affirmation or a trial"
 
+    retire = f"untouched for {cfg.gate.retire_after_days:g} days"
+    valid_from = ordered[threshold] if threshold is not None else None
+    if l2 and not affirmations and _retired(rec, world, cfg, now, valid_from):
+        return Label(rid, Rung.L4, retire, **common)
     if l2:
         if rec.spec.kind is RecordKind.PROCEDURE and rec.spec.steps and rec.spec.acceptance_check:
             ok, skill_why = _skill(rec, world, cfg, since)
@@ -281,6 +311,42 @@ def _label_one(
                 return Label(rid, Rung.L4, skill_why, since=since, **common)
         return Label(rid, Rung.L2, why, since=since, **common)
 
-    if now - _last_touched(rec, world) > timedelta(days=cfg.gate.retire_after_days):
-        return Label(rid, Rung.L4, f"untouched for {cfg.gate.retire_after_days:g} days", **common)
+    if affirmations or threshold is not None:
+        # Once valid, it retires only from its last touch on; a gap before it
+        # became valid counts unless the user has affirmed it since.
+        last = _touches(rec, world)[-1][1]
+        retired = now - last > timedelta(days=cfg.gate.retire_after_days)
+        retired = retired or (valid_from is not None and not affirmations and _retired(rec, world, cfg, now, valid_from))
+    else:
+        retired = _retired(rec, world, cfg, now, None)
+    if retired:
+        return Label(rid, Rung.L4, retire, **common)
     return Label(rid, Rung.L1, why, **common)
+
+
+def audit_events(world: World, labels: Labels, now: datetime) -> list[Event]:
+    """RUNG_CHANGE events that bring the projection's cached rungs to the
+    labels. They are a derived audit trail for reports and history, never an
+    input: the kernel does not read them, and replaying the log recomputes
+    the labels they must agree with. Ids derive from the move and its
+    evidence, so two gates racing on one ledger write the same events."""
+    out = []
+    for rec in sorted(world.records.values(), key=lambda r: world.position[r.proposed.id]):
+        lab = labels.by_id[rec.id]
+        if rec.rung is lab.rung:
+            continue
+        before = rec.rung.value if rec.rung else None
+        payload: dict = {
+            "record_id": rec.id,
+            "from": before,
+            "to": lab.rung.value,
+            "cause_ids": [*lab.support, *lab.counters],
+            "reason": lab.reason,
+            "since": lab.since,
+            "derived": "kernel",
+        }
+        if lab.rung is Rung.L3:
+            payload["acceptance_check"] = rec.spec.acceptance_check
+        ev_id = derived_id("ev", "rung", rec.id, before or "", lab.rung.value, lab.reason, *payload["cause_ids"])
+        out.append(Event.new(Kind.RUNG_CHANGE, Actor.RUNNER, ENGINE_SESSION, payload, id=ev_id, ts=now.isoformat()))
+    return out

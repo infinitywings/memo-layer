@@ -74,7 +74,7 @@ def contradiction(world: World, cfg: Config) -> dict[str, Any]:
     observed after the delivery. The spec's misapplication rate counts only
     demotions, and a counter-event never demotes an L1 record, so a wrong
     unvalidated record delivered by the ungated arm would never count there."""
-    from rka_memory.validity.engine import counted
+    from rka_memory.kernel.evidence import counted
 
     received: dict[str, set[str]] = {}
     wrong: dict[str, set[str]] = {}

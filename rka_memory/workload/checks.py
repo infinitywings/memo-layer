@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 from rka_memory import anchors
 from rka_memory.config import ARMS
-from rka_memory.domain import SCOPE_FIELDS, Event, Kind, Rung
+from rka_memory.domain import Event, Kind, Rung
 from rka_memory.skills.gate import skill_name
 from rka_memory.workload import files
 from rka_memory.world import RecordState, World
@@ -89,7 +89,7 @@ def _agent_requests(obs: Observed) -> list[dict[str, Any]]:
     return [r["body"] for r in obs.requests if r.get("kind") == "agent"]
 
 
-PACKET_HEADERS = ("## Validated memory (rka-memory)", "## Unvalidated memory hints (rka-memory)")
+PACKET_HEADERS = ("## Validated memory (rka-memory)",)
 
 
 def _in_prompt(obs: Observed, rec: RecordState, want: bool) -> Outcome:
@@ -110,11 +110,6 @@ def _first_in_packet(obs: Observed, rec: RecordState, want: bool) -> Outcome:
     """The record opened a packet delivered in this session."""
     got = any(d.record_ids[:1] == (rec.id,) for d in obs.deliveries())
     return got == want, [list(d.record_ids) for d in obs.deliveries() if d.record_ids]
-
-
-def _narrowed(obs: Observed, rec: RecordState, want: dict[str, str]) -> Outcome:
-    got = {(n.field, n.value) for n in rec.narrowings}
-    return set(want.items()) <= got, sorted(got)
 
 
 def _skill_offered(obs: Observed, rec: RecordState, want: bool) -> Outcome:
@@ -174,17 +169,35 @@ def _file_contains(obs: Observed, want: dict[str, str]) -> Outcome:
     return found, "found" if found else "not found"
 
 
+def _strings(value: Any):
+    """Every string in a request, keys included, as the model reads it:
+    decoded, so a quote in the text is a quote here too, not JSON's escape."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield str(k)
+            yield from _strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _strings(v)
+
+
+def _requests_holding(obs: Observed, text: str) -> list[int]:
+    return [i for i, body in enumerate(_agent_requests(obs)) if any(text in s for s in _strings(body))]
+
+
 def _model_never_saw(obs: Observed, text: str) -> Outcome:
     """No request the model received in this session carried the text: not in
     a prompt, not in a tool result. The canaries the runner plants in protected
     directories make this a read-leak check."""
-    hits = [i for i, body in enumerate(_agent_requests(obs)) if text in json.dumps(body, ensure_ascii=False)]
+    hits = _requests_holding(obs, text)
     return not hits, f"seen in requests {hits}" if hits else "never seen"
 
 
 def _model_saw(obs: Observed, text: str) -> Outcome:
     """Some request the model received in this session carried the text."""
-    hits = [i for i, body in enumerate(_agent_requests(obs)) if text in json.dumps(body, ensure_ascii=False)]
+    hits = _requests_holding(obs, text)
     return bool(hits), f"seen in requests {hits}" if hits else "never seen"
 
 
@@ -282,11 +295,6 @@ def _is_arm(value: Any) -> None:
         raise ValueError(f"expected one of {sorted(ARMS)}")
 
 
-def _is_scope_values(value: Any) -> None:
-    if not isinstance(value, dict) or not value or any(k not in SCOPE_FIELDS or not isinstance(v, str) for k, v in value.items()):
-        raise ValueError(f"expected a mapping of scope fields {list(SCOPE_FIELDS)} to values")
-
-
 def _is_metric_conditions(value: Any) -> None:
     if not isinstance(value, dict) or not value:
         raise ValueError("expected a mapping of dotted metric paths to values or {op: value}")
@@ -307,7 +315,6 @@ CHECKS: dict[str, Check] = {
     "delivered": Check(_is_bool, _delivered, True),
     "in_prompt": Check(_is_bool, _in_prompt, True),
     "first_in_packet": Check(_is_bool, _first_in_packet, True),
-    "narrowed": Check(_is_scope_values, _narrowed, True),
     "skill_offered": Check(_is_bool, _skill_offered, True),
     "arm": Check(_is_arm, _arm, False),
     "packet_empty": Check(_is_bool, _packet_empty, False),

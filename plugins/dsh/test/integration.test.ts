@@ -159,7 +159,7 @@ test('rkm reject typed in dsh records a user verdict and never reaches the model
 
   assert.deepEqual(decision, { kind: 'reject' })
   assert.equal(entered, false)
-  assert.equal(stderr(), 'rka-memory recorded reject for r_uv; now L1\n')
+  assert.equal(stderr(), 'rka-memory recorded reject for r_uv; now L4\n')
   const events = memory.ledger('dsh-2')
   assert.deepEqual(events.filter(event => event.kind === 'user_reject').map(event => [event.actor, event.payload]), [
     ['user', { record_id: 'r_uv', reason: 'wrong' }],

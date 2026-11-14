@@ -6,7 +6,7 @@ from ledger_builder import Ledger, cfg
 from rka_memory.domain import Kind, RecordKind, Scope, State
 from rka_memory.ledger import hooks
 from rka_memory.ledger.adapters import claude_code as adapter
-from rka_memory.skills.export import session_skills
+from rka_memory.kernel.views import session_skills
 
 BASE = {"session_id": "d1", "transcript_path": "", "harness": "dsh", "tool_name": "Bash", "tool_use_id": "c1"}
 
@@ -45,8 +45,8 @@ L3_STATE = dict(project="/p/app", toolchain="uv", task_class="coding", model_id=
 
 
 def l3_procedure(memory, confirmed=True):
-    """A procedure confirmed (or validated by two passing sessions), then
-    followed with its check passing in two sessions: L3."""
+    """A procedure confirmed (or backed by two passing sessions only), then
+    followed with its check passing in two sessions: L3 if confirmed."""
     st = L3_STATE
     lg = Ledger()
     lg.start("s1", **st)
@@ -71,7 +71,7 @@ def l3_procedure(memory, confirmed=True):
     memory.append(*lg.events)
     memory.gate(now=lg.clock)
     lg.events.clear()
-    assert memory.world().records["r_proc"].rung.value == "L3"
+    assert memory.world().records["r_proc"].rung.value == ("L3" if confirmed else "L1")
     return lg
 
 
@@ -79,23 +79,24 @@ def test_session_skills_returns_only_l3_procedures_valid_for_the_state(memory):
     st = L3_STATE
     l3_procedure(memory)
     world = memory.world()
+    labels = memory.labels(world)
 
-    here = session_skills(world, memory.cfg, State(**st), "gated")
+    here = session_skills(world, labels, memory.cfg, State(**st), "gated")
     assert [(s["name"], s["description"]) for s in here] == [("rka-r-proc", "Run uv sync before tests")]
     assert here[0]["body"].startswith("# rka-r-proc\n")
     assert "Before finishing, run `uv run pytest`" in here[0]["body"]
-    assert session_skills(world, memory.cfg, State(**{**st, "model_id": "m2"}), "gated") == []
-    assert session_skills(world, memory.cfg, State(**st), "ungated") == here
-    assert session_skills(world, memory.cfg, State(**st), "stated") == here
-    assert session_skills(world, memory.cfg, State(**st), "none") == []
+    assert session_skills(world, labels, memory.cfg, State(**{**st, "model_id": "m2"}), "gated") == []
+    assert session_skills(world, labels, memory.cfg, State(**st), "ungated") == here
+    assert session_skills(world, labels, memory.cfg, State(**st), "stated") == here
+    assert session_skills(world, labels, memory.cfg, State(**st), "none") == []
 
 
-def test_the_stated_arm_gets_no_skill_the_user_never_affirmed(memory):
+def test_a_procedure_backed_only_by_outcomes_is_no_skill_in_any_arm(memory):
     l3_procedure(memory, confirmed=False)
     world = memory.world()
     st = State(**L3_STATE)
-    assert [s["name"] for s in session_skills(world, memory.cfg, st, "gated")] == ["rka-r-proc"]
-    assert session_skills(world, memory.cfg, st, "stated") == []
+    for arm in ("gated", "stated", "ungated"):
+        assert session_skills(world, memory.labels(world), memory.cfg, st, arm) == []
 
 
 def test_skills_command_follows_the_sessions_packet_arm_and_logs_it(memory, capsys):

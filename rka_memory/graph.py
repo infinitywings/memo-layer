@@ -1,7 +1,7 @@
 """The ledger as a graph: typed nodes and edges projected from `World`.
 
-Read-only. Rungs and scopes stay with the validity engine; this module only
-shows what the projection already holds, so `rka-memory graph`, `explain` and
+Read-only. Labels stay with the kernel; this module only shows what the
+projection already holds, so `rka-memory graph`, `explain` and
 the workload's provenance check read one structure (docs/GRAPH.md, phase 1).
 """
 
@@ -15,7 +15,7 @@ from typing import Any
 from rka_memory import relations
 from rka_memory.config import Config
 from rka_memory.domain import Polarity
-from rka_memory.validity.engine import counted, statement
+from rka_memory.kernel.evidence import counted, statement
 from rka_memory.world import RecordState, World
 
 

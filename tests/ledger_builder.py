@@ -16,7 +16,7 @@ from rka_memory.domain import (
     State,
     Step,
 )
-from rka_memory.validity.engine import evaluate
+from rka_memory.kernel.labels import audit_events, label
 from rka_memory.world import World, project
 
 T0 = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)
@@ -91,11 +91,11 @@ class Ledger:
         return self._ev(Kind.PACKET_DELIVERED, Actor.RUNNER, session, {"record_ids": list(record_ids), "arm": "gated"})
 
     def gate(self, config=None) -> World:
-        """Project, run the engine at the current clock, keep its events."""
-        world = project(self.events)
-        new = evaluate(world, config or cfg(), self.clock)
+        """Label at the current clock and keep the derived audit events, as
+        `Memory.gate` does; return the projection with their cached rungs."""
+        new = audit_events(project(self.events), label(project(self.events), config or cfg(), self.clock), self.clock)
         self.events.extend(new)
-        return world
+        return project(self.events)
 
 
 def rung(world: World, record_id: str) -> str | None:

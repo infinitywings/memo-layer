@@ -3,9 +3,10 @@ superseded record leaves every view while its newer version is valid."""
 
 from ledger_builder import Ledger, cfg
 from rka_memory.domain import RecordKind, State
+from rka_memory.kernel import views
+from rka_memory.kernel.labels import label
 from rka_memory.miner.miner import Drop, mine_session
-from rka_memory.packet import builder
-from rka_memory.skills.export import Placement, exportable, render
+from rka_memory.world import project
 from test_miner import FakeBackend, sync
 
 APP = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
@@ -27,26 +28,34 @@ def confirmed(lg: Ledger, session: str, record_id: str, **spec) -> None:
     lg.end(session)
 
 
-def skill_text(world, record_id: str) -> str:
-    return render(world.records[record_id], world, cfg(), Placement(cfg().skills_dir, None, ()))
+def labelled(lg: Ledger):
+    world = project(lg.events)
+    return world, label(world, cfg(), lg.clock)
+
+
+def skill_text(lg: Ledger, record_id: str) -> str:
+    world, labels = labelled(lg)
+    return views.skill(world.records[record_id], world, labels, cfg(), auto_load=False)
+
+
+def prompt_packet(lg: Ledger) -> tuple[str, ...]:
+    world, labels = labelled(lg)
+    return views.packet(world, labels, cfg(), State(**APP), arm="gated", channel="prompt").record_ids
 
 
 def test_a_skill_shows_its_rules_by_reference_and_drops_one_the_user_withdraws():
     lg = Ledger()
     stated_rule(lg, "s1", "r_rule", RULE)
     confirmed(lg, "s2", "r_proc", kind=RecordKind.PROCEDURE, content="Add the function, then run the tests", depends_on=("r_rule",))
-    world = lg.gate()
-    day = lg.events[1].ts[:10]
-    assert f'## Rules this procedure follows\n\n- The user said on {day}: "{RULE}"\n' in skill_text(world, "r_proc")
+    assert f'## Rules this procedure follows\n\n- [r_rule] The user said: "{RULE}"\n' in skill_text(lg, "r_proc")
 
     lg.start("s3", **APP)
     stop = lg.user_msg("s3", "You can stop using no:cacheprovider.")
     lg.link("r_rule", stop, "counter", statement={"quote": "stop using no:cacheprovider"})
     lg.end("s3")
-    world = lg.gate()
-    assert world.records["r_rule"].rung.value == "L1"
-    assert world.records["r_proc"].rung.value == "L2"
-    assert "Rules this procedure follows" not in skill_text(world, "r_proc")
+    _, labels = labelled(lg)
+    assert (labels.rung("r_rule").value, labels.rung("r_proc").value) == ("L1", "L2")
+    assert "Rules this procedure follows" not in skill_text(lg, "r_proc")
 
 
 def test_a_valid_newer_version_hides_the_old_one_from_packets_and_skills():
@@ -55,33 +64,28 @@ def test_a_valid_newer_version_hides_the_old_one_from_packets_and_skills():
     lg.start("s2", **APP)
     lg.propose("s2", "r_v2", kind=RecordKind.PROCEDURE, content="Run pytest, review the diff, then commit", supersedes="r_v1")
     lg.end("s2")
-    world = lg.gate()
-    st = State(**APP)
-    assert world.records["r_v2"].rung.value == "L0D"
-    assert builder.build(world, cfg(), st, arm="gated", channel="prompt").record_ids == ["r_v1"]
+    assert labelled(lg)[1].rung("r_v2").value == "L0D"
+    assert prompt_packet(lg) == ("r_v1",)
 
     lg.confirm("s3", "r_v2")
-    world = lg.gate()
-    assert builder.build(world, cfg(), st, arm="gated", channel="prompt").record_ids == ["r_v2"]
-    assert [r.id for r in exportable(world, cfg())] == ["r_v2"]
+    assert prompt_packet(lg) == ("r_v2",)
+    world, labels = labelled(lg)
+    assert [r.id for r in views.exportable(world, labels, cfg())] == ["r_v2"]
 
 
 def test_a_users_rule_is_hidden_only_by_a_newer_rule_in_the_users_words():
     lg = Ledger()
     stated_rule(lg, "s1", "r_old", "end every reply with a `Summary:` line")
     confirmed(lg, "s2", "r_model", kind=RecordKind.CONSTRAINT, content="Replies need no summary", supersedes="r_old")
-    world = lg.gate()
-    st = State(**APP)
-    assert set(builder.build(world, cfg(), st, arm="gated", channel="prompt").record_ids) == {"r_old", "r_model"}
+    assert set(prompt_packet(lg)) == {"r_old", "r_model"}
 
     lg.start("s3", **APP)
     msg = lg.user_msg("s3", "From now on, end every reply with a `TL;DR:` line instead.")
     lg.propose("s3", "r_new", kind=RecordKind.CONSTRAINT, content="end every reply with a `TL;DR:` line", supersedes="r_old")
     lg.link("r_new", msg, statement={"quote": "end every reply with a `TL;DR:` line", "marker": "From now on"})
     lg.end("s3")
-    world = lg.gate()
-    assert set(builder.build(world, cfg(), st, arm="gated", channel="prompt").record_ids) == {"r_model", "r_new"}
-    assert world.records["r_old"].rung.value == "L2"
+    assert set(prompt_packet(lg)) == {"r_model", "r_new"}
+    assert labelled(lg)[1].rung("r_old").value == "L2"
 
 
 def test_the_miner_versions_procedures_and_only_the_users_words_replace_a_rule(memory):

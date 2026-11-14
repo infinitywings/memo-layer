@@ -30,11 +30,11 @@ The Docker setup for dsh (`docker/dsh`, `scripts/dsh-docker`) mounts the same sp
 | user_confirm | user | `record_id` | support, always inside scope |
 | user_reject | user | `record_id`, `reason` | counter, always inside scope |
 | session_end | runner | `reason`, `tokens_total`, `tokens_before_first_write`, `first_write_seen` | none |
-| packet_delivered | runner | `record_ids`, `arm` (gated, stated, none, ungated), `channel` (session_start, prompt, mcp, hints), `omitted_count`, `ledger_revision`, `budget_tokens` | none |
+| packet_delivered | runner | `record_ids` in rendered order, `arm` (gated, stated, none, ungated), `channel` (session_start, prompt, mcp, skills; `hints` in ledgers written before Design v2 layer 2), `omitted_count`, `ledger_revision`, `budget_tokens`, `view_hash` (sha256 of the text the agent received) | none |
 | record_proposed | model | a `RecordSpec` (`record_id`, `kind`, `content`, `scope`, `falsifier`, `confidence`, `steps`, `acceptance_check`, `depends_on`, `supersedes`) plus `mined_from_session` | none |
 | evidence_linked | model, runner | `record_id`, `event_id`, `polarity`, `reason` | none (it points at evidence) |
-| rung_change | runner | `record_id`, `from`, `to`, `cause_ids`, `reason`, `acceptance_check` (on L3) | none |
-| scope_narrowed | runner | `record_id`, `field`, `value`, `cause_ids` | none |
+| rung_change | runner | `record_id`, `from`, `to`, `cause_ids`, `reason`, `since`, `acceptance_check` (on L3). Since Design v2 layer 2 a derived audit event: the kernel never reads it | none |
+| scope_narrowed | runner | `record_id`, `field`, `value`, `cause_ids`. Written only by the v1 engine; still folded into the record's scope as an applicability condition | none |
 | judgment | model, runner | session: `target=session`, `session_id`, `field`, `value`, `judge`; record: `target=record`, `record_id`, `field`, `value`, `applies`, `judge` | none |
 | cost | runner | `component` (miner, gate), `session_id`, `tokens`, `seconds`; a miner cost also names `through`, the last event its prompt covered | none |
 | workspace_reset | runner | `path`: a project path a test harness removed between sessions as housekeeping; file-change detection skips a write to that path made before the reset | none |

@@ -34,6 +34,7 @@ def fixture_ledger():
     lg.link("r_a", ok1)
     lg.end("s1")
     cost(lg, "miner", "s1", 1200, 3.5)
+    lg.gate()
     lg.start("s2", **UV)
     lg.link("r_a", lg.exit("s2", 0))
     lg.end("s2")

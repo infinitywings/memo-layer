@@ -109,11 +109,11 @@ def cmd_packet(args) -> int:
 
     mem = _memory()
     st = state_mod.detect(Path(args.cwd).resolve(), mem.cfg, model_id=args.model)
-    from rka_memory.packet import builder
+    from rka_memory.kernel import views
 
     world = mem.world()
-    arm = args.arm or builder.arm_for(clock_now().astimezone().date(), mem.cfg)
-    pkt = builder.build(world, mem.cfg, st, arm=arm, channel="preview")
+    arm = args.arm or views.arm_for(clock_now().astimezone().date(), mem.cfg)
+    pkt = views.packet(world, mem.labels(world), mem.cfg, st, arm=arm, channel="preview")
     print(pkt.render() or f"(empty packet; arm={arm}, state={st.to_json()})")
     return 0
 
@@ -212,8 +212,7 @@ def cmd_skills(args) -> int:
     themselves. With --session the offer is logged as a delivery."""
     from rka_memory.domain import Actor, Event, Kind, clock_now
     from rka_memory.ledger import state as state_mod
-    from rka_memory.packet.builder import arm_for, session_arm
-    from rka_memory.skills.export import session_skills
+    from rka_memory.kernel.views import arm_for, session_arm, session_skills
 
     mem = _memory()
     world = mem.world()
@@ -225,7 +224,7 @@ def cmd_skills(args) -> int:
     known = sess is not None and sess.started is not None
     today = clock_now().astimezone().date()
     arm = session_arm(world, args.session, mem.cfg, today) if known else arm_for(today, mem.cfg)
-    skills = session_skills(world, mem.cfg, st, arm)
+    skills = session_skills(world, mem.labels(world), mem.cfg, st, arm)
     if known and skills:
         mem.append(
             Event.new(

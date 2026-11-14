@@ -1,11 +1,14 @@
-"""Phase 4 of docs/GRAPH.md: a qualification travels with the record it
-refines, and a record about a file the project no longer has says so."""
+"""A qualification is an amendment of the record it refines: it renders in
+the trailing amendments block, naming its target (DESIGN_V2 9, rule 3). A
+view reads only the log, never the project's files."""
 
 from ledger_builder import Ledger, cfg
 from rka_memory import graph
 from rka_memory.domain import State
+from rka_memory.kernel import views
+from rka_memory.kernel.labels import label
 from rka_memory.miner.miner import Drop, mine_session
-from rka_memory.packet import builder
+from rka_memory.world import project
 from test_miner import FakeBackend, sync
 
 APP = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
@@ -20,19 +23,25 @@ def promote(lg: Ledger, record_id: str, content: str, **spec) -> None:
     lg.link(record_id, lg.exit(f"{record_id}-b", 0))
 
 
-def test_a_qualification_is_delivered_right_after_the_record_it_refines():
+def prompt_packet(lg: Ledger, state: State) -> views.View:
+    world = project(lg.events)
+    return views.packet(world, label(world, cfg(), lg.clock), cfg(), state, arm="gated", channel="prompt")
+
+
+def test_a_qualification_is_delivered_after_the_core_naming_the_record_it_refines():
     lg = Ledger()
     promote(lg, "r_rule", "Run the tests with pytest -q")
     promote(lg, "r_other", "calc.py holds the arithmetic helpers")
     promote(lg, "r_qual", "pytest -q still leaves __pycache__ behind", refines=("r_rule",))
     world = lg.gate()
 
-    pkt = builder.build(world, cfg(), State(**APP), arm="gated", channel="prompt")
-    assert pkt.record_ids == ["r_rule", "r_qual", "r_other"]
+    pkt = prompt_packet(lg, State(**APP))
+    assert pkt.record_ids == ("r_rule", "r_other", "r_qual")
+    assert pkt.render().endswith("### Amendments to the records above\n- [r_qual] (on r_rule) pytest -q still leaves __pycache__ behind")
     assert ("refines", "r_qual", "r_rule") in {(e.type.value, e.source, e.target) for e in graph.project(world, cfg()).edges}
 
 
-def test_a_record_about_a_file_the_project_no_longer_has_says_so(tmp_path):
+def test_a_record_about_a_file_the_project_no_longer_has_is_rendered_from_the_log_alone(tmp_path):
     (tmp_path / "calc.py").write_text("")
     st = dict(APP, project=str(tmp_path))
     lg = Ledger()
@@ -43,14 +52,11 @@ def test_a_record_about_a_file_the_project_no_longer_has_says_so(tmp_path):
         lg.link(rid, ok)
         lg.start(f"{rid}-b", **st)
         lg.link(rid, lg.exit(f"{rid}-b", 0))
-    world = lg.gate()
-
-    gone = builder.missing_files(world, State(**st))
-    pkt = builder.build(world, cfg(), State(**st), arm="gated", channel="prompt", missing=gone)
-    lines = {i.record_id: i.line() for i in pkt.items}
-    assert gone == frozenset({"file:helpers.py"})
-    assert "(helpers.py no longer exists)" in lines["r_helpers"]
-    assert "no longer exists" not in lines["r_calc"]
+    before = prompt_packet(lg, State(**st)).render()
+    (tmp_path / "calc.py").unlink()
+    after = prompt_packet(lg, State(**st)).render()
+    assert after == before
+    assert "- [r_helpers] content of r_helpers" in after
 
 
 def test_the_miner_may_refine_only_a_listed_record(memory):

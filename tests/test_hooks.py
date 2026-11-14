@@ -276,12 +276,12 @@ def test_first_prompt_delivers_the_records_its_task_class_unlocks(memory, proj, 
 
     s = base("s", proj, tmp_path)
     started = fire(capsys, "SessionStart", {**s, "source": "startup"})
-    assert "[r_any | L2 fact] Run uv run pytest -x first" in started["hookSpecificOutput"]["additionalContext"]
+    assert "- [r_any] Run uv run pytest -x first" in started["hookSpecificOutput"]["additionalContext"]
     assert "r_dbg" not in started["hookSpecificOutput"]["additionalContext"]
 
     prompted = fire(capsys, "UserPromptSubmit", {**s, "prompt_id": "p1", "prompt": "fix the crash in the parser"})
     assert prompted["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-    assert "[r_dbg | L2 fact] Reproduce with a failing test before fixing" in prompted["hookSpecificOutput"]["additionalContext"]
+    assert "- [r_dbg] Reproduce with a failing test before fixing" in prompted["hookSpecificOutput"]["additionalContext"]
     assert "r_any" not in prompted["hookSpecificOutput"]["additionalContext"]
 
     assert fire(capsys, "UserPromptSubmit", {**s, "prompt_id": "p2", "prompt": "now fix the next crash"}) is None
@@ -300,7 +300,7 @@ def test_rkm_reject_records_a_user_verdict_and_never_reaches_the_model(memory, p
     fire(capsys, "SessionStart", {**s, "source": "startup"})
 
     out = fire(capsys, "UserPromptSubmit", {**s, "prompt_id": "p1", "prompt": "rkm reject r_uv wrong"})
-    assert out == {"decision": "block", "reason": "rka-memory recorded reject for r_uv; now L1"}
+    assert out == {"decision": "block", "reason": "rka-memory recorded reject for r_uv; now L4"}
     unknown = fire(capsys, "UserPromptSubmit", {**s, "prompt_id": "p2", "prompt": "rkm confirm r_nope"})
     assert unknown == {"decision": "block", "reason": "rka-memory: unknown record r_nope; nothing recorded"}
 

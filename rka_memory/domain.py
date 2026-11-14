@@ -416,30 +416,10 @@ class Rung(StrEnum):
     def order(self) -> int:
         return _RUNG_ORDER[self]
 
-    def one_below(self) -> Rung:
-        return {Rung.L3: Rung.L2, Rung.L2: Rung.L1, Rung.L1: Rung.L0D}.get(self, self)
-
 
 _RUNG_ORDER = {Rung.L0D: 0, Rung.L1: 1, Rung.L2: 2, Rung.L3: 3, Rung.L4: -1}
 
 DELIVERABLE: frozenset[Rung] = frozenset({Rung.L2, Rung.L3})
-
-# The only rung moves the engine may make. Anything else is a bug.
-TRANSITIONS: frozenset[tuple[Rung | None, Rung]] = frozenset(
-    {
-        (None, Rung.L0D),
-        (None, Rung.L1),
-        (Rung.L0D, Rung.L1),
-        (Rung.L0D, Rung.L2),  # user confirm override
-        (Rung.L1, Rung.L2),
-        (Rung.L1, Rung.L0D),
-        (Rung.L1, Rung.L4),
-        (Rung.L2, Rung.L1),
-        (Rung.L2, Rung.L3),
-        (Rung.L3, Rung.L2),
-        (Rung.L3, Rung.L4),
-    }
-)
 
 
 class RecordKind(StrEnum):

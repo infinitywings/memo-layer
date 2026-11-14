@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from rka_memory import config as config_mod
 from rka_memory import relations
 from rka_memory.config import Config
-from rka_memory.domain import Actor, Event, Kind, State, clock_now
+from rka_memory.domain import Actor, Event, Kind, Polarity, State, clock_now
+from rka_memory.kernel import views
+from rka_memory.kernel.evidence import counted, inside, statement
+from rka_memory.kernel.labels import ENGINE_SESSION, Labels, audit_events, label
 from rka_memory.ledger.jsonl import JsonlLedger
-from rka_memory.packet import builder
-from rka_memory.validity.engine import ENGINE_SESSION, assess, counted, evaluate, statement
-from rka_memory.domain import Polarity
 from rka_memory.world import World, project
 
 CLI_SESSION = "cli"
@@ -36,13 +36,18 @@ class Memory:
     def append(self, *events: Event) -> None:
         self.ledger.append(events)
 
+    def labels(self, world: World | None = None, now: datetime | None = None) -> Labels:
+        """Every record's label, computed from the log alone."""
+        return label(world or self.world(), self.cfg, now or clock_now())
+
     def gate(self, *, session_id: str = ENGINE_SESSION, now: datetime | None = None) -> list[Event]:
-        """Run the validity engine once over the whole ledger and persist its moves."""
+        """Label the ledger and append the audit events that bring the
+        projection's cached rungs to the labels."""
         now = now or clock_now()
         with self.ledger.exclusive():
             started = time.monotonic()
             world = self.world()
-            moves = evaluate(world, self.cfg, now)
+            moves = audit_events(world, label(world, self.cfg, now), now)
             cost = Event.new(
                 Kind.COST,
                 Actor.RUNNER,
@@ -69,44 +74,48 @@ class Memory:
         exclude: frozenset[str] = frozenset(),
         arm: str | None = None,
         world: World | None = None,
-    ) -> builder.Packet:
-        """Build a packet for `state` and log exactly which records were delivered."""
+    ) -> views.View:
+        """Render the packet for `state` and log exactly which records it
+        delivered and the hash of the text the agent received. A budget ranks
+        records about the project's recent anchors first; a prompt's packet
+        also ranks those about what this session has touched or named."""
         now = now or clock_now()
         world = world or self.world()
-        anchors = frozenset(world.session(session_id).anchors) if self.cfg.graph_anchors else frozenset()
-        missing = builder.missing_files(world, state) if self.cfg.graph_anchors else frozenset()
-        if channel == "hints":
-            packet = builder.hints(world, self.cfg, state, exclude=exclude, anchors=anchors, missing=missing)
-        else:
-            arm = arm or builder.arm_for(now.astimezone().date(), self.cfg)
-            packet = builder.build(
-                world,
-                self.cfg,
-                state,
-                arm=arm,
-                channel=channel,
-                budget_tokens=budget_tokens,
-                exclude=exclude,
-                anchors=anchors,
-                missing=missing,
-            )
+        arm = arm or views.arm_for(now.astimezone().date(), self.cfg)
+        anchors = frozenset()
+        if self.cfg.graph_anchors:
+            anchors = views.recent_anchors(world, state.project, session_id)
+            if channel != "session_start":
+                anchors |= world.session(session_id).anchors
+        view = views.packet(
+            world,
+            label(world, self.cfg, now),
+            self.cfg,
+            state,
+            arm=arm,
+            channel=channel,
+            budget_tokens=budget_tokens,
+            exclude=exclude,
+            anchors=anchors,
+        )
         self.append(
             Event.new(
                 Kind.PACKET_DELIVERED,
                 Actor.RUNNER,
                 session_id,
                 {
-                    "record_ids": packet.record_ids,
-                    "arm": packet.arm,
+                    "record_ids": list(view.record_ids),
+                    "arm": view.arm,
                     "channel": channel,
-                    "omitted_count": packet.omitted_count,
-                    "ledger_revision": packet.ledger_revision,
-                    "budget_tokens": packet.budget_tokens,
+                    "omitted_count": len(view.omitted),
+                    "ledger_revision": view.ledger_revision,
+                    "budget_tokens": view.budget_tokens,
+                    "view_hash": view.hash,
                 },
                 state_hash=state.hash(),
             )
         )
-        return packet
+        return view
 
     def verdict(self, record_id: str, *, confirm: bool, session_id: str = CLI_SESSION, reason: str = "") -> Event:
         """Record a user verdict. Call only from paths the user types into
@@ -124,26 +133,30 @@ class Memory:
     def session_state(self, session_id: str, world: World | None = None) -> State:
         return (world or self.world()).session(session_id).state
 
-    def explain(self, record_id: str, world: World | None = None) -> dict[str, Any]:
+    def explain(self, record_id: str, world: World | None = None, now: datetime | None = None) -> dict[str, Any]:
         world = world or self.world()
+        labels = self.labels(world, now)
         rec = world.records[record_id]
-        a = assess(rec, world, self.cfg)
-        counted_ids = {g.event.id for g in a.support} | {g.event.id for g in a.counters}
-        all_counted = {
+        lab = labels.by_id[record_id]
+        set_aside = dict(lab.set_aside)
+        in_scope = {
             g.event.id
             for pol in (Polarity.SUPPORT, Polarity.COUNTER)
             for g in counted(rec, world, self.cfg, pol)
+            if inside(rec.scope, g)
         }
+        used = set(lab.support) | set(lab.counters)
         links = []
         for link in rec.links:
             ev = world.events.get(link.event_id)
-            status = (
-                "counted"
-                if link.event_id in counted_ids
-                else "outside scope or superseded"
-                if link.event_id in all_counted
-                else "not grounding"
-            )
+            if link.event_id in used:
+                status = "counted"
+            elif link.event_id in set_aside:
+                status = f"set aside: {set_aside[link.event_id]}"
+            elif link.event_id in in_scope:
+                status = "before the last affirmation"
+            else:
+                status = "not grounding"
             row = {
                 "event_id": link.event_id,
                 "polarity": link.polarity.value,
@@ -158,17 +171,21 @@ class Memory:
             links.append(row)
 
         def ref(rid: str) -> dict[str, Any]:
-            other = world.records.get(rid)
-            return {"record_id": rid, "rung": other.rung.value if other and other.rung else None}
+            other = labels.by_id.get(rid)
+            return {"record_id": rid, "rung": other.rung.value if other else None}
 
         return {
             "record": rec.spec.to_json(),
-            "rung": rec.rung.value if rec.rung else None,
+            "rung": lab.rung.value,
+            "reason": lab.reason,
+            "since": lab.since,
+            "affirmed": lab.affirmed,
+            "withdrawn": lab.withdrawn,
+            "learned_under": list(lab.learned_under),
             "scope": rec.scope.describe(),
-            "acceptance_check": rec.acceptance_check,
-            "grounding": round(sum(g.weight for g in a.support), 3),
-            "sessions": sorted({g.session_id for g in a.support}),
-            "open_counters": [g.event.id for g in a.counters],
+            "acceptance_check": rec.spec.acceptance_check,
+            "support": list(lab.support),
+            "open_counters": list(lab.counters),
             "history": [
                 {
                     "event_id": m.event_id,
@@ -179,10 +196,6 @@ class Memory:
                     "cause_ids": list(m.cause_ids),
                 }
                 for m in rec.history
-            ],
-            "narrowings": [
-                {"field": n.field, "value": n.value, "cause_ids": list(n.cause_ids), "ts": n.ts}
-                for n in rec.narrowings
             ],
             "links": links,
             "relations": {

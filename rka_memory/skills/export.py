@@ -22,23 +22,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
-from rka_memory import relations
 from rka_memory.config import Config
-from rka_memory.domain import DELIVERABLE, SCOPE_FIELDS, RecordKind, Rung, State
-from rka_memory.packet.builder import flatten, rule_text, superseded
+from rka_memory.domain import RecordKind, Rung
+from rka_memory.kernel import views
+from rka_memory.kernel.labels import Labels
 from rka_memory.skills.gate import skill_name
-from rka_memory.validity.engine import assess
 from rka_memory.world import RecordState, World
 
 if TYPE_CHECKING:
     from rka_memory.service import Memory
 
 MARKER = ".rka-memory"
-EXPORTED_RUNGS = (Rung.L2, Rung.L3)
 NAME_PATTERN = re.compile(r"[a-z0-9-]{1,64}")
-DESCRIPTION_MAX = 1024
 
 
 @dataclass
@@ -57,47 +52,6 @@ class ExportResult:
         }
 
 
-def exportable(world: World, cfg: Config, state: State | None = None) -> list[RecordState]:
-    """Procedures at L2 or L3 that no valid newer version supersedes."""
-    hidden = superseded(world, cfg, state)
-    return [
-        r
-        for r in world.records.values()
-        if r.spec.kind is RecordKind.PROCEDURE and r.rung in EXPORTED_RUNGS and r.id not in hidden
-    ]
-
-
-def rules_followed(rec: RecordState, world: World, cfg: Config) -> list[str]:
-    """The procedure's dependencies and the rules that govern it
-    (`relations.governing`), at L2 or above, as the skill shows them. One
-    that drops below L2 leaves the skill at the next export, while the
-    procedure keeps its own rung (docs/GRAPH.md, decision 3)."""
-    hidden = superseded(world, cfg)
-    ids = dict.fromkeys((*rec.spec.depends_on, *relations.governing(rec, world)))
-    deps = [world.records[d] for d in ids if d in world.records]
-    return [rule_text(d, world, cfg) for d in deps if d.rung in DELIVERABLE and d.id not in hidden]
-
-
-def version(rec: RecordState, world: World) -> int:
-    """1 for an original procedure, n + 1 for one that supersedes version n."""
-    n, current, seen = 1, rec, {rec.id}
-    while current.spec.supersedes in world.records and current.spec.supersedes not in seen:
-        current = world.records[current.spec.supersedes]
-        seen.add(current.id)
-        n += 1
-    return n
-
-
-def _code(text: str) -> str:
-    """Model-proposed text rendered as inline code: one line, no backticks."""
-    return flatten(text).replace("`", "'")
-
-
-def _description(content: str) -> str:
-    line = " ".join(content.split())
-    return line if len(line) <= DESCRIPTION_MAX else line[: DESCRIPTION_MAX - 3] + "..."
-
-
 PROJECT_SKILLS = Path(".claude") / "skills"
 # Scope fields no skill location can enforce: they vary between sessions of
 # the same project, and Claude Code loads skills before anything checks them.
@@ -110,8 +64,8 @@ class Placement:
     project: str | None
     unenforced: tuple[str, ...]
 
-    def auto_load(self, rec: RecordState) -> bool:
-        return rec.rung is Rung.L3 and not self.unenforced
+    def auto_load(self, labels: Labels, rec: RecordState) -> bool:
+        return labels.rung(rec.id) is Rung.L3 and not self.unenforced
 
 
 def _open(constraint) -> bool:
@@ -142,75 +96,8 @@ def placements(rec: RecordState, cfg: Config) -> tuple[list[Placement], list[str
     return out, missing
 
 
-def render(rec: RecordState, world: World, cfg: Config, placement: Placement) -> str:
-    name = skill_name(rec.id)
-    check = rec.acceptance_check or rec.spec.acceptance_check
-    described = {f: rec.scope.constraint(f).describe() for f in SCOPE_FIELDS}
-    scope = {f: d for f, d in described.items() if d != "*"}
-    auto = placement.auto_load(rec)
-    front: dict[str, Any] = {"name": name, "description": _description(rec.spec.content)}
-    if not auto:
-        front["disable-model-invocation"] = True
-    front["metadata"] = {
-        "record_id": rec.id,
-        "rung": rec.rung.value,
-        "version": version(rec, world),
-        "scope": scope,
-        "auto_load": auto,
-        "evidence": [g.event.id for g in assess(rec, world, cfg).support],
-        "acceptance_check": check,
-    }
-    body = [f"# {name}", "", flatten(rec.spec.content), "", f"Applies when: {flatten(rec.scope.describe())}."]
-    if rec.rung is Rung.L3 and placement.unenforced:
-        body += [
-            "",
-            f"Auto-loading is off because Claude Code cannot enforce this skill's scope on "
-            f"{', '.join(placement.unenforced)}. rka-memory delivers it in the session packet when it applies.",
-        ]
-    if rec.spec.steps:
-        body += ["", "## Steps", ""]
-        body += [
-            f"{i}. Tool `{_code(s.tool)}`, with input containing `{_code(s.match)}`."
-            for i, s in enumerate(rec.spec.steps, 1)
-        ]
-    rules = rules_followed(rec, world, cfg)
-    if rules:
-        body += ["", "## Rules this procedure follows", ""]
-        body += [f"- {line}" for line in rules]
-    body.append("")
-    if rec.rung is Rung.L3 and rec.acceptance_check:
-        body += [f"Before finishing, run `{_code(rec.acceptance_check)}`; rka-memory records the result.", ""]
-    body.append(f"If this skill is wrong, the user can type `rkm reject {rec.id} <reason>`.")
-    frontmatter = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=10_000)
-    return f"---\n{frontmatter}---\n\n" + "\n".join(body) + "\n"
-
-
-def session_skills(world: World, cfg: Config, state: State, arm: str) -> list[dict[str, str]]:
-    """L3 skills valid for one session's state, for a harness whose own skill
-    provider is asked per session and so enforces the full scope itself. A
-    session in the `none` arm gets no memory, so no skills either, and one in
-    the `stated` arm only skills the user affirmed."""
-    from rka_memory.validity.engine import affirmed, valid
-
-    if arm == "none":
-        return []
-    out = []
-    for rec in sorted(exportable(world, cfg, state), key=lambda r: r.id):
-        if rec.rung is not Rung.L3 or not valid(rec, state, world, cfg):
-            continue
-        if arm == "stated" and not affirmed(rec, world, cfg):
-            continue
-        text = render(rec, world, cfg, Placement(cfg.skills_dir, None, ()))
-        _, front, body = text.split("---\n", 2)
-        out.append(
-            {
-                "record_id": rec.id,
-                "name": skill_name(rec.id),
-                "description": yaml.safe_load(front)["description"],
-                "body": body.lstrip("\n"),
-            }
-        )
-    return out
+def render(rec: RecordState, world: World, labels: Labels, cfg: Config, placement: Placement) -> str:
+    return views.skill(rec, world, labels, cfg, auto_load=placement.auto_load(labels, rec), unenforced=placement.unenforced)
 
 
 def _write(path: Path, text: str) -> None:
@@ -235,9 +122,10 @@ def export_skills(memory: Memory) -> ExportResult:
     session can read whatever its packet arm."""
     cfg = memory.cfg
     world = memory.world()
+    labels = memory.labels(world)
     result = ExportResult()
     wanted: dict[Path, tuple[RecordState, str, Placement]] = {}
-    for rec in sorted(exportable(world, cfg), key=lambda r: r.id) if cfg.skills_export_files else ():
+    for rec in sorted(views.exportable(world, labels, cfg), key=lambda r: r.id) if cfg.skills_export_files else ():
         name = skill_name(rec.id)
         if not NAME_PATTERN.fullmatch(name):
             result.skipped.append({"record_id": rec.id, "reason": f"skill name {name!r} is not a valid skill name"})
@@ -246,7 +134,7 @@ def export_skills(memory: Memory) -> ExportResult:
         for proj in missing:
             result.skipped.append({"record_id": rec.id, "reason": f"project directory {proj} not found"})
         for placement in targets:
-            wanted[placement.root / name] = (rec, render(rec, world, cfg, placement), placement)
+            wanted[placement.root / name] = (rec, render(rec, world, labels, cfg, placement), placement)
 
     for target, (rec, text, placement) in wanted.items():
         marker = target / MARKER

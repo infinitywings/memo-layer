@@ -7,7 +7,9 @@ from ledger_builder import Ledger, cfg
 from rka_memory import relations
 from rka_memory.domain import RecordKind
 from rka_memory.miner.miner import mine_session
-from rka_memory.skills.export import Placement, render
+from rka_memory.kernel import views
+from rka_memory.kernel.labels import label
+from rka_memory.world import project
 from test_miner import FakeBackend, sync
 
 APP = dict(project="/p/app", toolchain="uv", task_class="coding", model_id="m1", user_context="default")
@@ -57,9 +59,9 @@ def test_a_skill_shows_a_governing_rule_without_a_declared_dependency():
     lg.link("r_rule", msg, statement={"quote": CACHE, "marker": "From now on"})
     lg.propose("s1", "r_proc", kind=RecordKind.PROCEDURE, content="Add the function, then run the tests", steps=[("Bash", "python -m pytest -q")])
     lg.confirm("s1", "r_proc")
-    world = lg.gate()
-    text = render(world.records["r_proc"], world, cfg(), Placement(cfg().skills_dir, None, ()))
-    assert f'## Rules this procedure follows\n\n- The user said on {msg.ts[:10]}: "{CACHE}"\n' in text
+    world = project(lg.events)
+    text = views.skill(world.records["r_proc"], world, label(world, cfg(), lg.clock), cfg(), auto_load=False)
+    assert f'## Rules this procedure follows\n\n- [r_rule] The user said: "{CACHE}"\n' in text
 
 
 def test_the_miner_refines_a_rule_stated_in_the_same_session_by_its_stated_id(memory):

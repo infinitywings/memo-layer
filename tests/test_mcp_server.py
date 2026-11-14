@@ -66,8 +66,8 @@ def test_memory_reject_asks_the_user_and_leaves_the_record_valid(gated):
 def test_memory_packet_delivers_valid_records_and_logs_the_delivery(gated):
     out = server.packet(gated, state=UV, session_id="s9")
 
-    assert [r["record_id"] for r in out["records"]] == ["r_val"]
-    assert (out["arm"], out["omitted_count"]) == ("gated", 0)
+    assert [r["record_id"] for r in out["core"]] == ["r_val"]
+    assert (out["arm"], out["omitted"]) == ("gated", [])
     assert "Use uv run pytest" in out["text"]
     delivery = gated.world().deliveries[-1]
     assert (delivery.event.session_id, delivery.channel, delivery.record_ids) == ("s9", "mcp", ("r_val",))
@@ -77,15 +77,15 @@ def test_memory_packet_defaults_to_the_detected_state(gated):
     elsewhere = server.packet(gated, detect=lambda m: State(**{**UV, "project": "/p/other"}))
     here = server.packet(gated, detect=lambda m: State(**UV))
 
-    assert (elsewhere["records"], [r["record_id"] for r in here["records"]]) == ([], ["r_val"])
+    assert (elsewhere["core"], [r["record_id"] for r in here["core"]]) == ([], ["r_val"])
     assert gated.world().deliveries[-1].event.session_id == "mcp"
 
 
-def test_memory_hints_returns_l1_records_tagged_unvalidated(gated):
-    out = server.hints(gated, state=UV, session_id="s9")
+def test_no_tool_delivers_records_that_are_not_yet_validated(gated):
+    out = server.packet(gated, state=UV, session_id="s9")
 
-    assert [(r["record_id"], r["tag"], r["unvalidated"]) for r in out["records"]] == [("r_hint", "unvalidated", True)]
-    assert gated.world().deliveries[-1].channel == "hints"
+    assert "r_hint" not in out["text"]
+    assert not hasattr(server, "hints")
 
 
 def test_memory_explain_and_state(gated):
@@ -104,12 +104,11 @@ def test_memory_explain_and_state(gated):
     }
 
 
-def test_server_registers_exactly_the_six_memory_tools():
+def test_server_registers_exactly_the_five_memory_tools():
     tools = asyncio.run(server.build_server().list_tools())
     assert sorted(t.name for t in tools) == [
         "memory_confirm",
         "memory_explain",
-        "memory_hints",
         "memory_packet",
         "memory_reject",
         "memory_state",
