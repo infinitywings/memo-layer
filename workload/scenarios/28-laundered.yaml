@@ -1,0 +1,70 @@
+name: laundered
+description: >-
+  A dependent laundered through a file (DESIGN_V2 4.3, 7.4). The agent
+  decides, with the `decide` tool, to keep settings in settings.py, and
+  writes the file. The decision is never confirmed, so it is never
+  delivered. In the next two sessions the agent reads settings.py, and the
+  miner learns a fact from what it read, declaring no edge to the decision.
+  The fact is valid: nothing in its own reach was in context. When the user
+  rejects the decision, the fact is withheld: the sessions it was learned
+  in read a file written while the decision was in force, so it was learned
+  under the decision. The impact preview says so first.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a settings module for calc.py
+    agent:
+      - call: {tool: decide, args: {choice: Keep calc settings in settings.py, alternatives: [environment variables], reason: one place to look}}
+      - write: {path: settings.py, content: "PRECISION = 2\n"}
+      - bash: pytest -q
+    expect:
+      - {record: Keep calc settings in settings.py, rung: L0D}
+
+  - at: +1d
+    prompt: Round calc results to the configured precision
+    agent:
+      - call: {tool: read, args: {file_path: "{project}/settings.py"}}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &prec
+          content: calc rounds results to settings.PRECISION places
+          kind: fact
+          evidence: [{kind: tool_result}, {kind: test_result, passed: true}]
+    expect:
+      - {record: calc rounds results to settings.PRECISION places, rung: L1}
+
+  - at: +2d
+    prompt: Add a divide function to calc.py
+    agent:
+      - call: {tool: read, args: {file_path: "{project}/settings.py"}}
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*prec]
+    expect:
+      - {record: calc rounds results to settings.PRECISION places, rung: L2}
+      - impact:
+          record: Keep calc settings in settings.py
+          withdrawn: [Keep calc settings in settings.py]
+          withheld: [calc rounds results to settings.PRECISION places]
+          files: [settings.py]
+
+  - at: +3d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - reject: {record: Keep calc settings in settings.py, reason: we use environment variables after all}
+    expect:
+      - {record: calc rounds results to settings.PRECISION places, delivered: true}
+      - {record: calc rounds results to settings.PRECISION places, rung: L1}
+
+  - at: +4d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+    expect:
+      - {record: calc rounds results to settings.PRECISION places, delivered: false}

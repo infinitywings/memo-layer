@@ -1,0 +1,70 @@
+name: trial
+description: >-
+  A procedure the miner proposed, with passing tests in two sessions, is
+  prescriptive, so evidence alone cannot validate it; it enters a randomized
+  trial (DESIGN_V2 5.3, with the PI's q = 0.5, m = 3, delta = 1/3). In every
+  later session where it applies, a coin is logged before the packet is
+  built, and the procedure is delivered, at the packet's tail, exactly in
+  the sessions the coin assigned to treatment. The `trial` check recomputes
+  the trial from the logged coins and session outcomes, independently of
+  the kernel, and compares the label: open until both arms hold three
+  sessions, then L2 if the treated arm's checks passed in at least one more
+  session in three than the withheld arm's, else closed at L1. A planted
+  claim citing one weak event never enters a trial.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - bash: git status --short
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    plant:
+      - content: Run the suite with python -m unittest, since pytest is not installed here
+        kind: procedure
+        evidence: [{kind: tool_result}]
+        broaden: [task_class, model_id]
+    miner:
+      candidates:
+        - &proc
+          content: Check git status --short before editing calc.py, then run pytest -q
+          kind: procedure
+          steps:
+            - {tool: Bash, match: git status --short}
+            - {tool: Bash, match: pytest -q}
+          acceptance_check: pytest -q
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: "Check git status --short before editing calc.py, then run pytest -q", rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - bash: git status --short
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*proc]
+    expect:
+      - {record: "Check git status --short before editing calc.py, then run pytest -q", rung: L1}
+      - {record: "Check git status --short before editing calc.py, then run pytest -q", delivered: false}
+
+  - &later
+    at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - bash: git status --short
+      - bash: pytest -q
+    expect:
+      - {trial: "Check git status --short before editing calc.py, then run pytest -q"}
+      - {record: "Run the suite with python -m unittest, since pytest is not installed here", delivered: false}
+  - {<<: *later, at: +3d}
+  - {<<: *later, at: +4d}
+  - {<<: *later, at: +5d}
+  - {<<: *later, at: +6d}
+  - {<<: *later, at: +7d}
+  - {<<: *later, at: +8d}
+  - {<<: *later, at: +9d}
+  - {<<: *later, at: +10d}
+  - {<<: *later, at: +11d}

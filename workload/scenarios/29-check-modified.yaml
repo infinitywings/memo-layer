@@ -1,0 +1,56 @@
+name: check-modified
+description: >-
+  A test result is strong only if the session did not create or modify the
+  tests or their configuration (DESIGN_V2 5.1 rule 2, 8.1). In the first two
+  sessions the agent edits test_calc.py before the suite passes, so those
+  results weigh as weak evidence and the fact stays at L1 although it has
+  passing tests in two sessions. Two sessions that leave the tests alone
+  give strong evidence and validate it.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - edit: {path: test_calc.py, old: "def test_add", new: "def test_multiply():\n    assert calc.multiply(2, 3) == 6\n\n\ndef test_add"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &mul
+          content: calc.multiply returns the product of its two arguments
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: calc.multiply returns the product of its two arguments, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - edit: {path: test_calc.py, old: "def test_add", new: "def test_divide():\n    assert calc.divide(6, 3) == 2\n\n\ndef test_add"}
+      - bash: pytest -q
+    miner:
+      candidates: [*mul]
+    expect:
+      - {record: calc.multiply returns the product of its two arguments, rung: L1}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*mul]
+    expect:
+      - {record: calc.multiply returns the product of its two arguments, rung: L1}
+
+  - at: +3d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*mul]
+    expect:
+      - {record: calc.multiply returns the product of its two arguments, rung: L2}
