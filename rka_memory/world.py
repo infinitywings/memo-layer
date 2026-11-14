@@ -145,6 +145,9 @@ class World:
     amendments: list[Amendment] = field(default_factory=list)
     # Evidence links (their linking event ids) the user withdrew.
     defeated: set[str] = field(default_factory=set)
+    # Runner checks (DESIGN_V2 8) and trial coins (5.3), in log order.
+    checks: list[Event] = field(default_factory=list)
+    trials: list[Event] = field(default_factory=list)
 
     def replaced_by(self, record_id: str) -> list[Amendment]:
         """The user's revision-mode replacements of a record, oldest first."""
@@ -324,6 +327,21 @@ def _user_amend(world: World, ev: Event) -> None:
     world.amendments.append(Amendment(ev, op, target.id, new_id, condition))
 
 
+def _check(world: World, ev: Event) -> None:
+    """A check that names a record is evidence for it, like a verdict: it
+    passed (support) or failed (counter). A modification check names a
+    session, not a record."""
+    world.checks.append(ev)
+    rec = world.records.get(str(ev.payload.get("record_id") or ""))
+    if rec is not None:
+        polarity = Polarity.SUPPORT if ev.payload.get("passed") else Polarity.COUNTER
+        rec.links.append(Link(event_id=ev.id, record_id=rec.id, polarity=polarity, via=ev.id))
+
+
+def _trial(world: World, ev: Event) -> None:
+    world.trials.append(ev)
+
+
 def _rung_change(world: World, ev: Event) -> None:
     p = ev.payload
     rec = world.records[p["record_id"]]
@@ -373,6 +391,8 @@ _FOLD = {
     Kind.USER_CONFIRM: _user_verdict,
     Kind.USER_REJECT: _user_verdict,
     Kind.USER_AMEND: _user_amend,
+    Kind.CHECK: _check,
+    Kind.TRIAL: _trial,
     Kind.RUNG_CHANGE: _rung_change,
     Kind.SCOPE_NARROWED: _scope_narrowed,
     Kind.PACKET_DELIVERED: _packet_delivered,

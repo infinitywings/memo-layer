@@ -43,7 +43,7 @@ def load(path: Path):
 def main(argv: list[str]) -> int:
     paths = [Path(p) for p in (argv or sorted(glob.glob("workload-runs/*/*/ledger/ledger.jsonl")))]
     tally: Counter = Counter()
-    misses: dict[str, list[str]] = {**{f"P{i}": [] for i in range(1, 7)}, "V4": []}
+    misses: dict[str, list[str]] = {**{f"P{i}": [] for i in range(1, 7)}, "V4": [], "E3": []}
     rendered = 0
     slowest = (0.0, "")
     for path in paths:
@@ -90,8 +90,12 @@ def main(argv: list[str]) -> int:
     facts = {k[2]: n for k, n in tally.items() if k[0] == "mined" and k[1] == "fact"}
     kept = facts.get("L2", 0) + facts.get("L3", 0)
     total = sum(facts.values())
+    # Layer 1 predicted at least 70% before artifact influence and check
+    # modification existed; layer 4 registered at least 50% with them.
     if total and kept / total < 0.7:
-        misses["P3"].append(f"{kept}/{total} facts stay at L2")
+        misses["P3"].append(f"{kept}/{total} facts stay at L2 (layer-1 prediction, before layer 4)")
+    if total and kept / total < 0.5:
+        misses["E3"].append(f"{kept}/{total} facts stay at L2")
     if slowest[0] >= 5.0:
         misses["P6"].append(f"{slowest[1]}: {slowest[0]:.2f}s")
 

@@ -14,7 +14,8 @@ Layout, for reuse of the provider's prefix cache across sessions:
 2. the amendments block: records that qualify a core record (`refines`),
    each naming its target, so amending an old record does not insert into
    the prefix; an amendment whose target is not delivered is not shown;
-3. the tail: in the ungated arm, records not yet validated.
+3. the tail: in the ungated arm, records not yet validated; in the gated
+   arm, the trial candidates this session's logged coins treat (5.3).
 
 A budget selects whole dependency groups (user-affirmed first, then those
 about recently touched anchors, then the oldest) and never reorders. A
@@ -50,6 +51,7 @@ HEADER = (
 )
 AMENDMENTS = "### Amendments to the records above"
 UNVALIDATED = "### Not yet validated"
+TRIAL = "### Being tested"
 RECENT_SESSIONS = 3
 
 
@@ -139,13 +141,14 @@ class View:
     core: tuple[Line, ...] = ()
     amendments: tuple[Line, ...] = ()
     tail: tuple[Line, ...] = ()
+    trial: tuple[Line, ...] = ()
     omitted: tuple[str, ...] = ()
     ledger_revision: int = 0
     budget_tokens: int = 0
 
     @property
     def lines(self) -> tuple[Line, ...]:
-        return self.core + self.amendments + self.tail
+        return self.core + self.amendments + self.tail + self.trial
 
     @property
     def record_ids(self) -> tuple[str, ...]:
@@ -163,6 +166,8 @@ class View:
             parts += ["", AMENDMENTS, *(line.render() for line in self.amendments)]
         if self.tail:
             parts += ["", UNVALIDATED, *(line.render() for line in self.tail)]
+        if self.trial:
+            parts += ["", TRIAL, *(line.render() for line in self.trial)]
         if self.omitted:
             parts += ["", f"({len(self.omitted)} more records omitted for budget.)"]
         return "\n".join(parts)
@@ -178,6 +183,7 @@ class View:
             "core": [line.to_json() for line in self.core],
             "amendments": [line.to_json() for line in self.amendments],
             "tail": [line.to_json() for line in self.tail],
+            "trial": [line.to_json() for line in self.trial],
             "omitted": list(self.omitted),
             "ledger_revision": self.ledger_revision,
             "hash": self.hash,
@@ -234,9 +240,11 @@ def packet(
     budget_tokens: int | None = None,
     exclude: frozenset[str] = frozenset(),
     anchors: frozenset[str] = frozenset(),
+    treated: tuple[str, ...] = (),
 ) -> View:
     """The packet for one session state under one arm. `exclude` holds records
-    already delivered in the session; `anchors` rank groups for the budget."""
+    already delivered in the session; `anchors` rank groups for the budget;
+    `treated` are the trial candidates this session's logged coins deliver."""
     budget = cfg.budget_tokens if budget_tokens is None else budget_tokens
     empty = View(arm, channel, ledger_revision=world.revision, budget_tokens=budget)
     if arm == "none":
@@ -283,12 +291,24 @@ def packet(
         kept.update(r.id for r in group)
         used += cost
     in_order = sorted((r for r in selected if r.id in kept), key=since)
+    trial = []
+    for rid in treated:
+        if rid in exclude or rid not in world.records:
+            continue
+        line_ = Line(rid, text_of(world.records[rid], world, cfg))
+        cost = estimate_tokens(line_.render())
+        if used + cost > budget:
+            omitted.append(rid)
+            continue
+        trial.append(line_)
+        used += cost
     return View(
         arm,
         channel,
         core=tuple(line(r) for r in in_order if r.id in core_ids),
         amendments=tuple(line(r) for r in in_order if r.id in amendments),
         tail=tuple(line(r) for r in unvalidated if r.id in kept),
+        trial=tuple(trial),
         omitted=tuple(omitted),
         ledger_revision=world.revision,
         budget_tokens=budget,

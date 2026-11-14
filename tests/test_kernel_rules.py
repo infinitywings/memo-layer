@@ -43,10 +43,10 @@ def test_two_strong_events_in_two_sessions_promote_a_fact_to_l2():
     assert rung_reason(lg, "r_a") == ("L2", "independent grounding in enough distinct sessions")
 
 
-def test_the_same_evidence_leaves_a_constraint_at_l1():
+def test_the_same_evidence_puts_a_constraint_into_a_trial_at_l1():
     lg = Ledger()
     two_strong_sessions(lg, kind=RecordKind.CONSTRAINT)
-    assert rung_reason(lg, "r_a") == ("L1", "prescriptive: needs the user's affirmation or a trial")
+    assert rung_reason(lg, "r_a") == ("L1", "in trial: treated 0, withheld 0 sessions")
 
 
 def test_strong_evidence_from_one_session_stays_l1():
@@ -339,12 +339,12 @@ def test_a_confirmed_procedure_reaches_l3_then_retires_on_a_failed_acceptance_ch
     assert rung_reason(lg, "r_proc") == ("L4", "acceptance check failed after the skill was used")
 
 
-def test_a_procedure_backed_by_outcomes_alone_stays_l1():
+def test_a_procedure_backed_by_outcomes_alone_stays_l1_in_a_trial():
     lg = Ledger()
     two_strong_sessions(lg, "r_proc", **PROC)
     follow(lg, "s3")
     follow(lg, "s4")
-    assert rung_reason(lg, "r_proc") == ("L1", "prescriptive: needs the user's affirmation or a trial")
+    assert rung_reason(lg, "r_proc") == ("L1", "in trial: treated 0, withheld 0 sessions")
 
 
 def test_procedure_followed_but_failing_sessions_do_not_promote():
@@ -537,7 +537,7 @@ def test_a_standing_restatement_in_other_words_weighs_like_a_confirm_but_does_no
     stated(lg, "s2", f"Remember: {SUMMARY}.", "r_sum", quote=SUMMARY, marker="Remember")
     world = project(lg.events)
     assert [g.weight for g in counted(world.records["r_sum"], world, cfg(), Polarity.SUPPORT)] == [1.0, 1.0]
-    assert rung_reason(lg, "r_sum") == ("L1", "prescriptive: needs the user's affirmation or a trial")
+    assert rung_reason(lg, "r_sum") == ("L1", "in trial: treated 0, withheld 0 sessions")
 
 
 def test_a_withdrawal_in_the_users_words_demotes_wherever_the_rule_applies_until_restated():

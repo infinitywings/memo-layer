@@ -24,9 +24,11 @@ from typing import Any, Callable, Mapping
 from rka_memory import commands
 from rka_memory.commands import CommandError
 from rka_memory.domain import Kind, State, clock_now, parse_ts
+from rka_memory.ledger import checks as runner_checks
 from rka_memory.ledger import signals
 from rka_memory.ledger import state as state_mod
 from rka_memory.ledger.adapters import claude_code as adapter
+from rka_memory.miner.miner import could_apply
 from rka_memory.service import Memory
 from rka_memory.world import World
 
@@ -143,6 +145,7 @@ def on_session_start(memory: Memory, payload: Mapping[str, Any]) -> Output:
         changes = signals.detect_file_changes(world, sid, state, memory.cfg)
     memory.append(adapter.session_start_event(payload, state, state.model_id), *changes)
     _remember_state(memory, sid, state)
+    _start_checks(memory, sid, state)
     memory.gate(session_id=sid)
     packet = memory.deliver(sid, state, channel="session_start")
     if memory.cfg.hooks_background == "spawn":
@@ -151,6 +154,34 @@ def on_session_start(memory: Memory, payload: Mapping[str, Any]) -> Output:
     if text:
         text += f"\n(rka-memory session id: {sid}; pass it as session_id to memory_* tools.)"
     return _context("SessionStart", text)
+
+
+def _snapshot_file(memory: Memory, session_id: str) -> Path:
+    return _pending(memory, session_id) / "_checks.json"
+
+
+def _start_checks(memory: Memory, session_id: str, state: State) -> None:
+    """Before the session's packet is built: hash the files whose change makes
+    its test results weak, and check the citations of every record that could
+    apply here, so the packet reads only logged checks (DESIGN_V2 8)."""
+    if not state.project:
+        return
+    _write_json(_snapshot_file(memory, session_id), runner_checks.snapshot(Path(state.project), memory.cfg))
+    labels = memory.labels()
+    cited = [
+        r for r in memory.world().records.values()
+        if r.spec.cites and not labels.by_id[r.id].withdrawn and could_apply(r.scope, state)
+    ]
+    memory.append(*runner_checks.citation_events(cited, state, session_id))
+
+
+def _end_checks(memory: Memory, session_id: str) -> list:
+    before = _read_json(_snapshot_file(memory, session_id))
+    state = memory.session_state(session_id)
+    if not isinstance(before, dict) or not state.project:
+        return []
+    after = runner_checks.snapshot(Path(state.project), memory.cfg)
+    return [runner_checks.modification_event(before, after, session_id, state)]
 
 
 def _rkm_command(memory: Memory, session_id: str, prompt: str) -> Output:
@@ -260,7 +291,7 @@ def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
     usage = adapter.reported_usage(payload) or adapter.transcript_usage(
         adapter.read_transcript(payload.get("transcript_path"))
     )
-    memory.append(*_late_writes(memory, sid), adapter.session_end_event(payload, usage))
+    memory.append(*_late_writes(memory, sid), *_end_checks(memory, sid), adapter.session_end_event(payload, usage))
     shutil.rmtree(_pending(memory, sid), ignore_errors=True)
     sync = memory.cfg.sync_on_session_end and bool(memory.cfg.core_project_id)
     if memory.cfg.hooks_background == "spawn":

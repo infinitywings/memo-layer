@@ -54,6 +54,11 @@ class Kind(StrEnum):
     # An amendment the user typed: qualify, correct, replace, update, close,
     # or defeat an evidence link (DESIGN_V2 6.1).
     USER_AMEND = "user_amend"
+    # A check the runner ran, logged before anything reads it (DESIGN_V2
+    # 4.1, 8): a citation, a falsifier, or whether a session changed its tests.
+    CHECK = "check"
+    # The runner's coin for one trial candidate in one session (DESIGN_V2 5.3).
+    TRIAL = "trial"
 
 
 # Which actor may author each kind. The adapter sets the actor, never the
@@ -81,6 +86,8 @@ KIND_ACTORS: dict[Kind, frozenset[Actor]] = {
     Kind.COST: frozenset({Actor.RUNNER}),
     Kind.WORKSPACE_RESET: frozenset({Actor.RUNNER}),
     Kind.USER_AMEND: frozenset({Actor.USER}),
+    Kind.CHECK: frozenset({Actor.RUNNER}),
+    Kind.TRIAL: frozenset({Actor.RUNNER}),
 }
 
 
@@ -107,6 +114,7 @@ GROUNDING: dict[Kind, Callable[[Mapping[str, Any]], frozenset[Polarity]]] = {
     Kind.USER_CONFIRM: lambda p: SUPPORT_ONLY,
     Kind.USER_REJECT: lambda p: COUNTER_ONLY,
     Kind.USER_AMEND: lambda p: SUPPORT_ONLY,
+    Kind.CHECK: lambda p: _outcome(bool(p.get("passed"))),
     Kind.USER_EDIT: lambda p: BOTH,
     Kind.USER_UNDO: lambda p: COUNTER_ONLY,
     Kind.USER_REPEAT: lambda p: SUPPORT_ONLY,
@@ -433,6 +441,27 @@ _RUNG_ORDER = {Rung.L0D: 0, Rung.L1: 1, Rung.L2: 2, Rung.L3: 3, Rung.L4: -1}
 DELIVERABLE: frozenset[Rung] = frozenset({Rung.L2, Rung.L3})
 
 
+@dataclass(frozen=True)
+class Citation:
+    path: str
+    quote: str
+    absent: bool = False
+
+    @property
+    def check(self) -> str:
+        return "falsifier" if self.absent else "citation"
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"path": self.path, "quote": self.quote}
+        if self.absent:
+            out["absent"] = True
+        return out
+
+    @classmethod
+    def from_json(cls, d: Mapping[str, Any]) -> Citation:
+        return cls(str(d["path"]), str(d["quote"]), bool(d.get("absent")))
+
+
 class RecordKind(StrEnum):
     FACT = "fact"
     PREFERENCE = "preference"
@@ -481,6 +510,9 @@ class RecordSpec:
     # For a decision: the options not chosen, and why this one.
     alternatives: tuple[str, ...] = ()
     reason: str = ""
+    # Files and the words in them the record rests on; the runner checks each
+    # (DESIGN_V2 8.2). With `absent`, the words must not be there: a falsifier.
+    cites: tuple[Citation, ...] = ()
 
     @property
     def dependencies(self) -> tuple[str, ...]:
@@ -510,6 +542,8 @@ class RecordSpec:
             out["alternatives"] = list(self.alternatives)
         if self.reason:
             out["reason"] = self.reason
+        if self.cites:
+            out["cites"] = [c.to_json() for c in self.cites]
         return out
 
     @classmethod
@@ -530,4 +564,5 @@ class RecordSpec:
             implements=tuple(str(r) for r in d.get("implements") or ()),
             alternatives=tuple(str(a) for a in d.get("alternatives") or ()),
             reason=str(d.get("reason") or ""),
+            cites=tuple(Citation.from_json(c) for c in d.get("cites") or () if isinstance(c, Mapping) and c.get("path") and c.get("quote")),
         )

@@ -3,7 +3,9 @@ description: >-
   A fact that cites a file and the words it rests on is checked by the
   runner (DESIGN_V2 8.2): when it is proposed, and again before every
   session's packet is built. Each check is logged before any label reads
-  it, in the session it ran in. The proposal's test and its first check
+  it, in the session it ran in; each session also logs its modification
+  check, so a session adds one check event besides the citation's. The
+  proposal's test and its first check
   fall in one session, so the fact reaches L2 at the next session's check,
   before that packet is built. A passing check is evidence the agent did not author, but only if the
   file was not last written while the fact was in context (4.3). When the
@@ -29,7 +31,7 @@ sessions:
           cites: [{path: helpers.py, quote: "return max(low, min(value, high))"}]
     expect:
       - {record: helpers.clamp keeps a value between two bounds, rung: L1}
-      - {events: {kind: check, count: 1}}
+      - {events: {kind: check, count: 2}}
 
   - at: +1d
     prompt: Add a divide function to calc.py
@@ -39,7 +41,7 @@ sessions:
     expect:
       - {record: helpers.clamp keeps a value between two bounds, delivered: true}
       - {record: helpers.clamp keeps a value between two bounds, rung: L2}
-      - {events: {kind: check, count: 2}}
+      - {events: {kind: check, count: 4}}
 
   - at: +2d
     drift:

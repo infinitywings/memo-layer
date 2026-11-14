@@ -28,7 +28,7 @@ def impact(world: World, cfg: Config, now: datetime, record_id: str) -> dict[str
     after_world = project([*world.events.values(), reject])
     after = label(after_world, cfg, now)
     withdrawn = sorted(after.withdrawn - before.withdrawn, key=lambda r: world.position[world.records[r].proposed.id])
-    closure = Reach(world).dependents(frozenset({record_id}))
+    closure = Reach(world, cfg).dependents(frozenset({record_id}))
     return {
         "record_id": record_id,
         "withdrawn": withdrawn,

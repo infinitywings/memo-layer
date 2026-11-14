@@ -10,6 +10,8 @@ cleanliness and the withdrawn set are the labelling function's business.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fnmatch import fnmatch
+from pathlib import PurePosixPath
 
 from rka_memory.config import Config
 from rka_memory.domain import (
@@ -29,7 +31,39 @@ from rka_memory.domain import (
 from rka_memory.world import RecordState, World
 
 # Events that name the one record they bear on: a miner cannot cite them for another.
-TARGETED_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT, Kind.USER_AMEND)
+TARGETED_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT, Kind.USER_AMEND, Kind.CHECK)
+OUTCOMES = (Kind.TEST_RESULT, Kind.EXIT_CODE)
+
+
+def modified_sessions(world: World, cfg: Config) -> frozenset[str]:
+    """Sessions that created or changed a test or its configuration: the agent
+    wrote a path matching `checks.globs`, or the runner's modification check
+    found one changed (DESIGN_V2 8.1). Their test and exit results are weak."""
+    cache = world.__dict__.setdefault("_modified", {})
+    if world.revision not in cache:
+        out = {
+            ev.session_id for ev in world.checks
+            if ev.payload.get("check") == "modification" and not ev.payload.get("passed")
+        }
+        for ev in world.events.values():
+            if ev.kind is Kind.FILE_WRITE and _matches(str(ev.payload.get("path") or ""), cfg.check_globs):
+                out.add(ev.session_id)
+        cache.clear()
+        cache[world.revision] = frozenset(out)
+    return cache[world.revision]
+
+
+def _matches(path: str, globs: tuple[str, ...]) -> bool:
+    """A glob `dir/**` matches anything under a directory of that name; any
+    other glob matches the path's tail or its file name."""
+    pure = PurePosixPath(path)
+    for g in globs:
+        if g.endswith("/**") and "/" not in g[:-3]:
+            if g[:-3] in pure.parts[:-1]:
+                return True
+        elif pure.match(g.removeprefix("**/")) or fnmatch(pure.name, g):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -94,6 +128,9 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
         if ev.id != link.via and not world.before(ev.id, link.via):
             continue
         weight, targeted, affirms = cfg.weight(ev.kind), is_targeted(ev, rec.id), False
+        if ev.kind in OUTCOMES and ev.session_id in modified_sessions(world, cfg):
+            # The session changed its own tests: its results are not strong.
+            weight = min(weight, cfg.weight(Kind.TOOL_RESULT))
         said = statement(made_by, ev, cfg)
         if said is not None and polarity is Polarity.SUPPORT and said[1]:
             # A standing rule in the user's words weighs like a confirm, and

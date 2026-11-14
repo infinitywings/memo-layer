@@ -7,7 +7,10 @@ description: >-
   three sessions; gate.k is 2/3 here so that after two sessions only the
   session count holds it back. A constraint and a preference with the same
   kind of evidence stay at L1: a prescriptive record reaches L2 only by the
-  user's affirmation or, from layer 4, by a trial (DESIGN_V2 5.2).
+  user's affirmation or by a trial (DESIGN_V2 5.2, 5.3). The constraint's
+  passing tests in two sessions meet the threshold a fact would need, so
+  from the third session it is in a trial: delivered exactly when that
+  session's logged coin treats it.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 config:
@@ -65,7 +68,7 @@ sessions:
     expect:
       - {record: "calc.py's test suite passes with pytest -q", delivered: true}
       - {record: "calc.py's test suite passes with pytest -q", in_prompt: true}
-      - {record: Run the test suite with pytest -q before finishing, delivered: false}
+      - {trial: Run the test suite with pytest -q before finishing}
       - {record: Run the test suite with pytest -q before finishing, rung: L1}
       - {record: The user asks for one calc.py function per session, delivered: false}
       - {record: The user asks for one calc.py function per session, rung: L2}

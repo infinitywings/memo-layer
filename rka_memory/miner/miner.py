@@ -30,6 +30,7 @@ from rka_memory.domain import (
     SESSION_MARKERS,
     SHOWN_KINDS,
     Actor,
+    Citation,
     Event,
     Kind,
     Polarity,
@@ -42,6 +43,7 @@ from rka_memory.domain import (
     canonical_json,
     new_id,
 )
+from rka_memory.ledger import checks as runner_checks
 from rka_memory.miner import backends, dedup, extract
 from rka_memory.skills.export import export_skills
 from rka_memory.world import RecordState, World
@@ -105,6 +107,7 @@ class Candidate:
     implements: tuple[str, ...] = ()
     alternatives: tuple[str, ...] = ()
     reason: str = ""
+    cites: tuple[Citation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -334,6 +337,11 @@ def _candidate(raw: Any, index: int) -> Candidate | Drop:
         implements=_strings(raw.get("implements")),
         alternatives=_strings(raw.get("alternatives")) if kind is RecordKind.DECISION else (),
         reason=" ".join(str(raw.get("reason") or "").split()) if kind is RecordKind.DECISION else "",
+        cites=tuple(
+            Citation(str(c["path"]).strip(), " ".join(str(c["quote"]).split()), bool(c.get("absent")))
+            for c in _list(raw.get("cites"))
+            if isinstance(c, dict) and str(c.get("path") or "").strip() and str(c.get("quote") or "").strip()
+        ) if kind is RecordKind.FACT else (),
     )
 
 
@@ -539,9 +547,15 @@ class _Planner:
             implements=tuple(implements),
             alternatives=c.alternatives,
             reason=c.reason,
+            cites=c.cites,
         )
         self.emit(Kind.RECORD_PROPOSED, {**spec.to_json(), "mined_from_session": self.session_id})
         rec = self.world.records[spec.record_id]
+        # A citation is checked when it is made, by the runner, and logged
+        # before any label reads it (DESIGN_V2 8.2).
+        for ev in runner_checks.citation_events([rec], state, self.session_id):
+            self.world.apply(ev)
+            self.events.append(ev)
         for e in evidence:
             self.link(rec, e, Polarity.SUPPORT, "cited by miner", statement)
         self.result.proposed.append(

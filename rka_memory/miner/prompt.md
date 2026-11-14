@@ -19,6 +19,7 @@ Reply with one JSON object and nothing else. No prose, no Markdown fences.
       "supersedes": "<id of a delivered or existing procedure this procedure replaces, or null>",
       "refines": ["<ids of listed records, or stated-<n> rules, this lesson qualifies or narrows>"],
       "implements": ["<ids of listed decisions this lesson carries out>"],
+      "cites": [{"path": "<for a fact about a file: its path relative to the project>", "quote": "<words copied exactly from that file that show the fact>"}],
       "alternatives": ["<for a decision: the options not chosen>"],
       "reason": "<for a decision: why this option>"
     }
@@ -38,7 +39,7 @@ Rules:
 3. Prefer zero to three durable candidates. Skip one-off details and file contents the agent can re-read. Never propose again what a record listed below already states, even in other words: link this session's evidence to that record in support_links instead. That is how a lesson gathers evidence across sessions.
 4. `kind`: fact (how this project or toolchain is), preference (how the user wants work done), procedure (an ordered way to get something done), constraint (something that must or must not happen), decision (an approach the session chose over named alternatives, with its reason). Propose a decision only when the session plainly chose one approach over others; a decision the agent recorded with its `decide` tool is listed below already.
 5. `broaden`: the scope fields the lesson holds regardless of. Scope fields are $scope_fields. A preference that holds in every project lists "project". Leave a field out when unsure; narrow scope is safe.
-6. `steps` and `acceptance_check` are only for procedures. Each step is a tool call the agent made, as the tool name plus a short substring of its input. The acceptance_check is the exact command whose success showed the procedure worked. Leave both empty for other kinds.
+6. `cites` is only for facts about what a file says. Give the file's path relative to the project and a short span copied exactly from it, as a tool result in this session showed it; rka-memory checks the words are there, now and before later sessions, and drops the fact when they are gone. Leave it empty otherwise. `steps` and `acceptance_check` are only for procedures. Each step is a tool call the agent made, as the tool name plus a short substring of its input. The acceptance_check is the exact command whose success showed the procedure worked. Leave both empty for other kinds.
 7. Relations. First decide by rule 3 whether a candidate is worth proposing at all; a link to a listed record never makes it so. Then, for each candidate you keep, check the records listed below (delivered, existing, and the rules stated in this session) and fill these fields where they apply, using the records' ids:
    - `refines`: the candidate qualifies or narrows that record: an exception to it, a limit or a side effect of doing what it says, or a condition it needs. A candidate that only shares a topic with a record does not refine it.
    - `depends_on`: the candidate only holds because the agent followed that record; if the record were wrong, the candidate would be wrong too.

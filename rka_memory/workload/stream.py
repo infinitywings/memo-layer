@@ -216,7 +216,7 @@ RULE_KINDS = ("preference", "constraint")
 REQUEST_CHECKS = frozenset({"model_saw", "model_never_saw", "in_prompt", "skill_offered"})
 CANDIDATE_KEYS = {
     "broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on", "about", "supersedes",
-    "refines", "implements", "alternatives", "reason",
+    "refines", "implements", "alternatives", "reason", "cites",
 }
 
 
@@ -228,6 +228,8 @@ def _candidate(raw: Any, where: str) -> dict[str, Any]:
         raise StreamError(f"{where}: broaden names scope fields {list(SCOPE_FIELDS)}")
     evidence = [_selector(s, f"{where}.evidence") for s in _list(c.get("evidence"), where)]
     depends_on = [_str(x, f"{where}.depends_on") for x in _list(c.get("depends_on"), where)]
+    for i, cite in enumerate(_list(c.get("cites"), where)):
+        _keys(cite, f"{where}.cites[{i}]", {"path", "quote"}, {"absent"})
     return {**c, "evidence": evidence, "depends_on": depends_on}
 
 

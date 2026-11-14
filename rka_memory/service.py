@@ -12,7 +12,8 @@ from rka_memory import relations
 from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, Polarity, State, clock_now, derived_id
 from rka_memory.kernel import views
-from rka_memory.kernel.evidence import counted, inside, statement
+from rka_memory.kernel import trials
+from rka_memory.kernel.evidence import applicable, counted, inside, statement
 from rka_memory.kernel.impact import impact
 from rka_memory.kernel.labels import ENGINE_SESSION, Labels, audit_events, label
 from rka_memory.ledger.jsonl import JsonlLedger
@@ -88,9 +89,11 @@ class Memory:
             anchors = views.recent_anchors(world, state.project, session_id)
             if channel != "session_start":
                 anchors |= world.session(session_id).anchors
+        labels = label(world, self.cfg, now)
+        treated = self._trial_arms(world, labels, state, session_id) if arm == "gated" else ()
         view = views.packet(
             world,
-            label(world, self.cfg, now),
+            labels,
             self.cfg,
             state,
             arm=arm,
@@ -98,6 +101,7 @@ class Memory:
             budget_tokens=budget_tokens,
             exclude=exclude,
             anchors=anchors,
+            treated=treated,
         )
         self.append(
             Event.new(
@@ -117,6 +121,33 @@ class Memory:
             )
         )
         return view
+
+    def _trial_arms(self, world: World, labels: Labels, state: State, session_id: str) -> tuple[str, ...]:
+        """Log a coin for each trial candidate that applies to the session,
+        before the packet is built, and return the treated ones. A coin
+        already logged in the session is reused, so every packet of one
+        session sees the same arms."""
+        logged = {
+            str(ev.payload.get("record_id")): str(ev.payload.get("arm"))
+            for ev in world.trials if ev.session_id == session_id
+        }
+        new, treated = [], []
+        for rid in trials.candidates(world, labels, self.cfg):
+            if applicable(world.records[rid], state, world) is not True:
+                continue
+            arm = logged.get(rid)
+            if arm is None:
+                draw = trials.coin(session_id, rid)
+                arm = "treated" if draw < self.cfg.trials.q else "withheld"
+                new.append(Event.new(Kind.TRIAL, Actor.RUNNER, session_id,
+                                     {"record_id": rid, "arm": arm, "q": self.cfg.trials.q, "coin": draw}))
+            if arm == "treated":
+                treated.append(rid)
+        if new:
+            self.append(*new)
+            for ev in new:
+                world.apply(ev)
+        return tuple(treated)
 
     def verdict(self, record_id: str, *, confirm: bool, session_id: str = CLI_SESSION, reason: str = "") -> Event:
         """Record a user verdict. Call only from paths the user types into

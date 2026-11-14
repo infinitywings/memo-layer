@@ -30,6 +30,17 @@ class GateConfig:
 
 
 @dataclass(frozen=True)
+class TrialConfig:
+    """Randomized trials for prescriptive records (DESIGN_V2 5.3), registered
+    before any run: the chance a candidate is delivered, the sessions each arm
+    needs, and the margin the treated arm must win by."""
+
+    q: float = 0.5
+    m: int = 3
+    delta: float = 1 / 3
+
+
+@dataclass(frozen=True)
 class Config:
     ledger_dir: Path
     core_url: str
@@ -58,6 +69,9 @@ class Config:
     hooks_background: str
     skills_dir: Path
     skills_export_files: bool
+    trials: TrialConfig = field(default_factory=TrialConfig)
+    # Paths whose change in a session makes its test results weak (8.1).
+    check_globs: tuple[str, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
@@ -156,5 +170,11 @@ def from_dict(raw: dict[str, Any]) -> Config:
         hooks_background=_choice(raw.get("hooks", {}).get("background", "spawn"), BACKGROUND, "hooks.background"),
         skills_dir=Path(raw["skills"]["dir"]).expanduser(),
         skills_export_files=_flag(raw["skills"].get("export_files", True), "skills.export_files"),
+        trials=TrialConfig(
+            q=float(raw.get("trials", {}).get("q", TrialConfig.q)),
+            m=int(raw.get("trials", {}).get("m", TrialConfig.m)),
+            delta=_number(raw.get("trials", {}).get("delta", TrialConfig.delta)),
+        ),
+        check_globs=tuple(str(g) for g in raw.get("checks", {}).get("globs") or ()),
         raw=raw,
     )

@@ -145,6 +145,66 @@ def _impact(obs: Observed, want: dict[str, Any]) -> Outcome:
     return not diff, diff or got
 
 
+# The trial parameters the PI registered (DESIGN_V2 5.3), restated here so
+# the check does not read them from the code it checks.
+TRIAL_M, TRIAL_DELTA = 3, 1 / 3
+
+
+def _trial_status(world: World, arms: dict[str, str], before: int | None) -> str:
+    """A procedure's trial recomputed from the log: sessions with a coin, in
+    the order they ended (before position `before` if given), each counted
+    as passing if its last test or exit result passed."""
+    n = {"treated": [0, 0], "withheld": [0, 0]}
+    ended = sorted(
+        (world.position[s.ended.id], s)
+        for s in (world.sessions.get(x) for x in arms)
+        if s is not None and s.ended is not None and (before is None or world.position[s.ended.id] < before)
+    )
+    for _, s in ended:
+        outs = [e for e in s.events if e.kind in (Kind.TEST_RESULT, Kind.EXIT_CODE)]
+        last = outs[-1] if outs else None
+        ok = last is not None and (bool(last.payload.get("passed")) if last.kind is Kind.TEST_RESULT else last.payload.get("code") == 0)
+        arm = n.get(arms[s.id])
+        if arm is None:
+            continue
+        arm[0] += 1
+        arm[1] += ok
+        if n["treated"][0] >= TRIAL_M and n["withheld"][0] >= TRIAL_M:
+            gap = n["treated"][1] / n["treated"][0] - n["withheld"][1] / n["withheld"][0]
+            return "positive" if gap >= TRIAL_DELTA - 1e-9 else "closed"
+    return "open"
+
+
+def _trial(obs: Observed, content: str) -> Outcome:
+    """A procedure in a randomized trial, checked against the log: one coin
+    in this session if the trial was open when it began, the procedure
+    delivered exactly when that coin treated it, and its rung what the
+    logged coins and outcomes say (L2 or above only after a positive
+    contrast). Only scenarios whose sessions run in the gated arm use it."""
+    world, sid = obs.world, obs.session_id
+    rec = find_record(world, content)
+    mine = [e for e in world.trials if e.payload.get("record_id") == rec.id]
+    arms: dict[str, str] = {}
+    for e in mine:
+        arms.setdefault(e.session_id, str(e.payload.get("arm")))
+    sess = world.sessions.get(sid or "")
+    start = world.position[sess.started.id] if sess is not None and sess.started is not None else None
+    here = [e for e in mine if e.session_id == sid]
+    problems = []
+    if _trial_status(world, arms, start) == "open" and len(here) != 1:
+        problems.append(f"{len(here)} coins in a session that began with the trial open")
+    treated = bool(here) and here[0].payload.get("arm") == "treated"
+    delivered = any(rec.id in d.record_ids for d in obs.deliveries())
+    if delivered != treated:
+        problems.append(f"delivered {delivered}, coin {here[0].payload.get('arm') if here else 'none'}")
+    status = _trial_status(world, arms, None)
+    rung = rec.rung.value if rec.rung else None
+    if (status == "positive") != (rung in ("L2", "L3")):
+        problems.append(f"trial {status} but rung {rung}")
+    counts = {a: sum(1 for x in arms.values() if x == a) for a in ("treated", "withheld")}
+    return not problems, problems or f"trial {status}; coins {counts}; rung {rung}"
+
+
 def _skill_offered(obs: Observed, rec: RecordState, want: bool) -> Outcome:
     name = skill_name(rec.id)
     got = any(name in json.dumps(body) for body in _agent_requests(obs))
@@ -359,6 +419,7 @@ CHECKS: dict[str, Check] = {
     "record_contains": Check(_is_str, _record_contains, False),
     "model_saw": Check(_is_str, _model_saw, False),
     "impact": Check(_is_impact, _impact, False),
+    "trial": Check(_is_str, _trial, False),
     "command_passes": Check(_is_str, _command_passes, False),
     "ran": Check(_is_str, _ran, False),
     "wrote": Check(_is_str, _wrote, False),

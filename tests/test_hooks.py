@@ -150,8 +150,11 @@ def test_week1_session_replays_from_ledger_and_next_session_sees_edit_and_undo(
         ("tool_result", "tool"),
         ("exit_code", "tool"),
         ("test_result", "tool"),
+        ("check", "runner"),
         ("session_end", "runner"),
     ]
+    (modified,) = [e for e in replayed if e.kind is Kind.CHECK]
+    assert modified.payload["check"] == "modification"
     assert world.sessions["sess-a"].state.to_json() == {
         "task_class": "debugging",
         "project": str(proj),

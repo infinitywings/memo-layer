@@ -41,6 +41,7 @@ from datetime import datetime, timedelta
 from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, Polarity, RecordKind, Rung, State, derived_id, parse_ts
 from rka_memory.kernel.evidence import Grounding, affirmation, applicable, counted, inside, meets_l2
+from rka_memory.kernel import trials
 from rka_memory.kernel.influence import Influence, Reach
 from rka_memory.skills.gate import OUTCOME_KINDS, _used_skill, final_outcome, follows, normalize_command, outcome_ok
 from rka_memory.world import RecordState, Session, World
@@ -68,6 +69,9 @@ class Label:
     # Miner restrictions of this record that have evidence but are not yet
     # valid: the record keeps its rung but is not delivered (DESIGN_V2 6.1).
     withheld_by: tuple[str, ...] = ()
+    # For a prescriptive record whose support met the threshold: its
+    # randomized trial, "open", "positive" or "closed" (DESIGN_V2 5.3).
+    trial: str | None = None
 
     @property
     def valid(self) -> bool:
@@ -107,40 +111,54 @@ def _affirmations(rec: RecordState, world: World, cfg: Config) -> list[Grounding
     return [g for g in counted(rec, world, cfg, Polarity.SUPPORT) if affirmation(g) and inside(rec.scope, g)]
 
 
-def _withdrawals(rec: RecordState, world: World, cfg: Config) -> tuple[int, int]:
-    """Positions of the latest affirmation and the latest withdrawal by the user (-1 if none).
+RUNNER_OWNED = frozenset({"citation", "falsifier"})
 
-    A withdrawal is a typed reject naming the record, written only from paths
-    the user types into. A user message, even one whose words the code
-    checked, is not: the miner chose which record those words withdraw, and
-    the miner never retracts (DESIGN_V2 7.2). Such a link is a counter that
-    demotes its target and never cascades."""
+
+def _withdrawals(rec: RecordState, world: World, cfg: Config) -> tuple[int, int, str]:
+    """Positions of the latest affirmation and the latest withdrawal (-1 if
+    none), and the withdrawal's reason.
+
+    Only two authorities withdraw (DESIGN_V2 7.2). The user, by a typed
+    reject naming the record, written only from paths the user types into;
+    a user message, even one whose words the code checked, is not one: the
+    miner chose which record those words withdraw, so such a link is a
+    counter that demotes and never cascades. And the runner, when a check it
+    owns (a citation or a falsifier of the record) fails."""
     last_aff = max((world.position[g.event.id] for g in _affirmations(rec, world, cfg)), default=-1)
-    last_wd = max(
-        (
-            world.position[ev.id]
-            for link in rec.links
-            if link.polarity is Polarity.COUNTER
-            and (ev := world.events.get(link.event_id)) is not None
-            and ev.kind is Kind.USER_REJECT
-            and ev.actor is Actor.USER
-            and ev.payload.get("record_id") == rec.id
-        ),
-        default=-1,
-    )
-    return last_aff, last_wd
+    last_wd, why = -1, ""
+    for link in rec.links:
+        ev = world.events.get(link.event_id)
+        if link.polarity is not Polarity.COUNTER or ev is None or ev.payload.get("record_id") != rec.id:
+            continue
+        if ev.kind is Kind.USER_REJECT and ev.actor is Actor.USER:
+            reason = "withdrawn by the user"
+        elif ev.kind is Kind.CHECK and ev.actor is Actor.RUNNER and ev.payload.get("check") in RUNNER_OWNED:
+            reason = f"a runner-owned check failed: {ev.payload['check']}"
+        else:
+            continue
+        if world.position[ev.id] > last_wd:
+            last_wd, why = world.position[ev.id], reason
+    return last_aff, last_wd, why
 
 
-def _withdrawn_set(world: World, cfg: Config, reach: Reach) -> tuple[frozenset[str], frozenset[str]]:
-    roots, affirmed = set(), set()
+def _withdrawn_set(world: World, cfg: Config, reach: Reach) -> tuple[frozenset[str], dict[str, str]]:
+    """The withdrawn set and why each member is in it: its own withdrawal, or
+    a dependency on a record the user (or a failed check) withdrew. A record
+    the user affirmed is never pulled in by a dependency edge."""
+    roots: dict[str, str] = {}
+    affirmed = set()
     for rec in world.records.values():
-        last_aff, last_wd = _withdrawals(rec, world, cfg)
+        last_aff, last_wd, why = _withdrawals(rec, world, cfg)
         if last_wd > last_aff:
-            roots.add(rec.id)
+            roots[rec.id] = why
         elif last_aff >= 0:
             affirmed.add(rec.id)
-    closure = reach.dependents(frozenset(roots))
-    return frozenset(roots | {rid for rid in closure if rid not in affirmed}), frozenset(roots)
+    reasons = dict(roots)
+    by_user = frozenset(r for r, why in roots.items() if why == "withdrawn by the user")
+    for root_set, why in ((by_user, "depends on a record the user withdrew"), (frozenset(roots) - by_user, "depends on a record a failed check withdrew")):
+        for rid in reach.dependents(root_set) - set(roots) - affirmed:
+            reasons.setdefault(rid, why)
+    return frozenset(reasons), reasons
 
 
 def _met(dep: str, world: World, done: Labels, withdrawn: frozenset[str]) -> bool:
@@ -225,7 +243,7 @@ def _skill(rec: RecordState, world: World, cfg: Config, since: int) -> tuple[boo
 
 
 def label(world: World, cfg: Config, now: datetime) -> Labels:
-    influence, reach = Influence(world), Reach(world)
+    influence, reach = Influence(world), Reach(world, cfg)
     withdrawn, roots = _withdrawn_set(world, cfg, reach)
     out = Labels(withdrawn=withdrawn)
     held = influence.sessions_holding
@@ -264,15 +282,14 @@ def _label_one(
     influence: Influence,
     reach: Reach,
     withdrawn: frozenset[str],
-    roots: frozenset[str],
+    roots: dict[str, str],
     held: dict[str, frozenset[str]],
     done: Labels,
     ordered: list[Event],
 ) -> Label:
     rid = rec.id
     if rid in withdrawn:
-        why = "withdrawn by the user" if rid in roots else "depends on a record the user withdrew"
-        return Label(rid, Rung.L4, why, withdrawn=True)
+        return Label(rid, Rung.L4, roots[rid], withdrawn=True)
     standing = [a for a in world.replaced_by(rid) if a.record_id not in withdrawn]
     if standing:
         # The user's replacement stands; it reopens the old version only if
@@ -302,12 +319,12 @@ def _label_one(
     affirmations = _affirmations(rec, world, cfg)
     last_aff = max((world.position[g.event.id] for g in affirmations), default=-1)
 
-    learned_under = tuple(sorted(w for w in withdrawn if w in influence.in_session(rec.proposed.session_id)))
+    learned_under = tuple(sorted(w for w in withdrawn if w in influence.session(rec.proposed.session_id)))
     counters, earlier = [], []
     for g in counted(rec, world, cfg, Polarity.COUNTER):
         if not inside(rec.scope, g):
             continue
-        if influence.of(g.event) & withdrawn:
+        if influence.of(g.event, rec) & withdrawn:
             if world.position[g.event.id] > last_aff:
                 set_aside.append((g.event.id, "counter observed under a withdrawn record"))
             continue
@@ -319,7 +336,7 @@ def _label_one(
         if affirmation(g):
             usable.append(g)
             continue
-        seen = influence.of(g.event)
+        seen = influence.of(g.event, rec)
         if learned_under and seen & withdrawn:
             set_aside.append((g.event.id, "observed under a withdrawn record it was learned under"))
             continue
@@ -353,6 +370,14 @@ def _label_one(
         l2, since, why = True, threshold, "independent grounding in enough distinct sessions"
     elif rec.spec.kind in DESCRIPTIVE:
         why = "independent grounding below threshold"
+    elif meets_l2(support, cfg):
+        # Its own evidence would validate a fact, so it may be tested: a
+        # randomized trial decides (DESIGN_V2 5.3).
+        tr = trials.evaluate(rec, world, cfg)
+        common["trial"] = tr.status
+        why = tr.reason()
+        if tr.status == "positive":
+            l2, since = True, tr.completed_at
     else:
         why = "prescriptive: needs the user's affirmation or a trial"
 

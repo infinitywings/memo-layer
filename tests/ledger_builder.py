@@ -101,6 +101,21 @@ class Ledger:
             payload["link"] = link
         return self._ev(Kind.USER_AMEND, Actor.USER, session, payload)
 
+    def read(self, session: str, path: str) -> Event:
+        """A file tool read of `path`; returns its result."""
+        tid = f"rd{self.n}"
+        self._ev(Kind.TOOL_CALL, Actor.MODEL, session, {"tool": "Read", "input": path, "tool_use_id": tid})
+        return self._ev(Kind.TOOL_RESULT, Actor.TOOL, session, {"tool": "Read", "tool_use_id": tid, "ok": True})
+
+    def check(self, session: str, check: str, passed: bool, record_id: str | None = None, paths=()) -> Event:
+        payload: dict[str, Any] = {"check": check, "passed": passed, "paths": list(paths)}
+        if record_id:
+            payload["record_id"] = record_id
+        return self._ev(Kind.CHECK, Actor.RUNNER, session, payload)
+
+    def assign(self, session: str, record_id: str, arm: str) -> Event:
+        return self._ev(Kind.TRIAL, Actor.RUNNER, session, {"record_id": record_id, "arm": arm, "q": 0.5})
+
     def write(self, session: str, path: str) -> Event:
         return self._ev(Kind.FILE_WRITE, Actor.TOOL, session, {"tool": "write", "tool_use_id": f"w{self.n}", "path": path})
 

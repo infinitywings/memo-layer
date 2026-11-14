@@ -27,6 +27,7 @@ weights:                      # grounding weight per event kind (absent kinds ne
   user_confirm: 1.0
   user_reject: 1.0
   user_amend: 1.0
+  check: 1.0
   user_edit: "1/3"
   user_undo: "1/3"
   user_repeat: "1/3"
@@ -57,6 +58,14 @@ miner:
   base_url: ""                # openai_compat: e.g. https://api.deepseek.com/v1 (env RKA_MEMORY_MINER_BASE_URL)
   api_key_env: null           # openai_compat: name of the env var holding the key
   extract_rules: true         # also ask for the rules the user stated, as verbatim quotes
+
+trials:                       # randomized trials for prescriptive records (DESIGN_V2 5.3); pre-registered by the PI
+  q: 0.5                      # chance a candidate is delivered in a session where it applies
+  m: 3                        # sessions each arm needs before the trial ends
+  delta: "1/3"                # the treated arm must beat the withheld one by this share of sessions
+
+checks:                       # a session that changed any of these makes its test results weak (DESIGN_V2 8.1)
+  globs: ["test_*.py", "*_test.py", "tests/**", "test/**", "conftest.py", "**/conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml", "noxfile.py", ".github/**", "Makefile", "package.json", "jest.config.*", "vitest.config.*"]
 
 graph:
   anchors: true               # the miner may say which files, commands and tools a record is about; packets put those first
