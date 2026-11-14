@@ -1,8 +1,10 @@
 name: dependency
 description: >-
-  B depends on A and is grounded only in sessions where A was delivered.
-  Rejecting A demotes it, so evidence from those sessions stops counting for
-  B, and B drops exactly one rung, from L2 to L1.
+  B depends on A and is grounded only in sessions where A was delivered. A
+  is a dependency of B, not part of B's reach, so that evidence is
+  independent for B and B reaches L2. The user's typed reject withdraws A,
+  and the withdrawal cascades over depends_on: A and B both go to L4 and
+  neither is delivered again (DESIGN_V2 5.4).
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 sessions:
@@ -65,5 +67,15 @@ sessions:
     user:
       - reject: {record: calc.py functions take two numbers and return a number, reason: negate takes one number}
     expect:
-      - {record: calc.py functions take two numbers and return a number, rung: L1}
-      - {record: A new two-argument calc.py function needs no extra test file, rung: L1}
+      - {record: calc.py functions take two numbers and return a number, rung: L4}
+      - {record: A new two-argument calc.py function needs no extra test file, rung: L4}
+
+  - at: +5d
+    prompt: Add a minimum function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def minimum(a, b):\n    return min(a, b)\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: calc.py functions take two numbers and return a number, delivered: false}
+      - {record: A new two-argument calc.py function needs no extra test file, delivered: false}
+      - {packet_empty: true}

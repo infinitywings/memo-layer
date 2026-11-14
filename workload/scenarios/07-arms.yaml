@@ -4,7 +4,8 @@ description: >-
   2027-01-05 and 2027-01-07 are gated days, 2027-01-06 and 2027-01-08 are
   none days. Packets are empty on none days even when a validated record
   applies. Every session reads before it writes, so `rka-memory metrics`
-  reports rediscovery tokens (before the first write) for both arms.
+  reports rediscovery tokens (before the first write) for both arms. The
+  record is a fact, so threshold evidence can promote it (DESIGN_V2 5.2).
 start: 2027-01-05T12:00:00+00:00
 project: calc-uv
 config:
@@ -19,13 +20,13 @@ sessions:
     miner:
       candidates:
         - &tests
-          content: Run the test suite with pytest -q before finishing
-          kind: constraint
+          content: "calc.py's test suite passes with pytest -q"
+          kind: fact
           broaden: [task_class]
           evidence: [{kind: test_result, passed: true}]
     expect:
       - {arm: gated}
-      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L1}
 
   - at: +1d
     prompt: Add a divide function to calc.py
@@ -37,7 +38,7 @@ sessions:
       candidates: [*tests]
     expect:
       - {arm: none}
-      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
 
   - at: +2d
     prompt: Add a power function to calc.py
@@ -48,8 +49,8 @@ sessions:
     expect:
       - {arm: gated}
       - {packet_empty: false}
-      - {record: Run the test suite with pytest -q before finishing, delivered: true}
-      - {record: Run the test suite with pytest -q before finishing, in_prompt: true}
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}
+      - {record: "calc.py's test suite passes with pytest -q", in_prompt: true}
 
   - at: +3d
     prompt: Add a negate function to calc.py
@@ -60,7 +61,7 @@ sessions:
     expect:
       - {arm: none}
       - {packet_empty: true}
-      - {record: Run the test suite with pytest -q before finishing, in_prompt: false}
+      - {record: "calc.py's test suite passes with pytest -q", in_prompt: false}
       - metrics:
           rediscovery_tokens.gated.count: 2
           rediscovery_tokens.none.count: 2

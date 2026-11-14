@@ -1,10 +1,13 @@
 name: demotion
 description: >-
-  An L2 record delivered in a session whose written file the user then
-  undoes drops to L1 once the miner links the undo as counter-evidence. The
-  undo is detected when the next session starts, so the link comes from that
-  session's miner. Separately, a typed `rkm reject` demotes another L2
-  record at once.
+  A counter demotes; a typed reject withdraws. The user confirms a docstring
+  rule, which reaches L2 by the affirmation. It is delivered in a session
+  whose written file the user then undoes; the undo is detected when the
+  next session starts and the miner links it as counter-evidence, which
+  counts because the undone session received the rule. The counter comes
+  after the last affirmation, so the rule drops to L1. Separately, a typed
+  `rkm reject` withdraws another record at once: it goes to L4 and is never
+  delivered again (DESIGN_V2 5.4, 7.2).
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 sessions:
@@ -35,10 +38,11 @@ sessions:
     miner:
       candidates: [*docstrings, *tests]
     user:
+      - confirm: Give every new calc.py function a one-line docstring
       - reject: {record: Run the test suite with pytest -q before finishing, reason: we run the suite through tox now}
     expect:
       - {record: Give every new calc.py function a one-line docstring, rung: L2}
-      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+      - {record: Run the test suite with pytest -q before finishing, rung: L4}
 
   - at: +2d
     prompt: Add a negate function to calc.py
@@ -64,3 +68,4 @@ sessions:
           reason: the user undid the change written while following it
     expect:
       - {record: Give every new calc.py function a one-line docstring, rung: L1}
+      - {record: Run the test suite with pytest -q before finishing, rung: L4}

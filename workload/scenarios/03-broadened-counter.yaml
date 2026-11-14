@@ -1,15 +1,15 @@
-name: narrowing
+name: broadened-counter
 description: >-
-  A record broadened over toolchain is validated in uv sessions. The project
-  then drifts to pip, where the suite fails and the miner links the failure
-  as counter-evidence. Excluding pip from the scope keeps all the uv support,
-  so the engine narrows instead of demoting: the record stays L2, is
-  delivered again in uv state, and is not delivered in pip state. Narrowing is
-  off by default, so this stream turns it on.
+  v2 does not narrow scopes. A fact broadened over toolchain is validated in
+  uv sessions. The project then drifts to pip, where the suite fails and the
+  miner links the failure as counter-evidence. The failure is inside the
+  record's scope, so the record drops to L1 and is delivered in neither uv
+  nor pip state afterwards. Saying that a record no longer holds in some
+  state, while it still holds in others, is an update-mode amendment with a
+  state condition (DESIGN_V2 6.1, layer 3), authored by the user, not a
+  narrowing the engine chooses.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
-config:
-  gate: {narrow_priority: [toolchain, project]}
 sessions:
   - at: +0d
     prompt: Add a multiply function to calc.py
@@ -18,13 +18,13 @@ sessions:
       - bash: pytest -q
     miner:
       candidates:
-        - &tests
-          content: Run the test suite with pytest -q before finishing
-          kind: constraint
+        - &suite
+          content: "calc.py's test suite passes with pytest -q"
+          kind: fact
           broaden: [toolchain]
           evidence: [{kind: test_result, passed: true}]
     expect:
-      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L1}
 
   - at: +1d
     prompt: Add a divide function to calc.py
@@ -32,9 +32,9 @@ sessions:
       - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
       - bash: pytest -q
     miner:
-      candidates: [*tests]
+      candidates: [*suite]
     expect:
-      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
 
   - at: +2d
     drift:
@@ -47,13 +47,12 @@ sessions:
       - bash: pytest -q
     miner:
       counter_links:
-        - record: Run the test suite with pytest -q before finishing
+        - record: "calc.py's test suite passes with pytest -q"
           event: {kind: test_result, passed: false}
           reason: the suite fails in the pip project
     expect:
-      - {record: Run the test suite with pytest -q before finishing, delivered: true}
-      - {record: Run the test suite with pytest -q before finishing, narrowed: {toolchain: pip}}
-      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L1}
 
   - at: +3d
     drift:
@@ -65,8 +64,9 @@ sessions:
       - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
       - bash: pytest -q
     expect:
-      - {record: Run the test suite with pytest -q before finishing, delivered: true}
-      - {record: Run the test suite with pytest -q before finishing, in_prompt: true}
+      - {record: "calc.py's test suite passes with pytest -q", delivered: false}
+      - {record: "calc.py's test suite passes with pytest -q", in_prompt: false}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L1}
 
   - at: +4d
     drift:
@@ -77,6 +77,5 @@ sessions:
       - edit: {path: calc.py, old: "def subtract", new: "def maximum(a, b):\n    return max(a, b)\n\n\ndef subtract"}
       - bash: pytest -q
     expect:
-      - {record: Run the test suite with pytest -q before finishing, delivered: false}
-      - {record: Run the test suite with pytest -q before finishing, in_prompt: false}
-      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+      - {record: "calc.py's test suite passes with pytest -q", delivered: false}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L1}

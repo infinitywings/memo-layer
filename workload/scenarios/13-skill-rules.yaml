@@ -1,10 +1,12 @@
 name: skill-rules
 description: >-
   A skill shows the rules its procedure depends on by reference, as the
-  user's dated words, not as copied text. The user states a house rule; a
+  user's quoted words tagged with the rule's id, not as copied text. The user states a house rule; a
   procedure that depends on it is confirmed and reaches L3; the model loads
   the skill and sees the rule in it. When the user withdraws the rule, the
-  next session's skill no longer shows it, and the procedure keeps L3.
+  next session's skill no longer shows it, and the procedure keeps L3: the
+  user's confirm of the procedure still counts, though its other support
+  came from sessions that received the rule.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 config:
@@ -77,7 +79,7 @@ sessions:
           record: run git status --short before every test run
     expect:
       - {model_saw: "Rules this procedure follows"}
-      - {model_saw: "The user said on 2027-01-04: "}
+      - {model_saw: 'The user said: "run git status --short'}
       - {record: run git status --short before every test run, rung: L1}
       - {record: "Before finishing a calc.py change, check git status --short and then run pytest -q", rung: L3}
 

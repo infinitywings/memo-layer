@@ -1,11 +1,14 @@
 name: refines-stale
 description: >-
-  A qualification stays with the record it qualifies: the miner says one
-  record refines another, and packets keep the two in one group. Without the
-  group the qualification, promoted last, would open the packet and its rule
-  would come last; with it the rule comes first and the qualification right
-  after. A record about a file that the project no longer has is delivered
-  with a note saying the file is gone.
+  A qualification is an amendment of the record it qualifies: the miner says
+  one record refines another, and the qualification renders in the trailing
+  amendments block, naming its target's id, so it never inserts into the
+  stable prefix (DESIGN_V2 9, rule 3). The rule it qualifies opens the
+  packet. A record about a file that the project no longer has is still
+  delivered, and nothing is said about the file: a view reads only the log,
+  never the live filesystem (DESIGN_V2 4.1); a logged citation check
+  (layer 4) or the user's update-mode amendment (layer 3) is what retires
+  such a record.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 config:
@@ -74,4 +77,5 @@ sessions:
       - {record: Run the tests with pytest -q, first_in_packet: true}
       - {record: pytest -q still leaves __pycache__ directories behind, delivered: true}
       - {record: helpers.clamp keeps a value between two bounds, delivered: true}
-      - {model_saw: "helpers.py no longer exists"}
+      - {model_saw: "Amendments to the records above"}
+      - {model_never_saw: "no longer exist"}

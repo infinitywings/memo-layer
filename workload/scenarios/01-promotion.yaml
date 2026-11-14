@@ -1,10 +1,13 @@
 name: promotion
 description: >-
-  Passing tests in two sessions promote a candidate to L2; the second
-  session's duplicate merges into the first record. A candidate cited only
-  by user messages (weight 1/3 each) is weak-only and needs three sessions.
-  gate.k is 2/3 here so that after two sessions the weak-only record has
-  enough weight and only the session count holds it back.
+  Facts rise by independent evidence; prescriptive records do not. A fact
+  backed by passing tests in two sessions where it was not delivered reaches
+  L2, and the second session's duplicate merges into the first record. A
+  fact cited only by user messages (weight 1/3 each) is weak-only and needs
+  three sessions; gate.k is 2/3 here so that after two sessions only the
+  session count holds it back. A constraint and a preference with the same
+  kind of evidence stay at L1: a prescriptive record reaches L2 only by the
+  user's affirmation or, from layer 4, by a trial (DESIGN_V2 5.2).
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 config:
@@ -17,16 +20,26 @@ sessions:
       - bash: pytest -q
     miner:
       candidates:
+        - &suite
+          content: calc.py's test suite passes with pytest -q
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
         - &tests
           content: Run the test suite with pytest -q before finishing
           kind: constraint
           evidence: [{kind: test_result, passed: true}]
+        - &pace
+          content: The user asks for one calc.py function per session
+          kind: fact
+          evidence: [{kind: user_msg}]
         - &oneliners
           content: Keep every calc.py function to a single return statement
           kind: preference
           evidence: [{kind: user_msg}]
     expect:
+      - {record: "calc.py's test suite passes with pytest -q", rung: L1}
       - {record: Run the test suite with pytest -q before finishing, rung: L1}
+      - {record: The user asks for one calc.py function per session, rung: L1}
       - {record: Keep every calc.py function to a single return statement, rung: L1}
 
   - at: +1d
@@ -35,9 +48,11 @@ sessions:
       - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
       - bash: pytest -q
     miner:
-      candidates: [*tests, *oneliners]
+      candidates: [*suite, *tests, *pace, *oneliners]
     expect:
-      - {record: Run the test suite with pytest -q before finishing, rung: L2}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+      - {record: The user asks for one calc.py function per session, rung: L1}
       - {record: Keep every calc.py function to a single return statement, rung: L1}
 
   - at: +2d
@@ -46,9 +61,13 @@ sessions:
       - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
       - bash: pytest -q
     miner:
-      candidates: [*oneliners]
+      candidates: [*tests, *pace, *oneliners]
     expect:
-      - {record: Run the test suite with pytest -q before finishing, delivered: true}
-      - {record: Run the test suite with pytest -q before finishing, in_prompt: true}
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}
+      - {record: "calc.py's test suite passes with pytest -q", in_prompt: true}
+      - {record: Run the test suite with pytest -q before finishing, delivered: false}
+      - {record: Run the test suite with pytest -q before finishing, rung: L1}
+      - {record: The user asks for one calc.py function per session, delivered: false}
+      - {record: The user asks for one calc.py function per session, rung: L2}
       - {record: Keep every calc.py function to a single return statement, delivered: false}
-      - {record: Keep every calc.py function to a single return statement, rung: L2}
+      - {record: Keep every calc.py function to a single return statement, rung: L1}
