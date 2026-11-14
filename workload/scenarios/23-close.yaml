@@ -1,0 +1,56 @@
+name: close
+description: >-
+  The user ends a validated fact for one state without replacing it, by
+  typing `rkm close` with the condition toolchain=pip: the update mode of a
+  withdrawal (DESIGN_V2 6.1). The record keeps L2 and is delivered in uv
+  state, not in pip state. Nothing is withdrawn, so nothing cascades.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &suite
+          content: "calc.py's test suite passes with pytest -q under uv"
+          kind: fact
+          broaden: [toolchain]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q under uv", rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*suite]
+    user:
+      - rkm: {op: close, record: "calc.py's test suite passes with pytest -q under uv", when: {toolchain: pip}}
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q under uv", rung: L2}
+
+  - at: +2d
+    drift:
+      - remove: uv.lock
+      - write: {path: requirements.txt, content: "pytest\n"}
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q under uv", delivered: false}
+      - {record: "calc.py's test suite passes with pytest -q under uv", rung: L2}
+
+  - at: +3d
+    drift:
+      - remove: requirements.txt
+      - write: {path: uv.lock, content: ""}
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q under uv", delivered: true}

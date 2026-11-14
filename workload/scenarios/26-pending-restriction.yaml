@@ -1,0 +1,76 @@
+name: pending-restriction
+description: >-
+  A miner qualification with evidence of its own, still below L2, withholds
+  the fact it qualifies: the qualification may be true, and delivering the
+  fact alone would deliver the unqualified claim (DESIGN_V2 6.1). The fact
+  keeps L2. When the qualification is validated, both are delivered. A rule
+  the user affirmed is never withheld by a miner's pending qualification.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a divide function to calc.py. From now on, run pytest -q before you
+      finish.
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      rules:
+        - quote: run pytest -q before you finish
+          kind: constraint
+          standing: From now on
+      candidates:
+        - &div
+          content: calc.divide returns a float
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: run pytest -q before you finish, rung: L2}
+      - {record: calc.divide returns a float, rung: L1}
+
+  - at: +1d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - *div
+        - &qual
+          content: calc.divide returns an int when both arguments divide evenly under //
+          kind: fact
+          refines: [calc.divide returns a float]
+          evidence: [{kind: test_result, passed: true}]
+        - content: pytest -q is only needed after editing calc.py
+          kind: fact
+          refines: [run pytest -q before you finish]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: calc.divide returns a float, rung: L2}
+      - {record: calc.divide returns an int when both arguments divide evenly under //, rung: L1}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links:
+        - record: calc.divide returns an int when both arguments divide evenly under //
+          event: {kind: test_result, passed: true}
+          reason: the suite passed again
+    expect:
+      - {record: calc.divide returns a float, delivered: false}
+      - {record: calc.divide returns a float, rung: L2}
+      - {record: run pytest -q before you finish, delivered: true}
+      - {record: calc.divide returns an int when both arguments divide evenly under //, rung: L2}
+
+  - at: +3d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: calc.divide returns a float, delivered: true}
+      - {record: calc.divide returns an int when both arguments divide evenly under //, delivered: true}

@@ -1,0 +1,65 @@
+name: update
+description: >-
+  The world changes under a validated fact: the project moves from uv to
+  pip. The user types `rkm update` with the state condition toolchain=pip
+  and the new wording. The old version is closed where the condition holds
+  and keeps its label; the new one applies only there. A uv session still
+  gets the old version and a pip session the new one (DESIGN_V2 6.1: update
+  mode is a state condition, not a log position).
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &suite
+          content: "calc.py's test suite passes with pytest -q under uv"
+          kind: fact
+          broaden: [toolchain]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q under uv", rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*suite]
+    user:
+      - rkm: {op: update, record: "calc.py's test suite passes with pytest -q under uv", when: {toolchain: pip}, text: "Under pip, install pytest from requirements.txt before running the suite"}
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q under uv", rung: L2}
+      - {record: "Under pip, install pytest from requirements.txt before running the suite", rung: L2}
+
+  - at: +2d
+    drift:
+      - remove: uv.lock
+      - write: {path: requirements.txt, content: "pytest\n"}
+      - write: {path: test_pip.py, content: "import calc\n\n\ndef test_power():\n    assert calc.power(2, 3) == 8\n"}
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: "Under pip, install pytest from requirements.txt before running the suite", delivered: true}
+      - {record: "calc.py's test suite passes with pytest -q under uv", delivered: false}
+      - {record: "calc.py's test suite passes with pytest -q under uv", rung: L2}
+
+  - at: +3d
+    drift:
+      - remove: requirements.txt
+      - remove: test_pip.py
+      - write: {path: uv.lock, content: ""}
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q under uv", delivered: true}
+      - {record: "Under pip, install pytest from requirements.txt before running the suite", delivered: false}

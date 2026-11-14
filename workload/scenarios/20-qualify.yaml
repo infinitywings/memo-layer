@@ -1,0 +1,45 @@
+name: qualify
+description: >-
+  The user qualifies a validated fact by typing `rkm qualify`. The
+  qualification is the user's own node, valid at once, and renders after the
+  stable core in the amendments block, naming its target (DESIGN_V2 6.1, 9).
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &div
+          content: calc.divide raises ZeroDivisionError on a zero divisor
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: calc.divide raises ZeroDivisionError on a zero divisor, rung: L1}
+
+  - at: +1d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*div]
+    user:
+      - rkm: {op: qualify, record: calc.divide raises ZeroDivisionError on a zero divisor, text: until the planned ValueError change lands}
+    expect:
+      - {record: calc.divide raises ZeroDivisionError on a zero divisor, rung: L2}
+      - {record: until the planned ValueError change lands, rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: calc.divide raises ZeroDivisionError on a zero divisor, first_in_packet: true}
+      - {record: until the planned ValueError change lands, delivered: true}
+      - {model_saw: "### Amendments to the records above"}
+      - {model_saw: "until the planned ValueError change lands"}

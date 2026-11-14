@@ -1,0 +1,48 @@
+name: replace-reopen
+description: >-
+  The user replaces a house rule by typing `rkm replace`. The replacement is
+  the user's: the old rule goes to L4 (revision mode, the user's default)
+  and leaves the packet. When the user then rejects the replacement, the old
+  rule reopens: a version superseded in revision mode returns only when its
+  superseder is retracted by an authorized author (DESIGN_V2 6.1).
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a multiply function to calc.py. From now on, end every reply to me
+      with a line that starts with `Summary:`.
+    miner:
+      rules:
+        - quote: "end every reply to me with a line that starts with `Summary:`"
+          kind: preference
+          standing: From now on
+    expect:
+      - {record: "end every reply to me with a line that starts with `Summary:`", rung: L2}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py.
+    user:
+      - rkm: {op: replace, record: "end every reply to me with a line that starts with `Summary:`", text: "End every reply with a line that starts with `TL;DR:`"}
+    expect:
+      - {record: "end every reply to me with a line that starts with `Summary:`", delivered: true}
+      - {record: "end every reply to me with a line that starts with `Summary:`", rung: L4}
+      - {record: "End every reply with a line that starts with `TL;DR:`", rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py.
+    user:
+      - reject: {record: "End every reply with a line that starts with `TL;DR:`", reason: I want the Summary line back}
+    expect:
+      - {record: "End every reply with a line that starts with `TL;DR:`", delivered: true}
+      - {record: "end every reply to me with a line that starts with `Summary:`", delivered: false}
+      - {record: "End every reply with a line that starts with `TL;DR:`", rung: L4}
+      - {record: "end every reply to me with a line that starts with `Summary:`", rung: L2}
+
+  - at: +3d
+    prompt: Add a negate function to calc.py.
+    expect:
+      - {record: "end every reply to me with a line that starts with `Summary:`", delivered: true}
+      - {record: "End every reply with a line that starts with `TL;DR:`", delivered: false}

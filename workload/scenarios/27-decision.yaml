@@ -1,0 +1,95 @@
+name: decision
+description: >-
+  The agent records a decision with the `decide` tool: store results in
+  SQLite rather than Postgres. The decision is in force in that session at
+  once but is not delivered until the user confirms it. In the same session
+  the miner learns a fact without declaring any edge, and proposes a
+  procedure that implements the decision. A neighbouring fact is validated
+  in sessions where the decision was never in force. The impact preview of
+  retracting the decision names what would be withdrawn (the decision and
+  the procedure that implements it), what would be withheld (the fact learned
+  while it was in force) and the file written while it was in force. After
+  the user rejects the decision, exactly that happens; the neighbour keeps
+  L2 (DESIGN_V2 7). A dependent laundered through workspace files needs
+  artifact influence and is tested in layer 4.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a results store to calc.py
+    agent:
+      - call: {tool: decide, args: {choice: Store results in SQLite, alternatives: [Postgres], reason: there is no database server to run}}
+      - write: {path: results.db, content: ""}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &learned
+          content: calc results live in results.db
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+        - content: Run migrations against results.db with sqlite3
+          kind: procedure
+          implements: [Store results in SQLite]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: Store results in SQLite, rung: L0D}
+      - {record: calc results live in results.db, rung: L1}
+      - {record: Run migrations against results.db with sqlite3, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - *learned
+        - &nbr
+          content: calc.py's test suite passes with pytest -q
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: Store results in SQLite, delivered: false}
+      - {record: calc results live in results.db, rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*nbr]
+    user:
+      - confirm: Store results in SQLite
+    expect:
+      - {record: Store results in SQLite, rung: L2}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+      - impact:
+          record: Store results in SQLite
+          withdrawn: [Store results in SQLite, Run migrations against results.db with sqlite3]
+          withheld: [calc results live in results.db]
+          files: [results.db]
+
+  - at: +3d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - reject: {record: Store results in SQLite, reason: we are moving to Postgres after all}
+    expect:
+      - {record: Store results in SQLite, delivered: true}
+      - {model_saw: "Decided: Store results in SQLite. Instead of: Postgres. Because: there is no database server to run."}
+      - {record: Store results in SQLite, rung: L4}
+      - {record: Run migrations against results.db with sqlite3, rung: L4}
+      - {record: calc results live in results.db, rung: L1}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+
+  - at: +4d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+    expect:
+      - {record: Store results in SQLite, delivered: false}
+      - {record: calc results live in results.db, delivered: false}
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}

@@ -1,0 +1,72 @@
+name: correct
+description: >-
+  The user corrects the wording of a validated fact by typing `rkm correct`.
+  The old wording goes to L4 and leaves the packet; the correction, the
+  user's own node, is delivered instead. A fact that depends on the old
+  wording keeps L2: a correction is a replacement, and a dependency is met
+  by the current version of what it depends on (DESIGN_V2 4.4, 6.1).
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &count
+          content: calc.py defines three arithmetic functions
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: calc.py defines three arithmetic functions, rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*count]
+    expect:
+      - {record: calc.py defines three arithmetic functions, rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &each
+          content: Each calc.py arithmetic function has a test in test_calc.py
+          kind: fact
+          depends_on: [calc.py defines three arithmetic functions]
+          evidence: [{kind: test_result, passed: true}]
+    expect:
+      - {record: Each calc.py arithmetic function has a test in test_calc.py, rung: L1}
+
+  - at: +3d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*each]
+    user:
+      - rkm: {op: correct, record: calc.py defines three arithmetic functions, text: calc.py defines its arithmetic functions above subtract}
+    expect:
+      - {record: Each calc.py arithmetic function has a test in test_calc.py, rung: L2}
+      - {record: calc.py defines three arithmetic functions, rung: L4}
+      - {record: calc.py defines its arithmetic functions above subtract, rung: L2}
+
+  - at: +4d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: calc.py defines three arithmetic functions, delivered: false}
+      - {record: calc.py defines its arithmetic functions above subtract, delivered: true}
+      - {record: Each calc.py arithmetic function has a test in test_calc.py, delivered: true}
