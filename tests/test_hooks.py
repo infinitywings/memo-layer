@@ -448,3 +448,23 @@ def test_a_decide_call_becomes_a_decision_in_force_and_rkm_commands_amend(memory
     new = amend.payload["record_id"]
     assert reply == f"rka-memory recorded qualify of {dec.id}; {dec.id} now L2; {new} now L2"
     assert [e for e in memory.ledger.read() if e.session_id == sid and e.kind is K.USER_MSG] == []
+
+
+def test_each_write_that_changes_an_existing_test_is_logged_as_a_failed_check(memory, proj, tmp_path, spawned, capsys):
+    from rka_memory.domain import Kind as K
+
+    sid = "mod-1"
+    fire(capsys, "SessionStart", {**base(sid, proj, tmp_path), "source": "startup"})
+    test_file = proj / "test_calc.py"
+    test_file.write_text("import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n")
+
+    def write(text, use_id):
+        call = {**base(sid, proj, tmp_path), "tool_name": "Write", "tool_use_id": use_id, "tool_input": {"file_path": str(test_file), "content": text}}
+        fire(capsys, "PreToolUse", call)
+        test_file.write_text(text)
+        fire(capsys, "PostToolUse", {**call, "tool_response": {"type": "update"}})
+
+    write(test_file.read_text() + "\n\ndef test_more():\n    assert True\n", "w1")
+    write(test_file.read_text().replace("def test_add():\n", "def test_add():\n    return\n"), "w2")
+    checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid]
+    assert [(c["check"], c["passed"], c["paths"]) for c in checks] == [("modification", False, [str(test_file)])]

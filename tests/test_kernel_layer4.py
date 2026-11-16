@@ -312,3 +312,19 @@ def test_a_planted_claim_citing_one_weak_event_never_enters_a_trial(memory):
         view = memory.deliver(f"live{i}", State(**UV), channel="session_start", arm="gated", now=lg.clock)
         assert view.record_ids == ()
     assert [e for e in memory.ledger.read() if e.kind.value == "trial"] == []
+
+
+def test_a_write_to_test_configuration_makes_the_session_weak_even_if_reverted():
+    """The end-of-session check saw no change, but the agent wrote
+    conftest.py during the session: its results while the file was
+    different cannot be trusted."""
+    lg = Ledger()
+    for sid in ("s1", "s2"):
+        lg.start(sid, **UV)
+        if sid == "s1":
+            lg.propose(sid, "r_a", content="calc.divide raises on zero")
+        lg.write(sid, "/p/app/conftest.py")
+        lg.check(sid, "modification", passed=True, paths=[])
+        lg.link("r_a", lg.test(sid, True))
+        lg.end(sid)
+    assert rr(lg, "r_a") == ("L1", "independent grounding below threshold")
