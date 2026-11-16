@@ -1,6 +1,6 @@
 # rka-memory v2: a justification-graph memory kernel
 
-**Status**: design proposal, revision 2, 2026-11-13. Nothing here is built. Revision 2 answers an adversarial review of revision 1 (Section 15 lists what changed and why).
+**Status**: design revision 2, 2026-11-13, built since as layers 1 to 4 of Section 12; Section 16 lists the changes made while building. Revision 2 answers an adversarial review of revision 1 (Section 15 lists what changed and why).
 
 **Scope**: v2 replaces the core of the prototype (projection, validity engine, propagation, packet builder, skill export) with one model, instead of extending it rule by rule. The adapters, the miner's prompting and the workload harness carry over. The research host is dsh; Section 8.4 states what holds on Claude Code.
 
