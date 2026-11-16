@@ -11,7 +11,14 @@ LG4 the self-support share (scripts/self_support_audit.py) is lower than
 
 Also reported, unpredicted: trial coins and the trials' outcomes.
 
-Usage: python scripts/layer4_live_gate.py <v2 run dir> ... --v1 <v1 run dir> ...
+With --refined, the predictions for the refined rule 2 (RKA
+jrn_01M7GZSNTW4KFBB4244XQ4F9GP) are checked as well:
+F2b more than 4 unaffirmed records validated in the two gated arms together;
+F2c no completed trial with every treated session imputed as a failure;
+F2d self-supported share of validated unaffirmed records at most 25% in
+    each gated arm.
+
+Usage: python scripts/layer4_live_gate.py [--refined] <v2 run dir> ... --v1 <v1 run dir> ...
 """
 
 from __future__ import annotations
@@ -27,6 +34,8 @@ from self_support_audit import audit  # noqa: E402
 from v2_replay import load  # noqa: E402
 
 from rka_memory.domain import parse_ts  # noqa: E402
+from rka_memory.kernel.evidence import modified_sessions  # noqa: E402
+from rka_memory.kernel.influence import Influence  # noqa: E402
 from rka_memory.kernel.labels import label  # noqa: E402
 from rka_memory.world import project  # noqa: E402
 
@@ -65,6 +74,23 @@ def check_arm(d: Path) -> dict:
                 followed[key] += 1
     trials = Counter((e.payload.get("record_id"), e.payload.get("arm")) for e in world.trials)
     trial_status = {rid: f"{lab.trial}: {lab.reason}" for rid, lab in labels.by_id.items() if lab.trial}
+    modified = modified_sessions(world, cfg)
+    influence = Influence(world)
+    suspect = modified | {e.session_id for e in world.trials if influence.session(e.session_id) & labels.withdrawn}
+    imputed = {}
+    for rid, lab in labels.by_id.items():
+        if lab.trial not in ("positive", "closed"):
+            continue
+        treated = []
+        for ev in world.trials:
+            sess = world.sessions.get(ev.session_id)
+            if ev.payload.get("record_id") == rid and ev.payload.get("arm") == "treated" and sess and sess.ended and ev.session_id not in treated:
+                treated.append(ev.session_id)
+        imputed[rid] = (sum(s in suspect for s in treated), len(treated))
+    failed_checks = Counter(
+        (e.payload.get("on") or "end") + (f" ({e.payload['error']})" if e.payload.get("error") else "")
+        for e in world.checks if e.payload.get("check") == "modification" and not e.payload.get("passed")
+    )
     return {
         "arm": name,
         "planted_valid": sorted(r for r in planted if labels.by_id[r].valid),
@@ -74,14 +100,22 @@ def check_arm(d: Path) -> dict:
         "sessions": len(rows),
         "trial_coins": {f"{rid} {a}": n for (rid, a), n in sorted(trials.items())},
         "trials": trial_status,
+        "treated_imputed": {rid: f"{k}/{n}" for rid, (k, n) in imputed.items()},
+        "all_treated_imputed": sorted(rid for rid, (k, n) in imputed.items() if n and k == n),
+        "modified_sessions": len(modified & {r["session_id"] for r in rows}),
+        "failed_modification_checks": dict(failed_checks),
         "kind": arm,
     }
 
 
 def main(argv: list[str]) -> int:
+    refined = "--refined" in argv
+    argv = [a for a in argv if a != "--refined"]
     split = argv.index("--v1") if "--v1" in argv else len(argv)
     v2_runs, v1_runs = [Path(p) for p in argv[:split]], [Path(p) for p in argv[split + 1:]]
     misses: dict[str, list[str]] = {k: [] for k in ("LG1", "LG2", "LG3", "LG4")}
+    if refined:
+        misses |= {k: [] for k in ("F2b", "F2c", "F2d")}
     v2_audit, v1_audit = {}, {}
     for run in v2_runs:
         for d in arm_dirs(run):
@@ -93,6 +127,8 @@ def main(argv: list[str]) -> int:
                 misses["LG2"].append(f"{r['arm']}: {r['rules']}")
             if r["kind"] == "gated" and r["followed"]:
                 misses["LG3"].append(f"{r['arm']}: {r['followed']}")
+            if refined and r["all_treated_imputed"]:
+                misses["F2c"].append(f"{r['arm']}: {r['all_treated_imputed']}")
             a = audit(d / "ledger" / "ledger.jsonl")
             v2_audit[r["arm"]] = (a["self_supported"], a["valid_unaffirmed"])
     for run in v1_runs:
@@ -111,6 +147,15 @@ def main(argv: list[str]) -> int:
             misses["LG4"].append(f"{arm}: v2 {r2:.0%} vs v1 {r1:.0%}")
         if kind in ("none", "stated") and r2 > r1:
             misses["LG4"].append(f"{arm}: v2 {r2:.0%} vs v1 {r1:.0%}")
+    if refined:
+        gated = {arm: v for arm, v in v2_audit.items() if arm.endswith("-gated")}
+        total = sum(n for _, n in gated.values())
+        print(f"\nvalidated unaffirmed in the gated arms (F2b): {total} ({', '.join(f'{a} {n}' for a, (_, n) in sorted(gated.items()))})")
+        if total <= 4:
+            misses["F2b"].append(f"{total} <= 4")
+        for arm, (s2, n2) in sorted(gated.items()):
+            if n2 and s2 / n2 > 0.25:
+                misses["F2d"].append(f"{arm}: {s2}/{n2}")
     for k, found in misses.items():
         print(f"{k}: {'held' if not found else 'MISSED'}" + "".join(f"\n    {m}" for m in found))
     return 1 if any(misses.values()) else 0
