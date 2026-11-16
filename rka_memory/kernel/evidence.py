@@ -3,7 +3,9 @@
 `counted` keeps a link only if its cited event can ground: not model-authored,
 a grounding kind, a polarity that event can carry, already in the ledger when
 the link was made, and, for a model-made link, from the session the link was
-made in. A user verdict counts only for the record it names. Independence,
+made in and, unless it carries the user's checked words, not from one of the
+record's own trial sessions (5.3). A user verdict counts only for the record
+it names. Independence,
 cleanliness and the withdrawn set are the labelling function's business.
 """
 
@@ -125,6 +127,7 @@ def statement(made_by: Event | None, ev: Event, cfg: Config) -> tuple[str, bool]
 def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> list[Grounding]:
     """The links of one polarity that count, one per cited event, in log order."""
     out = []
+    trial = world.trial_sessions(rec.id)
     for link in rec.links:
         if link.polarity is not polarity or link.via in world.defeated:
             continue
@@ -137,7 +140,7 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
         if made_by is not None and made_by.actor is Actor.MODEL and made_by.session_id != ev.session_id:
             continue
         allowed = GROUNDING.get(ev.kind)
-        if allowed is None or polarity not in allowed(ev.payload):
+        if allowed is None or polarity not in allowed(ev):
             continue
         if ev.id != link.via and not world.before(ev.id, link.via):
             continue
@@ -146,6 +149,11 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
             # The session changed its own tests: its results are not strong.
             weight = min(weight, cfg.weight(Kind.TOOL_RESULT))
         said = statement(made_by, ev, cfg)
+        by_model = made_by is not None and made_by.actor is Actor.MODEL
+        if by_model and said is None and ev.session_id in trial:
+            # The trial judges its own sessions by their outcomes: the miner's
+            # reading of one neither supports nor counts against the record.
+            continue
         if said is not None and polarity is Polarity.SUPPORT and said[1]:
             # A standing rule in the user's words weighs like a confirm, and
             # confirms the record outright when the record is those words.
@@ -154,8 +162,7 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
         if said is not None and polarity is Polarity.COUNTER:
             # The user's own words against the rule: not scoped away.
             targeted = True
-        model_counter = polarity is Polarity.COUNTER and made_by is not None and made_by.actor is Actor.MODEL
-        if model_counter and rec.id not in world.received_in(ev.session_id):
+        if by_model and polarity is Polarity.COUNTER and rec.id not in world.received_in(ev.session_id):
             # The session never received the record, so this is no failure of
             # following it: it refutes the claim, and only what the session
             # observed can do that (the second counter class of 5.1).

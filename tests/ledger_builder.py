@@ -116,6 +116,10 @@ class Ledger:
             payload["record_id"] = record_id
         return self._ev(Kind.CHECK, Actor.RUNNER, session, payload)
 
+    def outcome_output(self, session: str, code: int, output: str = "") -> Event:
+        """What the user's outcome check printed, logged as the runner logs it."""
+        return self._ev(Kind.TOOL_RESULT, Actor.ENV, session, {"tool": "outcome check", "exit_code": code, "output": output})
+
     def outcome_due(self, session: str) -> Event:
         """The mark the runner logs before it runs the user's outcome check."""
         return self._ev(Kind.CHECK, Actor.RUNNER, session, {"check": "outcome", "status": "due"})

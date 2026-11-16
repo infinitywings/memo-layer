@@ -39,7 +39,7 @@ from typing import Iterable
 
 from rka_memory import anchors
 from rka_memory.config import Config
-from rka_memory.domain import Actor, Event, Kind, State
+from rka_memory.domain import OUTCOME_CHECK, Actor, Event, Kind, State
 from rka_memory.kernel.evidence import _matches
 from rka_memory.world import RecordState
 
@@ -612,7 +612,7 @@ def outcome_events(root: Path, cfg: Config, session_id: str, state: State, event
                 error = "ran out of time copying the project" if code is None else f"copying the project exited with {code}"
             else:
                 code, printed = runner.run([a.replace("{python}", iso.python) for a in out.command], work, stderr=True)
-                observed = {"tool": "outcome check", "exit_code": code, "output": printed[-cfg.payload_max_chars :]}
+                observed = {"tool": OUTCOME_CHECK, "exit_code": code, "output": printed[-cfg.payload_max_chars :]}
                 if code is None:
                     error = f"ran out of time ({out.budget_seconds:g}s)"
                 elif code != 0:

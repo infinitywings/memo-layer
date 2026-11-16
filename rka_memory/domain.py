@@ -105,24 +105,36 @@ def _outcome(ok: bool) -> frozenset[Polarity]:
     return SUPPORT_ONLY if ok else COUNTER_ONLY
 
 
+# The tool name under which the runner logs what the user's outcome check printed.
+OUTCOME_CHECK = "outcome check"
+
+
+def passing_outcome_check(ev: Event) -> bool:
+    """What the user's outcome check printed when it passed (DESIGN_V2 5.3)."""
+    return ev.actor is Actor.ENV and ev.payload.get("tool") == OUTCOME_CHECK and ev.payload.get("exit_code") == 0
+
+
 # Event kinds that can ground a record, and the polarity each event can carry.
 # An outcome event's polarity comes from the outcome itself, so a failing
 # test can never be cited as support. Kinds absent here never ground.
-GROUNDING: dict[Kind, Callable[[Mapping[str, Any]], frozenset[Polarity]]] = {
-    Kind.EXIT_CODE: lambda p: _outcome(p.get("code") == 0),
-    Kind.TEST_RESULT: lambda p: _outcome(bool(p.get("passed"))),
-    Kind.USER_CONFIRM: lambda p: SUPPORT_ONLY,
-    Kind.USER_REJECT: lambda p: COUNTER_ONLY,
-    Kind.USER_AMEND: lambda p: SUPPORT_ONLY,
+GROUNDING: dict[Kind, Callable[[Event], frozenset[Polarity]]] = {
+    Kind.EXIT_CODE: lambda e: _outcome(e.payload.get("code") == 0),
+    Kind.TEST_RESULT: lambda e: _outcome(bool(e.payload.get("passed"))),
+    Kind.USER_CONFIRM: lambda e: SUPPORT_ONLY,
+    Kind.USER_REJECT: lambda e: COUNTER_ONLY,
+    Kind.USER_AMEND: lambda e: SUPPORT_ONLY,
     # A passing citation or falsifier shows only that the words the model
     # chose are (or are not) in the file, not that the record follows from
     # them, so it grounds nothing; a failing one counts against the record.
-    Kind.CHECK: lambda p: frozenset() if p.get("passed") else COUNTER_ONLY,
-    Kind.USER_EDIT: lambda p: BOTH,
-    Kind.USER_UNDO: lambda p: COUNTER_ONLY,
-    Kind.USER_REPEAT: lambda p: SUPPORT_ONLY,
-    Kind.USER_MSG: lambda p: BOTH,
-    Kind.TOOL_RESULT: lambda p: BOTH,
+    Kind.CHECK: lambda e: frozenset() if e.payload.get("passed") else COUNTER_ONLY,
+    Kind.USER_EDIT: lambda e: BOTH,
+    Kind.USER_UNDO: lambda e: COUNTER_ONLY,
+    Kind.USER_REPEAT: lambda e: SUPPORT_ONLY,
+    Kind.USER_MSG: lambda e: BOTH,
+    # A passing outcome check shows that the user's requirement held, so it
+    # never counts against a record. A failing one's output may also state
+    # the requirement, so it keeps both.
+    Kind.TOOL_RESULT: lambda e: SUPPORT_ONLY if passing_outcome_check(e) else BOTH,
 }
 
 # What a session observed, as opposed to an outcome of the agent's own work: the

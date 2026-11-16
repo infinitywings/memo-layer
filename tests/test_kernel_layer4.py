@@ -344,6 +344,101 @@ def test_a_failing_outcome_check_is_a_bad_outcome_for_a_rule_too():
     assert (lab.rung.value, lab.reason) == ("L2", "positive interventional contrast: treated 3/3, withheld 0/3, p = 0.050")
 
 
+# Counters and the outcome check (5.1, 5.3)
+
+OPS = dict(kind=RecordKind.CONSTRAINT, content="calc.py must keep the OPERATIONS table in step with its functions")
+CHECK_SAYS = "AssertionError: OPERATIONS is missing 'power': every function needs an OPERATIONS entry"
+
+
+def fact_at_l2(lg: Ledger) -> None:
+    lg.start("s0", **UV)
+    lg.propose("s0", "r_fact", content="pytest -q runs the tests")
+    lg.end("s0")
+    supported(lg, "r_fact", "s1")
+    supported(lg, "r_fact", "s2")
+
+
+def test_a_passing_outcome_check_never_counts_against_a_record():
+    """Its output shows that the user's requirement held. A failing check's
+    output still counts against a record that was followed."""
+    for code, expected in ((0, ("L2", "independent grounding in enough distinct sessions")),
+                           (1, ("L1", "counter-evidence after the last affirmation"))):
+        lg = Ledger()
+        fact_at_l2(lg)
+        lg.start("s3", **UV)
+        lg.deliver("s3", "r_fact")
+        lg.link("r_fact", lg.outcome_output("s3", code, "1 passed" if code == 0 else "1 failed"), "counter")
+        lg.end("s3")
+        assert rr(lg, "r_fact") == expected
+
+
+def test_a_failing_outcome_check_that_states_the_requirement_supports_it():
+    """The unseen-requirement run: the user's check printed the requirement
+    the repository does not show, and that output is the rule's support. A
+    tool result weighs a third, so it takes six sessions, as in that run."""
+    lg = Ledger()
+    for sid in [f"p{i}" for i in range(6)]:
+        lg.start(sid, **UV)
+        if sid == "p0":
+            lg.propose(sid, "r_ops", **OPS)
+        lg.link("r_ops", lg.outcome_output(sid, 1, CHECK_SAYS))
+        lg.end(sid)
+    assert rr(lg, "r_ops") == ("L1", "in trial: treated 0, withheld 0 sessions")
+
+
+def test_the_miners_reading_of_a_trial_session_does_not_decide_the_record():
+    """A treated session followed the rule and passed the user's check, then
+    the miner cited the agent's empty search as a counter. The trial judges
+    its own sessions by their outcomes; the same counter from a session
+    outside the trial still blocks the record."""
+    lg = Ledger()
+    proposed_with_support(lg)
+    lg.start("t0", **UV)
+    lg.assign("t0", "r_proc", "treated")
+    lg.deliver("t0", "r_proc")
+    lg.link("r_proc", lg.tool_result("t0"), "counter")
+    lg.check("t0", "outcome", True)
+    lg.end("t0")
+    assert rr(lg, "r_proc") == ("L1", "in trial: treated 1, withheld 0 sessions")
+    lg.start("o0", **UV)
+    lg.link("r_proc", lg.tool_result("o0"), "counter")
+    lg.end("o0")
+    assert rr(lg, "r_proc") == ("L1", "counter-evidence after the last affirmation")
+
+
+def test_miner_support_from_a_trial_session_adds_nothing():
+    lg = Ledger()
+    proposed_with_support(lg)
+    before = labels_of(lg).by_id["r_proc"].support
+    lg.start("t0", **UV)
+    lg.assign("t0", "r_proc", "treated")
+    lg.deliver("t0", "r_proc")
+    lg.link("r_proc", lg.test("t0", True))
+    lg.end("t0")
+    assert len(before) == 2
+    assert labels_of(lg).by_id["r_proc"].support == before
+
+
+def test_the_users_checked_words_in_a_trial_session_still_count():
+    """The user's words are the user's act, not the miner's reading of the
+    session: said against the rule they block it, stated as a standing rule
+    they affirm it."""
+    for text, quote, polarity, expected in (
+        ("Do not run uv sync before the tests", {"quote": "Do not run uv sync before the tests"}, "counter",
+         ("L1", "counter-evidence after the last affirmation")),
+        ("Run uv sync before the tests, from now on", {"quote": "Run uv sync before the tests", "marker": "from now on"},
+         "support", ("L2", "the user stated it as a standing rule")),
+    ):
+        lg = Ledger()
+        proposed_with_support(lg)
+        lg.start("t0", **UV)
+        lg.assign("t0", "r_proc", "treated")
+        lg.deliver("t0", "r_proc")
+        lg.link("r_proc", lg.user_msg("t0", text), polarity, statement=quote)
+        lg.end("t0")
+        assert rr(lg, "r_proc") == expected
+
+
 def test_the_coin_is_logged_and_only_treated_candidates_reach_the_packet_tail(memory):
     lg = Ledger()
     proposed_with_support(lg)

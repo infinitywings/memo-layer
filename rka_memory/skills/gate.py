@@ -23,7 +23,7 @@ def normalize_command(cmd: str) -> str:
 
 
 def outcome_ok(ev: Event) -> bool:
-    return GROUNDING[ev.kind](ev.payload) == SUPPORT_ONLY
+    return GROUNDING[ev.kind](ev) == SUPPORT_ONLY
 
 
 def _step_matches(step: Step, ev: Event) -> bool:

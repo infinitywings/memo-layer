@@ -219,6 +219,29 @@ def test_counter_link_reaches_a_record_delivered_in_the_session_whose_file_the_u
     assert result.dropped == []
 
 
+def test_a_passing_outcome_check_cannot_be_cited_against_a_record(memory):
+    lg = Ledger()
+    lg.start("s1", **STATE, task_class="coding")
+    ok1 = lg.test("s1", True)
+    lg.propose("s1", "r_known", scope=Scope())
+    lg.link("r_known", ok1)
+    lg.deliver("s1", "r_known")
+    passed = lg.outcome_output("s1", 0, "1 passed")
+    failed = lg.outcome_output("s1", 1, "1 failed")
+    lg.end("s1")
+    sync(memory, lg)
+    reply = {
+        "candidates": [],
+        "counter_links": [{"record_id": "r_known", "event_id": e.id, "reason": "check output"} for e in (passed, failed)],
+    }
+    result = mine_session(memory, "s1", backend=FakeBackend(reply))
+
+    assert [d.to_json() for d in result.dropped] == [
+        {"item": f"counter_link 0 evidence {passed.id}", "reason": "tool_result cannot carry counter"},
+    ]
+    assert [link["event_id"] for link in result.links] == [failed.id]
+
+
 def test_counter_link_refutes_an_unverified_claim_with_what_the_session_observed(memory):
     lg = Ledger()
     lg.start("s1", **STATE, task_class="coding")

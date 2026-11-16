@@ -394,7 +394,7 @@ def citation_problem(event_id: str, world: World, session_id: str, polarity: Pol
     allowed = GROUNDING.get(ev.kind)
     if allowed is None:
         return f"{ev.kind.value} never grounds"
-    if polarity not in allowed(ev.payload):
+    if polarity not in allowed(ev):
         return f"{ev.kind.value} cannot carry {polarity.value}"
     return None
 

@@ -180,6 +180,10 @@ class World:
                 out.append(write_session)
         return out
 
+    def trial_sessions(self, record_id: str) -> set[str]:
+        """Sessions with a trial coin logged for the record, in either arm."""
+        return {e.session_id for e in self.trials if e.payload.get("record_id") == record_id}
+
     def received_in(self, session_id: str) -> set[str]:
         """Records delivered in the session or in the sessions whose files the user edited or undid in it."""
         return set().union(*(self.delivered_in(s) for s in self.related_sessions(session_id)))
