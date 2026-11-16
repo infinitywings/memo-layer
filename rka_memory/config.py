@@ -42,13 +42,21 @@ class TrialConfig:
 
 @dataclass(frozen=True)
 class IsolationConfig:
-    """Rule 2's isolation re-run (RKA jrn_01M7H11MZ72N1FEQ01P1D5JQ2Y): the
-    interpreter that runs the project's tests (None: the re-run is off, since
-    it runs project code), the test framework ("auto": pytest if that
-    interpreter has it, else unittest), parallel processes, and the time the
-    whole re-run may take before it fails closed."""
+    """Rule 2's isolation re-run (RKA jrn_01M7H11MZ72N1FEQ01P1D5JQ2Y). It runs
+    project code the agent wrote, so it runs only when both an interpreter
+    and a confinement command are set: a command that runs `<grants> --
+    <argv>` (dsh's sandbox-runner syntax, `--bind DIR DIR` making DIR
+    writable) with no more rights than the agent's own tools, as the stack's
+    confine.sh does. Also: the user the run directory is handed to, the
+    directory run directories go in (outside anything the agent can write),
+    the test framework ("auto": pytest if the interpreter has it, else
+    unittest), parallel processes, and the time the whole re-run may take
+    before it fails closed."""
 
     python: str | None = None
+    confine: tuple[str, ...] = ()
+    user: str | None = None
+    dir: str | None = None
     framework: str = "auto"
     workers: int = 4
     budget_seconds: float = 20.0
@@ -156,6 +164,9 @@ def _isolation(raw: dict[str, Any]) -> IsolationConfig:
     python = raw.get("python")
     return IsolationConfig(
         python=str(python) if python else None,
+        confine=tuple(str(a) for a in raw.get("confine") or ()),
+        user=str(raw["user"]) if raw.get("user") else None,
+        dir=str(raw["dir"]) if raw.get("dir") else None,
         framework=framework,
         workers=max(1, int(raw.get("workers", IsolationConfig.workers))),
         budget_seconds=_number(raw.get("budget_seconds", IsolationConfig.budget_seconds)),

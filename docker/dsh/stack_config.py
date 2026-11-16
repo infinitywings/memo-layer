@@ -33,9 +33,18 @@ def main() -> int:
         "miner": MOCK_MINER if model == "mock" else deepseek_miner(),
         # dsh gets skills through the plugin, which follows the packet arm
         "skills": {"dir": str(Path(os.environ["RKA_MEMORY_DIR"]) / "skills"), "export_files": False},
-        # rule 2's isolation re-run, with the agent's interpreter; inside the
-        # plugin's default 30 s hook timeout
-        "checks": {"isolation": {"python": "/opt/agent-python/bin/python", "budget_seconds": 20}},
+        # rule 2's isolation re-run: the agent's interpreter, confined as the
+        # agent's tools are, in a root-owned directory the agent cannot write;
+        # inside the plugin's default 30 s hook timeout
+        "checks": {
+            "isolation": {
+                "python": "/opt/agent-python/bin/python",
+                "confine": ["/opt/rka-memory/docker/dsh/confine.sh"],
+                "user": "agent",
+                "dir": "/var/lib/rka-memory-isolation",
+                "budget_seconds": 20,
+            }
+        },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")

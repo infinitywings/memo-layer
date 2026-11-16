@@ -186,22 +186,26 @@ def _last_test_passed(memory: Memory, session_id: str) -> bool:
     return bool(results) and results[-1].payload.get("passed") is True
 
 
-def _end_checks(memory: Memory, session_id: str) -> list:
-    """The session's tests against how they stood at its start, and, if it
-    only added tests and its last test run passed, every test re-run alone
-    (rule 2): a new test can make another pass by changing shared state."""
+def _end_check(memory: Memory, session_id: str) -> Event | None:
+    """The session's tests against how they stood at its start, marked as
+    owing an isolation re-run if it only added tests and its last test run
+    passed (rule 2): a new test can make another pass by changing shared
+    state."""
     before = _read_json(_snapshot_file(memory, session_id))
     state = memory.session_state(session_id)
     if not isinstance(before, dict) or not state.project:
-        return []
+        return None
     after = runner_checks.snapshot(Path(state.project), memory.cfg)
-    end = runner_checks.modification_event(before, after, session_id, state)
-    if not (end.payload["passed"] and end.payload["added"] and _last_test_passed(memory, session_id)):
-        return [end]
-    isolation = runner_checks.isolation_event(
-        Path(state.project), memory.cfg, session_id, state, end.payload["added"], derived_id("ev", "isolation", session_id)
+    changed, added = runner_checks.changes(before, after)
+    due = not changed and bool(added) and _last_test_passed(memory, session_id)
+    return runner_checks.modification_event(before, after, session_id, state, isolation_due=due)
+
+
+def _isolation_check(memory: Memory, session_id: str, end: Event) -> Event:
+    state = memory.session_state(session_id)
+    return runner_checks.isolation_event(
+        Path(state.project or "."), memory.cfg, session_id, state, end.payload["added"], derived_id("ev", "isolation", session_id)
     )
-    return [end, isolation]
 
 
 def _rkm_command(memory: Memory, session_id: str, prompt: str) -> Output:
@@ -363,7 +367,12 @@ def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
     usage = adapter.reported_usage(payload) or adapter.transcript_usage(
         adapter.read_transcript(payload.get("transcript_path"))
     )
-    memory.append(*_late_writes(memory, sid), *_end_checks(memory, sid), adapter.session_end_event(payload, usage))
+    end = _end_check(memory, sid)
+    # The end check goes into the log before the re-run starts, so a hook
+    # killed during the re-run leaves the session marked as owing one.
+    memory.append(*_late_writes(memory, sid), *([end] if end else []))
+    rerun = [_isolation_check(memory, sid, end)] if end and end.payload.get("isolation") == "due" else []
+    memory.append(*rerun, adapter.session_end_event(payload, usage))
     shutil.rmtree(_pending(memory, sid), ignore_errors=True)
     sync = memory.cfg.sync_on_session_end and bool(memory.cfg.core_project_id)
     if memory.cfg.hooks_background == "spawn":

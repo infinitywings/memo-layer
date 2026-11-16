@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import ast
 import builtins
+import contextlib
 import hashlib
 import os
+import pwd
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -380,15 +383,18 @@ def step_check(before: dict[str, dict], after: dict[str, dict], session_id: str,
     )
 
 
-def modification_event(before: dict[str, dict], after: dict[str, dict], session_id: str, state: State) -> Event:
+def modification_event(
+    before: dict[str, dict], after: dict[str, dict], session_id: str, state: State, isolation_due: bool = False
+) -> Event:
+    """The session's tests at its end against its start. `isolation_due`
+    marks that an isolation re-run follows; logged before it starts, so a
+    re-run that never logs its result still leaves the session weak
+    (evidence.modified_sessions)."""
     changed, added = changes(before, after)
-    return Event.new(
-        Kind.CHECK,
-        Actor.RUNNER,
-        session_id,
-        {"check": "modification", "passed": not changed, "paths": changed, "added": added},
-        state_hash=state.hash(),
-    )
+    payload = {"check": "modification", "passed": not changed, "paths": changed, "added": added}
+    if isolation_due:
+        payload["isolation"] = "due"
+    return Event.new(Kind.CHECK, Actor.RUNNER, session_id, payload, state_hash=state.hash())
 
 
 UNITTEST_IDS = (
@@ -400,40 +406,62 @@ UNITTEST_IDS = (
 )
 
 
-class _Clock:
-    def __init__(self, seconds: float):
-        self.deadline = time.monotonic() + seconds
+# What a confined test run keeps of the hook's environment.
+ENV_KEEP = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
+
+
+class _Runner:
+    """Runs commands through the confinement command, with only `run`
+    writable and a minimal environment, until the budget runs out; each in
+    its own process group, killed whole when it ends or time is up."""
+
+    def __init__(self, iso, run: Path):
+        self.deadline = time.monotonic() + iso.budget_seconds
+        self.prefix = [*iso.confine, "--bind", str(run), str(run), "--"]
+        tmp = run / "tmp"
+        self.env = {k: os.environ[k] for k in ENV_KEEP if k in os.environ} | {
+            "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(tmp), "HOME": str(tmp),
+        }
 
     def run(self, cmd: list[str], cwd: Path) -> tuple[int | None, str]:
-        """(exit code, output); None when the budget ran out."""
+        """(exit code, stdout); None when the budget ran out."""
         left = self.deadline - time.monotonic()
         if left <= 0:
             return None, ""
-        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": ""}
-        try:
-            out = subprocess.run(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=left)
-        except subprocess.TimeoutExpired:
-            return None, ""
-        except OSError as err:
-            return 1, str(err)
-        return out.returncode, out.stdout
+        with tempfile.TemporaryFile() as out:
+            try:
+                proc = subprocess.Popen(
+                    [*self.prefix, *cmd], cwd=cwd, env=self.env, stdin=subprocess.DEVNULL,
+                    stdout=out, stderr=subprocess.DEVNULL, start_new_session=True,
+                )
+            except OSError as err:
+                return 1, str(err)
+            try:
+                code: int | None = proc.wait(timeout=left)
+            except subprocess.TimeoutExpired:
+                code = None
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            out.seek(0)
+            return code, out.read().decode("utf-8", errors="replace")
 
 
-def _framework(python: str, choice: str, work: Path, clock: _Clock) -> str:
+def _framework(python: str, choice: str, work: Path, runner: _Runner) -> str:
     if choice != "auto":
         return choice
-    code, _ = clock.run([python, "-c", "import pytest"], work)
+    code, _ = runner.run([python, "-c", "import pytest"], work)
     return "pytest" if code == 0 else "unittest"
 
 
-def _collect(python: str, framework: str, work: Path, clock: _Clock) -> tuple[list[str] | None, str | None]:
+def _collect(python: str, framework: str, work: Path, runner: _Runner) -> tuple[list[str] | None, str | None]:
     if framework == "pytest":
-        code, out = clock.run([python, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"], work)
+        code, out = runner.run([python, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"], work)
         if code == 5:
             return [], None
         ids = [line.strip() for line in out.splitlines() if "::" in line]
     else:
-        code, out = clock.run([python, "-c", UNITTEST_IDS], work)
+        code, out = runner.run([python, "-c", UNITTEST_IDS], work)
         ids = [line.strip() for line in out.splitlines() if line.strip()]
     if code is None:
         return None, "ran out of time collecting the tests"
@@ -442,14 +470,41 @@ def _collect(python: str, framework: str, work: Path, clock: _Clock) -> tuple[li
     return ids, None
 
 
-def _alone(python: str, framework: str, test_id: str, work: Path, clock: _Clock) -> bool | None:
+def _alone(python: str, framework: str, index: int, test_id: str, work: Path, runner: _Runner) -> bool | None:
     if framework == "pytest":
-        basetemp = tempfile.mkdtemp(prefix="bt-", dir=work.parent)
+        basetemp = str(work.parent / "tmp" / f"bt-{index}")
         cmd = [python, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--basetemp", basetemp, test_id]
     else:
         cmd = [python, "-m", "unittest", "-q", test_id]
-    code, _ = clock.run(cmd, work)
+    code, _ = runner.run(cmd, work)
     return None if code is None else code == 0
+
+
+def _copy(root: Path, work: Path) -> None:
+    """The project without caches, venvs or links that lead out of it."""
+    real = root.resolve()
+
+    def ignore(dirpath: str, names: list[str]) -> set[str]:
+        out = {n for n in names if n in SKIP_DIRS}
+        for n in names:
+            path = Path(dirpath) / n
+            if path.is_symlink():
+                try:
+                    inside = path.resolve().is_relative_to(real)
+                except (OSError, RuntimeError):
+                    inside = False
+                if not inside:
+                    out.add(n)
+        return out
+
+    shutil.copytree(root, work, ignore=ignore, symlinks=True)
+
+
+def _hand_to(run: Path, user: str) -> None:
+    pw = pwd.getpwnam(user)
+    for dirpath, dirnames, filenames in os.walk(run):
+        for name in [".", *dirnames, *filenames]:
+            os.chown(Path(dirpath) / name, pw.pw_uid, pw.pw_gid, follow_symlinks=False)
 
 
 def _file_of(test_id: str, framework: str, work: Path) -> str | None:
@@ -469,30 +524,43 @@ def isolation_event(
     """Rule 2's isolation re-run (RKA jrn_01M7H11MZ72N1FEQ01P1D5JQ2Y), for a
     session that added tests and whose last test run passed: every test runs
     alone, in a copy of the project, so no test can pass on state another
-    left behind. A test that fails alone, a collection error, or running out
-    of the budget fails the check; so does a configuration without an
-    interpreter, which leaves the added tests unverified (`added` are then
-    the paths). It runs project code, hence opt-in."""
+    left behind. A test that fails alone, a collection error, running out of
+    the budget or any error of the runner fails the check. The tests are
+    code the agent wrote, so they run only through the confinement command,
+    in a fresh directory handed to `user` (cfg.isolation); without both an
+    interpreter and that command nothing runs, and the check fails with the
+    added tests (`added`) as its paths."""
     iso = cfg.isolation
     payload: dict = {"check": "modification", "on": "isolation", "passed": False, "tests": 0, "failed": [], "paths": []}
-    if not iso.python:
+    if not (iso.python and iso.confine):
         payload |= {"paths": sorted(added), "error": "not configured"}
     else:
-        clock = _Clock(iso.budget_seconds)
-        with tempfile.TemporaryDirectory(prefix="rkm-isolation-") as tmp:
-            work = Path(tmp) / "project"
-            shutil.copytree(root, work, ignore=shutil.ignore_patterns(*SKIP_DIRS), symlinks=True)
-            framework = _framework(iso.python, iso.framework, work, clock)
-            ids, error = _collect(iso.python, framework, work, clock)
+        error = None
+        if iso.dir:
+            Path(iso.dir).mkdir(mode=0o711, parents=True, exist_ok=True)
+        run = Path(tempfile.mkdtemp(prefix="rkm-isolation-", dir=iso.dir))
+        try:
+            work = run / "project"
+            _copy(root, work)
+            (run / "tmp").mkdir()
+            if iso.user:
+                _hand_to(run, iso.user)
+            runner = _Runner(iso, run)
+            framework = _framework(iso.python, iso.framework, work, runner)
+            ids, error = _collect(iso.python, framework, work, runner)
             if ids is not None:
                 with ThreadPoolExecutor(max_workers=iso.workers) as pool:
-                    results = list(pool.map(lambda t: _alone(iso.python, framework, t, work, clock), ids))
+                    results = list(pool.map(lambda it: _alone(iso.python, framework, it[0], it[1], work, runner), enumerate(ids)))
                 failed = [t for t, ok in zip(ids, results) if ok is False]
                 if any(ok is None for ok in results):
                     error = f"ran out of time ({iso.budget_seconds:g}s) running the tests alone"
                 files = {f for t in failed if (f := _file_of(t, framework, work))}
                 payload |= {"tests": len(ids), "failed": failed[:50], "paths": sorted(str(root / f) for f in files)}
-            payload["passed"] = error is None and not payload["failed"]
-            if error:
-                payload["error"] = error
+        except Exception as err:  # noqa: BLE001 - any failure of the re-run fails the check
+            error = f"re-run failed: {type(err).__name__}: {err}"
+        finally:
+            shutil.rmtree(run, ignore_errors=True)
+        payload["passed"] = error is None and not payload["failed"]
+        if error:
+            payload["error"] = error
     return Event.new(Kind.CHECK, Actor.RUNNER, session_id, payload, state_hash=state.hash(), id=event_id)

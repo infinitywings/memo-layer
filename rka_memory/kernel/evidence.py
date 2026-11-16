@@ -43,7 +43,8 @@ def modified_sessions(world: World, cfg: Config) -> frozenset[str]:
     judged by the strict rule: any agent write to a test path counts. A
     write to test configuration counts in any session, even if the file was
     put back before the end: results produced while it differed prove
-    nothing."""
+    nothing. So does a session owing an isolation re-run that never logged
+    its result."""
     cache = world.__dict__.setdefault("_modified", {})
     if world.revision not in cache:
         checked = {ev.session_id for ev in world.checks if ev.payload.get("check") == "modification"}
@@ -51,6 +52,9 @@ def modified_sessions(world: World, cfg: Config) -> frozenset[str]:
             ev.session_id for ev in world.checks
             if ev.payload.get("check") == "modification" and not ev.payload.get("passed")
         }
+        # An isolation re-run that was due and never logged its result.
+        due = {ev.session_id for ev in world.checks if ev.payload.get("isolation") == "due"}
+        out |= due - {ev.session_id for ev in world.checks if ev.payload.get("on") == "isolation"}
         for ev in world.events.values():
             if ev.kind is not Kind.FILE_WRITE:
                 continue
