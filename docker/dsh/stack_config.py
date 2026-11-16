@@ -2,7 +2,8 @@
 
 Run at every start of the `memory` service. It keeps `core.project_id` (set
 once by `rka-memory init`) and rewrites only what the stack owns: the miner
-route for RKM_MODEL, a single syncer, and the skills directory.
+route for RKM_MODEL, a single syncer, the skills directory, and the
+interpreter for rule 2's isolation re-run.
 """
 
 from __future__ import annotations
@@ -32,6 +33,9 @@ def main() -> int:
         "miner": MOCK_MINER if model == "mock" else deepseek_miner(),
         # dsh gets skills through the plugin, which follows the packet arm
         "skills": {"dir": str(Path(os.environ["RKA_MEMORY_DIR"]) / "skills"), "export_files": False},
+        # rule 2's isolation re-run, with the agent's interpreter; inside the
+        # plugin's default 30 s hook timeout
+        "checks": {"isolation": {"python": "/opt/agent-python/bin/python", "budget_seconds": 20}},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")

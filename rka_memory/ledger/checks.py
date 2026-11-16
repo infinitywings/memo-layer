@@ -11,7 +11,9 @@ label reads them (DESIGN_V2 4.1, 8).
   start and compared after each tool call (step_check) and at session end.
   A session that changed existing test content, or any test configuration,
   makes its own test and exit results weak; one that only added tests does
-  not (rule 2 as the PI refined it).
+  not (rule 2 as the PI refined it), provided every test still passes when
+  run alone (isolation_event): a new test can change state other tests
+  share.
 """
 
 from __future__ import annotations
@@ -20,8 +22,13 @@ import ast
 import builtins
 import hashlib
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -33,6 +40,13 @@ from rka_memory.world import RecordState
 
 MAX_BYTES = 1_000_000
 BUILTIN_NAMES = frozenset(dir(builtins))
+# Module-level names pytest or unittest act on though nothing mentions them.
+CONVENTION_NAMES = frozenset({
+    "setup", "teardown", "setup_module", "teardown_module", "setup_function", "teardown_function",
+    "setUpModule", "tearDownModule", "load_tests", "pytestmark", "pytest_plugins", "collect_ignore", "collect_ignore_glob",
+})
+# Calls that request a fixture by a name given as a string.
+FIXTURE_LOOKUPS = frozenset({"usefixtures", "getfixturevalue"})
 SKIP_DIRS = frozenset({".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
 
 
@@ -216,11 +230,17 @@ def _bound(alias: ast.alias, node: ast.Import | ast.ImportFrom) -> str:
 
 
 def _names(tree: ast.AST) -> set[str]:
-    """Every name the file binds or mentions, at any depth."""
+    """Every name the file binds or mentions, at any depth, with its
+    parameters (pytest fills them with fixtures of that name) and the fixture
+    names it passes as strings to usefixtures or getfixturevalue."""
     out: set[str] = set()
     for n in ast.walk(tree):
         if isinstance(n, ast.Name):
             out.add(n.id)
+        elif isinstance(n, ast.arg):
+            out.add(n.arg)
+        elif isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", None)) in FIXTURE_LOOKUPS:
+            out.update(a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str))
         elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             out.add(n.name)
         elif isinstance(n, (ast.Import, ast.ImportFrom)):
@@ -232,19 +252,10 @@ def _names(tree: ast.AST) -> set[str]:
     return out
 
 
-def _module_key(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> tuple[int, str]:
-    """What an import loads: (0, top-level package) for an absolute import,
-    (level, module) for a relative one."""
-    if isinstance(node, ast.Import):
-        return 0, alias.name.split(".")[0]
-    if node.level:
-        return node.level, node.module or ""
-    return 0, (node.module or "").split(".")[0]
-
-
-def known_imports(snap: dict[str, dict]) -> frozenset[tuple[int, str]]:
-    """The modules some test file in the snapshot imports, anywhere in it."""
-    out: set[tuple[int, str]] = set()
+def known_imports(snap: dict[str, dict]) -> frozenset[str]:
+    """The top-level packages some test file in the snapshot imports by an
+    absolute import, anywhere in it."""
+    out: set[str] = set()
     for path, e in snap.items():
         if e.get("kind") != "test" or "text" not in e or not path.endswith(".py"):
             continue
@@ -253,20 +264,25 @@ def known_imports(snap: dict[str, dict]) -> frozenset[tuple[int, str]]:
         except (SyntaxError, ValueError):
             continue
         for n in ast.walk(tree):
-            if isinstance(n, (ast.Import, ast.ImportFrom)):
-                out.update(_module_key(n, a) for a in n.names)
+            if isinstance(n, ast.Import):
+                out.update(a.name.split(".")[0] for a in n.names)
+            elif isinstance(n, ast.ImportFrom) and not n.level and n.module:
+                out.add(n.module.split(".")[0])
     return frozenset(out)
 
 
-def _import_adds_nothing(
-    node: ast.Import | ast.ImportFrom, old_imports: set[str], taken: set[str], known: frozenset[tuple[int, str]]
-) -> bool:
+def _import_adds_nothing(node: ast.Import | ast.ImportFrom, old_imports: set[str], taken: set[str], known: frozenset[str]) -> bool:
     """An added import that cannot change how existing tests run: it repeats
-    one the file had, or it binds only fresh, ordinary names and loads
-    pytest, the standard library, or a module existing tests already load."""
+    one the file had, or it binds only fresh, ordinary names and loads a
+    module that holds no fixture or that existing tests already load. Pytest
+    registers every fixture object a test module holds, whatever its name, so
+    names may be imported only from pytest and the standard library; a
+    project module may be imported only whole (`import calc`), and only if
+    existing tests import it."""
     if ast.dump(node) in old_imports:
         return True
-    if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+    safe = {"pytest"} | sys.stdlib_module_names
+    if isinstance(node, ast.ImportFrom) and (node.level or node.module == "__future__" or (node.module or "").split(".")[0] not in safe):
         return False
     for alias in node.names:
         name = _bound(alias, node)
@@ -274,18 +290,17 @@ def _import_adds_nothing(
             alias.name == "*"
             or name in taken
             or name.startswith(("test", "Test", "pytest_"))
-            or name == "pytest_plugins"
+            or name in CONVENTION_NAMES
             or (name.startswith("__") and name.endswith("__"))
             or name in BUILTIN_NAMES
         ):
             return False
-        level, module = _module_key(node, alias)
-        if not ((level == 0 and module in ({"pytest"} | sys.stdlib_module_names)) or (level, module) in known):
+        if isinstance(node, ast.Import) and alias.name.split(".")[0] not in safe | known:
             return False
     return True
 
 
-def _python_test_changed(old: str | None, new: str, known: frozenset[tuple[int, str]] = frozenset()) -> bool:
+def _python_test_changed(old: str | None, new: str, known: frozenset[str] = frozenset()) -> bool:
     """Whether a Python test file changed beyond added tests. Fails closed:
     every top-level statement of the old file must still be there, unchanged
     (test bodies and decorators included), and every new one must be a new
@@ -374,3 +389,110 @@ def modification_event(before: dict[str, dict], after: dict[str, dict], session_
         {"check": "modification", "passed": not changed, "paths": changed, "added": added},
         state_hash=state.hash(),
     )
+
+
+UNITTEST_IDS = (
+    "import unittest\n"
+    "def ids(suite):\n"
+    "    for t in suite:\n"
+    "        yield from ids(t) if isinstance(t, unittest.TestSuite) else [t.id()]\n"
+    "print('\\n'.join(ids(unittest.defaultTestLoader.discover('.'))))\n"
+)
+
+
+class _Clock:
+    def __init__(self, seconds: float):
+        self.deadline = time.monotonic() + seconds
+
+    def run(self, cmd: list[str], cwd: Path) -> tuple[int | None, str]:
+        """(exit code, output); None when the budget ran out."""
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            return None, ""
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": ""}
+        try:
+            out = subprocess.run(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=left)
+        except subprocess.TimeoutExpired:
+            return None, ""
+        except OSError as err:
+            return 1, str(err)
+        return out.returncode, out.stdout
+
+
+def _framework(python: str, choice: str, work: Path, clock: _Clock) -> str:
+    if choice != "auto":
+        return choice
+    code, _ = clock.run([python, "-c", "import pytest"], work)
+    return "pytest" if code == 0 else "unittest"
+
+
+def _collect(python: str, framework: str, work: Path, clock: _Clock) -> tuple[list[str] | None, str | None]:
+    if framework == "pytest":
+        code, out = clock.run([python, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"], work)
+        if code == 5:
+            return [], None
+        ids = [line.strip() for line in out.splitlines() if "::" in line]
+    else:
+        code, out = clock.run([python, "-c", UNITTEST_IDS], work)
+        ids = [line.strip() for line in out.splitlines() if line.strip()]
+    if code is None:
+        return None, "ran out of time collecting the tests"
+    if code != 0:
+        return None, f"collecting the tests exited with {code}"
+    return ids, None
+
+
+def _alone(python: str, framework: str, test_id: str, work: Path, clock: _Clock) -> bool | None:
+    if framework == "pytest":
+        basetemp = tempfile.mkdtemp(prefix="bt-", dir=work.parent)
+        cmd = [python, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--basetemp", basetemp, test_id]
+    else:
+        cmd = [python, "-m", "unittest", "-q", test_id]
+    code, _ = clock.run(cmd, work)
+    return None if code is None else code == 0
+
+
+def _file_of(test_id: str, framework: str, work: Path) -> str | None:
+    if framework == "pytest":
+        return test_id.split("::")[0]
+    parts = test_id.split(".")
+    for i in range(len(parts), 0, -1):
+        candidate = Path(*parts[:i]).with_suffix(".py")
+        if (work / candidate).is_file():
+            return str(candidate)
+    return None
+
+
+def isolation_event(
+    root: Path, cfg: Config, session_id: str, state: State, added: Iterable[str] = (), event_id: str | None = None
+) -> Event:
+    """Rule 2's isolation re-run (RKA jrn_01M7H11MZ72N1FEQ01P1D5JQ2Y), for a
+    session that added tests and whose last test run passed: every test runs
+    alone, in a copy of the project, so no test can pass on state another
+    left behind. A test that fails alone, a collection error, or running out
+    of the budget fails the check; so does a configuration without an
+    interpreter, which leaves the added tests unverified (`added` are then
+    the paths). It runs project code, hence opt-in."""
+    iso = cfg.isolation
+    payload: dict = {"check": "modification", "on": "isolation", "passed": False, "tests": 0, "failed": [], "paths": []}
+    if not iso.python:
+        payload |= {"paths": sorted(added), "error": "not configured"}
+    else:
+        clock = _Clock(iso.budget_seconds)
+        with tempfile.TemporaryDirectory(prefix="rkm-isolation-") as tmp:
+            work = Path(tmp) / "project"
+            shutil.copytree(root, work, ignore=shutil.ignore_patterns(*SKIP_DIRS), symlinks=True)
+            framework = _framework(iso.python, iso.framework, work, clock)
+            ids, error = _collect(iso.python, framework, work, clock)
+            if ids is not None:
+                with ThreadPoolExecutor(max_workers=iso.workers) as pool:
+                    results = list(pool.map(lambda t: _alone(iso.python, framework, t, work, clock), ids))
+                failed = [t for t, ok in zip(ids, results) if ok is False]
+                if any(ok is None for ok in results):
+                    error = f"ran out of time ({iso.budget_seconds:g}s) running the tests alone"
+                files = {f for t in failed if (f := _file_of(t, framework, work))}
+                payload |= {"tests": len(ids), "failed": failed[:50], "paths": sorted(str(root / f) for f in files)}
+            payload["passed"] = error is None and not payload["failed"]
+            if error:
+                payload["error"] = error
+    return Event.new(Kind.CHECK, Actor.RUNNER, session_id, payload, state_hash=state.hash(), id=event_id)

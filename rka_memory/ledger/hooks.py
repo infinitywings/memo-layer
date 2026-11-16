@@ -181,13 +181,27 @@ def _start_checks(memory: Memory, session_id: str, state: State) -> None:
     memory.append(*runner_checks.citation_events(cited, state, session_id))
 
 
+def _last_test_passed(memory: Memory, session_id: str) -> bool:
+    results = [e for e in memory.world().session(session_id).events if e.kind is Kind.TEST_RESULT]
+    return bool(results) and results[-1].payload.get("passed") is True
+
+
 def _end_checks(memory: Memory, session_id: str) -> list:
+    """The session's tests against how they stood at its start, and, if it
+    only added tests and its last test run passed, every test re-run alone
+    (rule 2): a new test can make another pass by changing shared state."""
     before = _read_json(_snapshot_file(memory, session_id))
     state = memory.session_state(session_id)
     if not isinstance(before, dict) or not state.project:
         return []
     after = runner_checks.snapshot(Path(state.project), memory.cfg)
-    return [runner_checks.modification_event(before, after, session_id, state)]
+    end = runner_checks.modification_event(before, after, session_id, state)
+    if not (end.payload["passed"] and end.payload["added"] and _last_test_passed(memory, session_id)):
+        return [end]
+    isolation = runner_checks.isolation_event(
+        Path(state.project), memory.cfg, session_id, state, end.payload["added"], derived_id("ev", "isolation", session_id)
+    )
+    return [end, isolation]
 
 
 def _rkm_command(memory: Memory, session_id: str, prompt: str) -> Output:
@@ -231,7 +245,12 @@ def on_pre_tool_use(memory: Memory, payload: Mapping[str, Any]) -> Output:
     path = adapter.written_path(use.tool, use.tool_input, payload.get("cwd"))
     if path is not None and use.tool_use_id:
         stash = _pending(memory, use.session_id) / f"{_safe(use.tool_use_id)}.json"
-        _write_json(stash, {"path": path, "pre_hash": signals.file_hash(path), "pre": runner_checks.entry(Path(path), memory.cfg)})
+        project = memory.session_state(use.session_id).project
+        key = _snapshot_key(path, project) if project else None
+        # Taken from the file the write reaches, so a write through a link is
+        # compared as that file (_step_check reads the same key afterwards).
+        pre = runner_checks.entry(Path(key), memory.cfg) if key else None
+        _write_json(stash, {"path": path, "pre_hash": signals.file_hash(path), "key": key, "pre": pre})
     return None
 
 
@@ -271,7 +290,7 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
         decision = adapter.decision_event(payload, memory.session_state(use.session_id), memory.cfg, state_hash)
         if decision is not None:
             events.append(decision)
-    check = _step_check(memory, use, path, pre.get("pre") if isinstance(pre, dict) and "pre" in pre else _NO_ENTRY)
+    check = _step_check(memory, use, path, pre.get("pre") if isinstance(pre, dict) and "key" in pre else _NO_ENTRY)
     if check is not None:
         events.append(check)
     memory.append(*events)

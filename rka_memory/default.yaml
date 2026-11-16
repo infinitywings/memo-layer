@@ -68,6 +68,11 @@ checks:                       # when a session's test results are weak (DESIGN_V
   test_globs: ["test_*.py", "*_test.py", "*.test.js", "*.test.ts", "*.spec.js", "*.spec.ts"]
   # Test configuration, and any other file under a test directory: any change, even reverted, makes them weak.
   config_globs: ["conftest.py", "**/conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml", "noxfile.py", ".github/**", "Makefile", "package.json", "jest.config.*", "vitest.config.*", "tests/**", "test/**"]
+  # A new test can change state other tests share. When a session added tests and its last test run
+  # passed, the runner re-runs every test alone in a copy of the project; one that fails alone makes the
+  # results weak. Off unless `python` is set, since it runs project code; while off, such a session's
+  # test results are weak.
+  isolation: {python: null, framework: auto, workers: 4, budget_seconds: 20}
 
 graph:
   anchors: true               # the miner may say which files, commands and tools a record is about; packets put those first

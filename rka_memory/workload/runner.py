@@ -47,6 +47,9 @@ MOCK = REPO / "scripts" / "mock_llm.py"
 DSH_TIMEOUT = 600
 PLUGIN_TIMEOUT_MS = 600_000
 QUIET_TIMEOUT = 300
+# The interpreter the agent's shell finds first (docker/dsh/Dockerfile); the
+# isolation re-run of rule 2 runs the project's tests with it.
+AGENT_PYTHON = Path("/opt/agent-python/bin/python")
 
 
 @dataclass(frozen=True)
@@ -360,6 +363,8 @@ class StreamRun:
             # SKILL.md files in reach would hand them to every session
             "skills": {"dir": str(p.skills), "export_files": False},
             "packet": {"arms": ["gated"]},
+            # well inside the plugin's hook timeout, which session-end mining shares
+            "checks": {"isolation": {"python": str(AGENT_PYTHON) if AGENT_PYTHON.exists() else sys.executable, "budget_seconds": 240}},
         }
         p.config.write_text(yaml.safe_dump(config_mod.merge(base, self.stream.config), sort_keys=False))
         config_mod.load(path=p.config)

@@ -41,6 +41,20 @@ class TrialConfig:
 
 
 @dataclass(frozen=True)
+class IsolationConfig:
+    """Rule 2's isolation re-run (RKA jrn_01M7H11MZ72N1FEQ01P1D5JQ2Y): the
+    interpreter that runs the project's tests (None: the re-run is off, since
+    it runs project code), the test framework ("auto": pytest if that
+    interpreter has it, else unittest), parallel processes, and the time the
+    whole re-run may take before it fails closed."""
+
+    python: str | None = None
+    framework: str = "auto"
+    workers: int = 4
+    budget_seconds: float = 20.0
+
+
+@dataclass(frozen=True)
 class Config:
     ledger_dir: Path
     core_url: str
@@ -75,6 +89,7 @@ class Config:
     check_test_globs: tuple[str, ...] = ()
     # Test configuration: any change makes a session's test results weak.
     check_config_globs: tuple[str, ...] = ()
+    isolation: IsolationConfig = field(default_factory=IsolationConfig)
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
@@ -134,6 +149,19 @@ def load(path: Path | None = None, overrides: dict[str, Any] | None = None) -> C
     return from_dict(raw)
 
 
+def _isolation(raw: dict[str, Any]) -> IsolationConfig:
+    framework = str(raw.get("framework", IsolationConfig.framework))
+    if framework not in ("auto", "pytest", "unittest"):
+        raise ValueError(f"checks.isolation.framework must be auto, pytest or unittest, not {framework!r}")
+    python = raw.get("python")
+    return IsolationConfig(
+        python=str(python) if python else None,
+        framework=framework,
+        workers=max(1, int(raw.get("workers", IsolationConfig.workers))),
+        budget_seconds=_number(raw.get("budget_seconds", IsolationConfig.budget_seconds)),
+    )
+
+
 def from_dict(raw: dict[str, Any]) -> Config:
     gate_raw = raw.get("gate", {})
     scope_fields = tuple(raw["scope"].get("fields", SCOPE_FIELDS))
@@ -185,5 +213,6 @@ def from_dict(raw: dict[str, Any]) -> Config:
         ),
         check_test_globs=tuple(str(g) for g in raw.get("checks", {}).get("test_globs") or ()),
         check_config_globs=tuple(str(g) for g in raw.get("checks", {}).get("config_globs") or ()),
+        isolation=_isolation(raw.get("checks", {}).get("isolation") or {}),
         raw=raw,
     )
