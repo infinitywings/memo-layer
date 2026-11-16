@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { homedir } from 'node:os'
-import { Config, pathCandidates, protectedTarget, realPathOf, writtenPaths } from '../src/index.ts'
+import { braceAlternatives, Config, pathCandidates, protectedTarget, realPathOf, writtenPaths } from '../src/index.ts'
 import { captureStderr, fakeAgent, fakeHost, fakeRkaMemory, until, userMessage } from './fakes.ts'
 
 const CWD = '/work/app'
@@ -81,6 +81,16 @@ test('native file tools cannot reach a protected directory, by any path to it; s
   })
 })
 
+test('brace alternatives expand as a glob tool expands them, and too many start at the root', () => {
+  assert.deepEqual(braceAlternatives('a{b,c}d').sort(), ['abd', 'acd'])
+  assert.deepEqual(braceAlternatives('{x,y{1,2}}/z').sort(), ['x/z', 'y1/z', 'y2/z'])
+  assert.deepEqual(braceAlternatives('{only}/z'), ['{only}/z'])
+  assert.deepEqual(braceAlternatives('\\{a,b}'), ['\\{a,b}'])
+  // an escaped backslash, then a real brace group
+  assert.deepEqual(braceAlternatives('\\\\{a,b}').sort(), ['\\\\a', '\\\\b'])
+  assert.deepEqual(braceAlternatives('{a,b}'.repeat(9)), ['/'])
+})
+
 test('grep, glob and read cannot start above a protected directory; content and grep patterns that name one open nothing', async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'rkm-above-')))
   const ledger = join(root, 'run', 'ledger')
@@ -108,6 +118,28 @@ test('grep, glob and read cannot start above a protected directory; content and 
     const decision = await decide(name, args)
     assert.equal(decision.kind, 'deny', `${name} ${JSON.stringify(args)}`)
     assert.match(decision.reason, new RegExp(`holds ${ledger.replaceAll('/', '\\/')}`))
+  }
+  // braces, extglob, a path spelled as a URL with a pattern climbing out of it,
+  // and too many alternatives to expand: each starts in or above the ledger
+  for (const [name, args] of [
+    ['glob', { pattern: `{${ledger},x}/*` }],
+    ['glob', { pattern: `x{,/../../run/ledger}/*`, path: workspace }],
+    ['glob', { pattern: `${root}/r@(un)/**` }],
+    ['glob', { pattern: `${root}/+(run)/**` }],
+    ['glob', { pattern: '../run/ledger/*', path: `file://${workspace}` }],
+    ['glob', { pattern: `${'{a,b}'.repeat(10)}/*` }],
+    // `..` after a wildcard climbs out of wherever the wildcard matched
+    ['glob', { pattern: '*/../../run/ledger/*', path: workspace }],
+    ['glob', { pattern: '\\\\{/../../run/ledger,x}/*', path: workspace }],
+  ] as const) {
+    assert.equal((await decide(name, args)).kind, 'deny', `${name} ${JSON.stringify(args)}`)
+  }
+  for (const [name, args] of [
+    ['glob', { pattern: '{src,tests}/**/*.py' }],
+    ['glob', { pattern: 'node_modules/@types/**' }],
+    ['glob', { pattern: '../work/**/*.py' }],
+  ] as const) {
+    assert.deepEqual(await decide(name, args), { kind: 'allow' }, `${name} ${JSON.stringify(args)}`)
   }
   // given no path, grep and glob start in the working directory
   const above = fakeAgent('s2', root)

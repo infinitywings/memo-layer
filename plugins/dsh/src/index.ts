@@ -304,32 +304,88 @@ function within(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
 }
 
+/** Characters that may open a wildcard, an extglob or an escape in a glob matcher. */
+const GLOB_SPECIAL = /[*?[{(!+@\\]/
+
+/** `p` split at its first brace group with a top-level comma, or undefined. */
+function firstBraceSplit(p: string): string[] | undefined {
+  for (let open = 0; open < p.length; open++) {
+    // scanned from the start, so `\\{` is an escaped backslash before a brace
+    if (p[open] === '\\') {
+      open++
+      continue
+    }
+    if (p[open] !== '{') continue
+    let depth = 0
+    const commas: number[] = []
+    for (let i = open; i < p.length; i++) {
+      const c = p[i]
+      if (c === '\\') {
+        i++
+      } else if (c === '{') {
+        depth++
+      } else if (c === ',' && depth === 1) {
+        commas.push(i)
+      } else if (c === '}' && --depth === 0) {
+        if (commas.length === 0) break
+        const bounds = [open, ...commas, i]
+        return bounds.slice(1).map((end, k) => p.slice(0, open) + p.slice(bounds[k]! + 1, end) + p.slice(i + 1))
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * A glob pattern's brace alternatives, as glob tools expand them: `a{b,c}d`
+ * is `abd` and `acd`, nested groups included. Past `limit` alternatives the
+ * pattern is taken to start at the filesystem root, which holds every
+ * protected directory.
+ */
+export function braceAlternatives(pattern: string, limit = 256): string[] {
+  const out: string[] = []
+  const pending = [pattern]
+  while (pending.length > 0) {
+    const p = pending.pop()!
+    const split = firstBraceSplit(p)
+    if (split === undefined) out.push(p)
+    else pending.push(...split)
+    if (pending.length + out.length > limit) return [sep]
+  }
+  return out
+}
+
 /**
  * The directory a glob pattern starts matching from: the pattern before its
- * first wildcard, cut back to the last separator, so `/opt/rka*` starts at
- * `/opt` and `**` at `.`. A pattern without a wildcard names its own path.
+ * first wildcard, extglob or escape, cut back to the last separator, so
+ * `/opt/rka*` starts at `/opt` and `**` at `.`. A pattern without one names
+ * its own path. A `..` after the first wildcard climbs out of wherever the
+ * wildcard matched, so such a pattern starts at the root.
  */
 function globBase(pattern: string): string {
-  const wild = pattern.search(/[*?[{]/)
+  const wild = pattern.search(GLOB_SPECIAL)
   if (wild < 0) return pattern
+  if (pattern.slice(wild).split(/[\\/]/).includes('..')) return sep
   const cut = pattern.slice(0, wild).lastIndexOf(sep)
   return cut < 0 ? '.' : cut === 0 ? sep : pattern.slice(0, cut)
 }
 
 /**
  * Where a tool starts reading: `path` and `file_path`; for glob also the base
- * of its pattern, taken from `path`; and for grep and glob given no `path`,
- * the working directory. grep and glob descend from there, so starting above
- * a protected root reaches into it. Other strings, such as a file's new
- * content or a grep pattern, open nothing by naming a directory.
+ * of each brace alternative of its pattern, under each spelling of `path`;
+ * and for grep and glob given no `path`, the working directory. grep and glob
+ * descend from there. Other strings, such as a file's new content or a grep
+ * pattern, open nothing by naming a directory.
  */
 function startsIn(name: string, args: unknown): string[] {
   if (!isRecord(args)) return []
   const given = ['path', 'file_path'].flatMap(key => (typeof args[key] === 'string' && args[key] !== '' ? [args[key] as string] : []))
   if (name === 'grep') return given.length > 0 ? given : ['.']
   if (name === 'glob') {
-    const base = globBase(typeof args.pattern === 'string' ? args.pattern : '')
-    return [...given, isAbsolute(base) ? base : join(given[0] ?? '.', base)]
+    const from = given.length > 0 ? given.flatMap(spellings) : ['.']
+    const bases = braceAlternatives(typeof args.pattern === 'string' ? args.pattern : '').map(globBase)
+    // Joined as text, not with join(), so `..` stays for realPathOf to apply physically.
+    return [...given, ...bases.flatMap(b => (isAbsolute(b) ? [b] : from.map(f => `${f}${f.endsWith(sep) ? '' : sep}${b}`)))]
   }
   return given
 }
@@ -352,10 +408,14 @@ export function protectedTarget(
       if (root !== undefined) return { named, root }
     }
   }
+  // A start can sit inside a root too, when a glob's base climbs out of its path.
   for (const text of startsIn(name, args)) {
     for (const named of pathCandidates(text)) {
-      const root = roots.find(r => readings(named).some(path => within(r, path)))
-      if (root !== undefined) return { named, root, above: true }
+      const paths = readings(named)
+      const inside = roots.find(r => paths.some(path => within(path, r)))
+      if (inside !== undefined) return { named, root: inside }
+      const held = roots.find(r => paths.some(path => within(r, path)))
+      if (held !== undefined) return { named, root: held, above: true }
     }
   }
   return undefined
