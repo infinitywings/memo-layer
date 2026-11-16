@@ -28,10 +28,10 @@ def project(tmp_path, **files):
 
 
 def confine(tmp_path):
-    """A stand-in for the stack's confine.sh: logs its grants, then runs the
-    command after `--` as is."""
+    """A stand-in for the stack's confine.sh: logs its grants and the command
+    after `--`, then runs that command as is."""
     script = tmp_path / "confine.sh"
-    script.write_text('#!/bin/sh\nlog="$0.log"\nwhile [ "$1" != "--" ]; do printf "%s\\n" "$1" >> "$log"; shift; done\nshift\nexec "$@"\n')
+    script.write_text('#!/bin/sh\nlog="$0.log"\nwhile [ "$1" != "--" ]; do printf "%s\\n" "$1" >> "$log"; shift; done\nshift\necho "$*" >> "$0.cmds"\nexec "$@"\n')
     script.chmod(0o755)
     return script
 
@@ -127,3 +127,15 @@ def test_a_process_started_by_a_test_dies_when_time_runs_out(tmp_path):
     assert out["passed"] is False and "time" in out["error"]
     time.sleep(4)
     assert not marker.exists()
+
+
+# Added after a review of 25d39bc: copying the project as root let a process
+# the agent left running swap a file for a link to a root-only file between
+# the check and the copy, and the copy then handed its content to the tests.
+
+
+def test_the_project_is_copied_inside_the_confinement(tmp_path):
+    root = project(tmp_path, **{"calc.py": FIXED, "test_calc.py": TEST})
+    assert rerun(root)["passed"] is True
+    commands = (tmp_path / "confine.sh.cmds").read_text().splitlines()
+    assert any(str(root) in c.split() for c in commands)
