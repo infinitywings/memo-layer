@@ -1,10 +1,13 @@
 name: pending-restriction
 description: >-
   A miner qualification with evidence of its own, still below L2, withholds
-  the fact it qualifies: the qualification may be true, and delivering the
-  fact alone would deliver the unqualified claim (DESIGN_V2 6.1). The fact
-  keeps L2. When the qualification is validated, both are delivered. A rule
-  the user affirmed is never withheld by a miner's pending qualification.
+  the fact it qualifies only once it cites a session that had the fact in
+  context and failed (DESIGN_V2 6.1, revised after the unseen-requirement
+  run, RKA jrn_01M7HNN1J4QQ48HM9PYASSPCW0). Citing a session that went
+  well, or one without the fact, withholds nothing. Once it cites a failed
+  session that had the fact, the fact keeps L2 but is not delivered until
+  the qualification is validated, and then both are delivered. A rule the
+  user affirmed is never withheld by a miner's pending qualification.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 sessions:
@@ -37,8 +40,7 @@ sessions:
     miner:
       candidates:
         - *div
-        - &qual
-          content: calc.divide returns an int when both arguments divide evenly under //
+        - content: calc.divide returns an int when both arguments divide evenly under //
           kind: fact
           refines: [calc.divide returns a float]
           evidence: [{kind: test_result, passed: true}]
@@ -51,9 +53,25 @@ sessions:
       - {record: calc.divide returns an int when both arguments divide evenly under //, rung: L1}
 
   - at: +2d
-    prompt: Add a power function to calc.py
+    prompt: Add a power function to calc.py, with a test
     agent:
-      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a * b\n\n\ndef subtract"}
+      - edit: {path: test_calc.py, old: "def test_subtract", new: "def test_power():\n    assert calc.power(2, 3) == 8\n\n\ndef test_subtract"}
+      - bash: pytest -q
+    miner:
+      support_links:
+        - record: calc.divide returns an int when both arguments divide evenly under //
+          event: {kind: tool_result}
+          reason: the session's output bears on how divide rounds
+    expect:
+      - {record: calc.divide returns a float, delivered: true}
+      - {record: run pytest -q before you finish, delivered: true}
+      - {record: calc.divide returns an int when both arguments divide evenly under //, rung: L1}
+
+  - at: +3d
+    prompt: Fix calc.power so its test passes
+    agent:
+      - edit: {path: calc.py, old: "    return a * b\n", new: "    return a ** b\n"}
       - bash: pytest -q
     miner:
       support_links:
@@ -66,7 +84,7 @@ sessions:
       - {record: run pytest -q before you finish, delivered: true}
       - {record: calc.divide returns an int when both arguments divide evenly under //, rung: L2}
 
-  - at: +3d
+  - at: +4d
     prompt: Add a negate function to calc.py
     agent:
       - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}

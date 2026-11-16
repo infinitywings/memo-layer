@@ -5,13 +5,16 @@ The user amends by typing; the miner and the agent only propose. A user's
 replacement or correction retires what it replaces, and the old version
 returns only if the user retracts the new one. An update or a close is a
 state condition on applicability. A pending restriction from the miner
-withholds what it restricts, unless the user affirmed it. A decision is in
+withholds what it restricts once it cites a failed session that had its
+target, unless the user affirmed the target. A decision is in
 force in the session that made it and deliverable only once the user
 affirms it; retracting it withdraws what depends on or implements it and
 withholds what was learned under it.
 """
 
 import random
+
+import pytest
 
 from ledger_builder import Ledger, cfg
 from rka_memory.domain import RecordKind, State
@@ -137,19 +140,47 @@ def test_defeating_an_evidence_link_takes_its_support_away():
 # Pending restrictions (DESIGN_V2 6.1)
 
 
-def restricted(lg: Ledger, target_affirmed: bool = False) -> None:
+FAILURES = {
+    "last test failed": lambda lg: lg.test("s3", False),
+    "outcome check failed": lambda lg: lg.check("s3", "outcome", False),
+    "outcome check never logged a result": lambda lg: lg.outcome_due("s3"),
+    "user undid what it wrote": lambda lg: lg.undo("cli", "s3"),
+}
+
+
+def restricted(lg: Ledger, failure: str | None = None, target_in_s3: bool = True, target_affirmed: bool = False) -> None:
+    """r_a is a valid fact. In s3 it is delivered, unless `target_in_s3` is
+    false, and the miner proposes r_q restricting it, citing a passing test
+    of s3. s3 then fails as `failure` says, or ends well."""
     validated(lg, "r_a", "s1", "s2", content="calc.divide raises ValueError")
     if target_affirmed:
         lg.confirm("cli", "r_a")
     lg.start("s3", **UV)
+    if target_in_s3:
+        lg.deliver("s3", "r_a")
     lg.propose("s3", "r_q", content="only when b is zero", refines=("r_a",))
     lg.link("r_q", lg.test("s3", True))
+    if failure:
+        FAILURES[failure](lg)
     lg.end("s3")
 
 
-def test_a_pending_restriction_withholds_its_target_until_it_is_validated_or_withdrawn():
+def test_a_restriction_citing_only_a_session_that_went_well_withholds_nothing():
+    """In the live unseen-requirement run (RKA jrn_01M7HNN1J4QQ48HM9PYASSPCW0)
+    two refinements that only added detail, citing sessions that passed the
+    user's check, withheld a valid fact from s6 to s14."""
     lg = Ledger()
     restricted(lg)
+    labels = labels_of(lg)
+    assert (labels.by_id["r_a"].rung.value, labels.by_id["r_a"].withheld_by) == ("L2", ())
+    assert labels.by_id["r_q"].rung.value == "L1"
+    assert delivered(lg) == ("r_a",)
+
+
+@pytest.mark.parametrize("failure", sorted(FAILURES))
+def test_a_restriction_citing_a_failed_session_that_had_its_target_withholds_it_until_withdrawn(failure):
+    lg = Ledger()
+    restricted(lg, failure)
     lab = labels_of(lg).by_id["r_a"]
     assert (lab.rung.value, lab.withheld_by, lab.deliverable) == ("L2", ("r_q",), False)
     assert delivered(lg) == ()
@@ -157,9 +188,25 @@ def test_a_pending_restriction_withholds_its_target_until_it_is_validated_or_wit
     assert delivered(lg) == ("r_a",)
 
 
-def test_a_validated_restriction_is_delivered_with_its_target():
+def test_a_failed_session_that_never_had_the_target_withholds_nothing():
+    lg = Ledger()
+    restricted(lg, "last test failed", target_in_s3=False)
+    assert delivered(lg) == ("r_a",)
+
+
+def test_a_failed_session_the_restriction_does_not_cite_withholds_nothing():
     lg = Ledger()
     restricted(lg)
+    lg.start("s4", **UV)
+    lg.deliver("s4", "r_a")
+    lg.test("s4", False)
+    lg.end("s4")
+    assert delivered(lg) == ("r_a",)
+
+
+def test_a_validated_restriction_is_delivered_with_its_target():
+    lg = Ledger()
+    restricted(lg, "last test failed")
     lg.start("s4", **UV)
     lg.link("r_q", lg.test("s4", True))
     lg.end("s4")
@@ -168,12 +215,14 @@ def test_a_validated_restriction_is_delivered_with_its_target():
 
 def test_a_restriction_never_withholds_what_the_user_affirmed_and_one_without_evidence_withholds_nothing():
     lg = Ledger()
-    restricted(lg, target_affirmed=True)
+    restricted(lg, "last test failed", target_affirmed=True)
     assert delivered(lg) == ("r_a",)
     lg = Ledger()
     validated(lg, "r_a", "s1", "s2", content="calc.divide raises ValueError")
     lg.start("s3", **UV)
+    lg.deliver("s3", "r_a")
     lg.propose("s3", "r_q", content="only when b is zero", refines=("r_a",))
+    lg.test("s3", False)
     lg.end("s3")
     assert delivered(lg) == ("r_a",)
 
@@ -270,7 +319,7 @@ def test_the_impact_preview_names_what_a_retraction_would_withdraw_withhold_and_
 
 
 def test_model_proposals_never_enlarge_the_deliverable_set_with_restrictions_and_versions():
-    changed = 0
+    changed = withheld = 0
     for seed in range(200):
         rng = random.Random(seed)
         lg = Ledger()
@@ -294,6 +343,8 @@ def test_model_proposals_never_enlarge_the_deliverable_set_with_restrictions_and
                 model_events.add(lg.propose(sid, mid, **edge).id)
                 model_events.add(lg.link(mid, lg.test(sid, True)).id)
                 model.add(mid)
+            if rng.random() < 0.3:
+                lg.test(sid, False)
             lg.end(sid)
         full = label(project(lg.events), cfg(), lg.clock)
         ablated_events = [e for e in lg.events if e.id not in model_events]
@@ -302,4 +353,5 @@ def test_model_proposals_never_enlarge_the_deliverable_set_with_restrictions_and
         without = set(ablated.deliverable())
         assert with_model <= without, (seed, with_model - without)
         changed += with_model != without
-    assert changed > 0
+        withheld += any(full.by_id[r].withheld_by for r in base)
+    assert changed > 0 and withheld > 0
