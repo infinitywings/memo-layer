@@ -1,7 +1,8 @@
 """Layer 4 of docs/DESIGN_V2.md, written before the code: identity classes
 with paraphrases (4.4), artifact influence (4.3), check modification (8.1),
 runner-owned checks (8.2, 7.2) and randomized trials (5.3) with the
-parameters the PI approved (q = 0.5, m = 3, delta = 1/3).
+parameters the PI approved (q = 0.5, m = 3; a one-sided Fisher test at
+alpha = 0.05 replaced the margin delta = 1/3 after the trial-ceiling study).
 """
 
 from ledger_builder import Ledger, cfg
@@ -205,12 +206,18 @@ def proposed_with_support(lg: Ledger, sessions: int = 2, weak: bool = False) -> 
         lg.end(sid)
 
 
-def trial_session(lg: Ledger, sid: str, arm: str, passed: bool) -> None:
+def trial_session(lg: Ledger, sid: str, arm: str, passed: bool, *, own_tests: bool = True, due_only: bool = False) -> None:
+    """One session of r_proc's trial. Its outcome is the user's outcome check
+    (`passed`); the session's own test run (`own_tests`) is logged too, and
+    decides nothing."""
     lg.start(sid, **UV)
     lg.assign(sid, "r_proc", arm)
     if arm == "treated":
         lg.deliver(sid, "r_proc")
-    lg.test(sid, passed, "uv run pytest")
+    lg.test(sid, own_tests, "uv run pytest")
+    lg.outcome_due(sid)
+    if not due_only:
+        lg.check(sid, "outcome", passed)
     lg.end(sid)
 
 
@@ -227,17 +234,27 @@ def test_a_prescriptive_record_enters_a_trial_only_once_its_support_meets_the_th
     assert rr(lg, "r_proc") == ("L1", "in trial: treated 0, withheld 0 sessions")
 
 
-def test_a_positive_contrast_promotes_and_records_when_it_completed():
+def test_a_complete_split_promotes_and_records_when_it_completed():
     lg = Ledger()
     proposed_with_support(lg)
-    for i, (arm, ok) in enumerate([("treated", True), ("withheld", False), ("treated", True), ("withheld", True), ("treated", True)]):
+    for i, (arm, ok) in enumerate([("treated", True), ("withheld", False), ("treated", True), ("withheld", False), ("treated", True)]):
         trial_session(lg, f"t{i}", arm, ok)
     assert rr(lg, "r_proc") == ("L1", "in trial: treated 3, withheld 2 sessions")
     trial_session(lg, "t5", "withheld", False)
     lab = labels_of(lg).by_id["r_proc"]
-    assert (lab.rung.value, lab.reason) == ("L2", "positive interventional contrast: treated 3/3, withheld 1/3")
+    assert (lab.rung.value, lab.reason) == ("L2", "positive interventional contrast: treated 3/3, withheld 0/3, p = 0.050")
     assert lab.since == max(i for i, e in enumerate(lg.events) if e.kind.value == "session_end")
     assert candidates(project(lg.events), labels_of(lg), cfg()) == []
+
+
+def test_a_margin_the_old_rule_promoted_is_not_significant():
+    """Treated 3/3 against withheld 1/3 beat the old margin of 1/3; one-sided
+    Fisher p is 0.2."""
+    lg = Ledger()
+    proposed_with_support(lg)
+    for i, (arm, ok) in enumerate([("treated", True), ("withheld", True), ("treated", True), ("withheld", False), ("treated", True), ("withheld", False)]):
+        trial_session(lg, f"t{i}", arm, ok)
+    assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 3/3, withheld 1/3, p = 0.200")
 
 
 def test_a_trial_without_a_positive_contrast_closes_and_never_reopens():
@@ -245,25 +262,45 @@ def test_a_trial_without_a_positive_contrast_closes_and_never_reopens():
     proposed_with_support(lg)
     for i, arm in enumerate(["treated", "withheld"] * 3):
         trial_session(lg, f"t{i}", arm, True)
-    assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 3/3, withheld 3/3")
+    assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 3/3, withheld 3/3, p = 1.000")
     assert candidates(project(lg.events), labels_of(lg), cfg()) == []
 
 
-def test_a_session_that_changed_its_tests_counts_against_promotion_in_either_arm():
-    """t0 (treated) and t5 (withheld) edited the tests: t0's pass counts as a
-    failure, t5's failure as a pass. Counted as observed, the trial would be
-    positive (treated 3/3, withheld 2/3)."""
+def test_the_sessions_own_tests_do_not_decide_a_trial():
+    """Treated sessions failed their own tests and passed the user's check;
+    withheld ones passed their tests and failed the check. The old outcome
+    (the last test result) would have scored this the other way round."""
     lg = Ledger()
     proposed_with_support(lg)
-    for i, (arm, ok) in enumerate([("treated", True), ("withheld", True), ("treated", True), ("withheld", True), ("treated", True), ("withheld", False)]):
+    for i, arm in enumerate(["treated", "withheld"] * 3):
+        treated = arm == "treated"
+        trial_session(lg, f"t{i}", arm, treated, own_tests=not treated)
+    assert rr(lg, "r_proc") == ("L2", "positive interventional contrast: treated 3/3, withheld 0/3, p = 0.050")
+
+
+def test_a_session_that_changed_its_tests_counts_against_promotion_in_either_arm():
+    """t0 (treated) edited the tests: its passing check counts as a failure.
+    Counted as observed, the trial would be positive (treated 3/3, withheld
+    0/3)."""
+    lg = Ledger()
+    proposed_with_support(lg)
+    for i, arm in enumerate(["treated", "withheld"] * 3):
         sid = f"t{i}"
         lg.start(sid, **UV)
         lg.assign(sid, "r_proc", arm)
-        if sid in ("t0", "t5"):
+        if sid == "t0":
             lg.write(sid, "/p/app/test_calc.py")
-        lg.test(sid, ok, "uv run pytest")
+        lg.check(sid, "outcome", arm == "treated")
         lg.end(sid)
-    assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 2/3, withheld 3/3")
+    assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 2/3, withheld 0/3, p = 0.200")
+
+
+def test_a_session_whose_outcome_check_never_logged_a_result_counts_against_promotion():
+    lg = Ledger()
+    proposed_with_support(lg)
+    for i, arm in enumerate(["treated", "withheld"] * 3):
+        trial_session(lg, f"t{i}", arm, arm == "treated", due_only=i == 0)
+    assert rr(lg, "r_proc") == ("L1", "trial closed without a positive contrast: treated 2/3, withheld 0/3, p = 0.200")
 
 
 def test_a_rules_outcome_is_whether_the_user_corrected_the_session():
@@ -284,7 +321,27 @@ def test_a_rules_outcome_is_whether_the_user_corrected_the_session():
             lg.undo(f"{sid}u", sid)
             lg.end(f"{sid}u")
     lab = labels_of(lg).by_id["r_rule"]
-    assert (lab.rung.value, lab.reason) == ("L2", "positive interventional contrast: treated 3/3, withheld 0/3")
+    assert (lab.rung.value, lab.reason) == ("L2", "positive interventional contrast: treated 3/3, withheld 0/3, p = 0.050")
+
+
+def test_a_failing_outcome_check_is_a_bad_outcome_for_a_rule_too():
+    """Uncorrected sessions whose outcome check failed are bad outcomes for
+    every prescriptive kind, not only for procedures."""
+    lg = Ledger()
+    for i in range(2):
+        lg.start(f"p{i}", **UV)
+        if i == 0:
+            lg.propose("p0", "r_rule", kind=RecordKind.CONSTRAINT, content="Keep functions short")
+        lg.link("r_rule", lg.test(f"p{i}", True))
+        lg.end(f"p{i}")
+    for i, arm in enumerate(["treated", "withheld"] * 3):
+        sid = f"t{i}"
+        lg.start(sid, **UV)
+        lg.assign(sid, "r_rule", arm)
+        lg.check(sid, "outcome", arm == "treated")
+        lg.end(sid)
+    lab = labels_of(lg).by_id["r_rule"]
+    assert (lab.rung.value, lab.reason) == ("L2", "positive interventional contrast: treated 3/3, withheld 0/3, p = 0.050")
 
 
 def test_the_coin_is_logged_and_only_treated_candidates_reach_the_packet_tail(memory):

@@ -693,3 +693,53 @@ def test_a_change_made_between_calls_is_on_record_when_a_write_reverts_it(memory
     test_file.write_text(ORIGINAL.replace("== 5", "== 5 or True"))
     _write(capsys, a, test_file, ORIGINAL, "w1")
     assert _failed(memory, "between-1") == [("write", [str(test_file)])]
+
+
+# The user's outcome check at session end (DESIGN_V2 5.3, revised after the
+# trial-ceiling study, RKA jrn_01M7HF59ZKEG5X2EGG2BWX4B8Y), and repeats that
+# ask for the same thing. Written before the code.
+
+OPS_CHECK = "import sys, calc\nok = 'mean' in getattr(calc, 'OPERATIONS', {})\nprint('ops CLI: mean ' + ('found' if ok else 'missing; register it in calc.OPERATIONS'))\nsys.exit(0 if ok else 1)\n"
+
+
+def test_the_outcome_check_runs_at_session_end_before_the_session_ends(memory, proj, tmp_path, spawned, capsys, user_config):
+    from rka_memory.domain import Actor as A
+    from rka_memory.domain import Kind as K
+
+    settings = _isolation_config(tmp_path)
+    settings["checks"]["outcome"] = {"command": ["{python}", "-c", OPS_CHECK]}
+    user_config(**settings)
+    (proj / "calc.py").write_text("def mean(values):\n    return sum(values) / len(values)\n")
+    a = base("out-1", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    fire(capsys, "SessionEnd", {**a, "reason": "other"})
+    tail = [e for e in memory.ledger.read() if e.session_id == "out-1"][-4:]
+    assert [(e.kind, e.actor) for e in tail] == [(K.CHECK, A.RUNNER), (K.CHECK, A.RUNNER), (K.TOOL_RESULT, A.ENV), (K.SESSION_END, A.RUNNER)]
+    due, verdict, output, _ = tail
+    assert due.payload == {"check": "outcome", "status": "due"}
+    assert (verdict.payload["check"], verdict.payload["passed"]) == ("outcome", False)
+    assert "register it in calc.OPERATIONS" in output.payload["output"]
+
+
+def test_without_an_outcome_command_no_outcome_check_is_logged(memory, proj, tmp_path, spawned, capsys, user_config):
+    from rka_memory.domain import Kind as K
+
+    user_config(**_isolation_config(tmp_path))
+    a = base("out-2", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    fire(capsys, "SessionEnd", {**a, "reason": "other"})
+    assert [e for e in memory.ledger.read() if e.kind is K.CHECK and e.payload.get("check") == "outcome"] == []
+
+
+def test_prompts_that_ask_for_different_things_are_not_repeats(memory, proj, tmp_path, spawned, capsys):
+    a, b = base("a", proj, tmp_path), base("b", proj, tmp_path)
+    fire(capsys, "UserPromptSubmit", {**a, "prompt_id": "pa", "prompt": "Add a geometric_mean(values) function to calc.py, with tests."})
+    fire(capsys, "UserPromptSubmit", {**b, "prompt_id": "pb", "prompt": "Add a harmonic_mean(values) function to calc.py, with tests."})
+    assert [e for e in memory.ledger.read() if e.kind is Kind.USER_REPEAT] == []
+
+
+def test_a_restated_request_with_a_courtesy_word_is_still_a_repeat(memory, proj, tmp_path, spawned, capsys):
+    a, b = base("a", proj, tmp_path), base("b", proj, tmp_path)
+    fire(capsys, "UserPromptSubmit", {**a, "prompt_id": "pa", "prompt": "Always run the parser tests with uv before committing"})
+    fire(capsys, "UserPromptSubmit", {**b, "prompt_id": "pb", "prompt": "Always run the parser tests with uv before committing, please"})
+    assert len([e for e in memory.ledger.read() if e.kind is Kind.USER_REPEAT]) == 1

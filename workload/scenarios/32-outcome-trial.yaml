@@ -1,0 +1,89 @@
+name: outcome-trial
+description: >-
+  The trial revision after the trial-ceiling study (DESIGN_V2 5.3, RKA
+  jrn_01M7HF59ZKEG5X2EGG2BWX4B8Y). A session's outcome is the user's own
+  outcome check, which the runner runs at session end in a copy of the
+  project, not the agent's tests, which pass in every session here. Every
+  session starts from a fresh copy of the fixture. The user's check fails
+  unless calc.OPERATIONS registers the new function, and says so in its
+  output, which the miner cites; the scripted agent registers it only when
+  its packet holds the procedure. The procedure enters a trial on two
+  sessions of support, and a one-sided Fisher test at alpha 0.05 promotes it
+  on the complete split that follows: every treated session passes the
+  user's check and every withheld one fails it. The `trial` check recomputes
+  the trial from the log, independently of the kernel.
+start: 2027-02-01T12:00:00+00:00
+project: calc-uv
+fresh_project: true
+config:
+  checks:
+    outcome:
+      command:
+        - "{python}"
+        - "-c"
+        - |
+          import sys
+          import calc
+          if "mean" in getattr(calc, "OPERATIONS", {}):
+              print("ops CLI check passed: offers mean")
+              sys.exit(0)
+          print("ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS")
+          sys.exit(1)
+sessions:
+  - at: +0d
+    prompt: Add a mean(values) function to calc.py, with tests.
+    agent: &work
+      - edit: {path: calc.py, old: "def subtract", new: "def mean(values):\n    return sum(values) / len(values)\n\n\ndef subtract"}
+      - told:
+          text: register it in calc.OPERATIONS
+          then:
+            - edit: {path: calc.py, old: "    return a - b\n", new: "    return a - b\n\n\nOPERATIONS = {\"mean\": mean}\n"}
+          else: []
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &proc
+          content: When adding a function to calc.py, register it in calc.OPERATIONS, which the user's ops CLI reads
+          kind: procedure
+          evidence: [{kind: tool_result, actor: env}, {kind: test_result, passed: true}]
+    expect:
+      - {outcome_check: false}
+      - {record: "When adding a function to calc.py, register it in calc.OPERATIONS, which the user's ops CLI reads", rung: L1}
+
+  - at: +1d
+    prompt: Add a mean(values) function to calc.py that averages a list, with tests.
+    agent: *work
+    miner:
+      candidates: [*proc]
+    expect:
+      - {outcome_check: false}
+      - {record: "When adding a function to calc.py, register it in calc.OPERATIONS, which the user's ops CLI reads", delivered: false}
+
+  - &later
+    at: +2d
+    prompt: Add a mean(values) function to calc.py for report 3, with tests.
+    agent: *work
+    expect:
+      - {trial: "When adding a function to calc.py, register it in calc.OPERATIONS, which the user's ops CLI reads"}
+  - {<<: *later, at: +3d, prompt: "Add a mean(values) function to calc.py for report 4, with tests."}
+  - {<<: *later, at: +4d, prompt: "Add a mean(values) function to calc.py for report 5, with tests."}
+  - {<<: *later, at: +5d, prompt: "Add a mean(values) function to calc.py for report 6, with tests."}
+  - {<<: *later, at: +6d, prompt: "Add a mean(values) function to calc.py for report 7, with tests."}
+  - {<<: *later, at: +7d, prompt: "Add a mean(values) function to calc.py for report 8, with tests."}
+  - {<<: *later, at: +8d, prompt: "Add a mean(values) function to calc.py for report 9, with tests."}
+  - {<<: *later, at: +9d, prompt: "Add a mean(values) function to calc.py for report 10, with tests."}
+  - {<<: *later, at: +10d, prompt: "Add a mean(values) function to calc.py for report 11, with tests."}
+  - {<<: *later, at: +11d, prompt: "Add a mean(values) function to calc.py for report 12, with tests."}
+  - {<<: *later, at: +12d, prompt: "Add a mean(values) function to calc.py for report 13, with tests."}
+  - {<<: *later, at: +13d, prompt: "Add a mean(values) function to calc.py for report 14, with tests."}
+  - {<<: *later, at: +14d, prompt: "Add a mean(values) function to calc.py for report 15, with tests."}
+  - {<<: *later, at: +15d, prompt: "Add a mean(values) function to calc.py for report 16, with tests."}
+  - {<<: *later, at: +16d, prompt: "Add a mean(values) function to calc.py for report 17, with tests."}
+  - {<<: *later, at: +17d, prompt: "Add a mean(values) function to calc.py for report 18, with tests."}
+  - at: +18d
+    prompt: Add a mean(values) function to calc.py for report 19, with tests.
+    agent: *work
+    expect:
+      - {record: "When adding a function to calc.py, register it in calc.OPERATIONS, which the user's ops CLI reads", rung: L2}
+      - {outcome_check: true}
+      - {events: {kind: user_repeat, count: 0}}

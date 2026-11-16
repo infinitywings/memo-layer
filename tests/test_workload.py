@@ -351,7 +351,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation"]
+    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation", "outcome-trial"]
 
 
 LIVE = """
@@ -471,7 +471,7 @@ def test_report_row_says_what_a_session_received_and_changed():
 
 def test_every_shipped_live_stream_loads_as_live():
     streams = [load(p) for p in sorted((REPO / "workload" / "live").glob("*.yaml"))]
-    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live"), ("drift", "live"), ("mislead", "live"), ("unverifiable", "live")]
+    assert [(s.name, s.model) for s in streams] == [("calc-weeks", "live"), ("house-rules", "live"), ("drift", "live"), ("mislead", "live"), ("unverifiable", "live"), ("unseen-requirement", "live")]
     drift = streams[2]
     assert drift.config == {"packet": {"arms": ["gated", "ungated", "none"]}}
     arms = ["gated", "ungated", "none"]
@@ -787,3 +787,48 @@ def test_a_chained_replay_keeps_planted_records_and_drops_what_the_miner_and_gat
     assert {planted.id, planting.id} <= kept
     assert not kept & {mined_link.id, later.id}
     assert not any(e.kind is Kind.RUNG_CHANGE for e in lg.events if e.id in kept)
+
+
+# The trial revision after the trial-ceiling study (DESIGN_V2 5.3, RKA
+# jrn_01M7HF59ZKEG5X2EGG2BWX4B8Y). Written before the code.
+
+
+def test_mock_takes_a_told_steps_then_branch_only_when_the_request_holds_its_text():
+    script = {
+        "agent": [
+            {"told": "register it in calc.OPERATIONS", "then": [{"tool": "edit", "args": {"x": 1}}], "else": [{"tool": "bash", "args": {"command": "true"}}]},
+            {"tool": "bash", "args": {"command": "pytest -q"}},
+        ],
+        "say": "Done.",
+    }
+    told = {"tools": [{}], "messages": [{"role": "system", "content": "### Being tested\n- [r_1] When adding a function, register it in calc.OPERATIONS"}, {"role": "user", "content": "go"}]}
+    untold = {"tools": [{}], "messages": [{"role": "user", "content": "go"}]}
+    assert mock_llm.respond(told, script)[1] == {"tool": ("edit", {"x": 1}), "id": "call_0_edit"}
+    assert mock_llm.respond(untold, script)[1] == {"tool": ("bash", {"command": "true"}), "id": "call_0_bash"}
+    after = {**untold, "messages": untold["messages"] + [{"role": "tool", "content": "ok"}]}
+    assert mock_llm.respond(after, script)[1] == {"tool": ("bash", {"command": "pytest -q"}), "id": "call_1_bash"}
+
+
+def test_a_told_step_parses_into_its_two_branches(tmp_path):
+    step = "      - told: {text: register it in calc.OPERATIONS, then: [{bash: echo yes}], else: []}\n"
+    text = STREAM.replace("      - bash: pytest -q\n", step)
+    stream = load(write_stream(tmp_path, text))
+    (told,) = [x for x in stream.sessions[0].agent if "told" in x]
+    assert told == {"told": "register it in calc.OPERATIONS", "then": [{"tool": "bash", "args": {"description": "run a command", "command": "echo yes"}}], "else": []}
+
+
+def test_fresh_project_is_a_stream_level_switch(tmp_path):
+    assert load(write_stream(tmp_path, LIVE.replace("model: live\n", "model: live\nfresh_project: true\n"))).fresh_project
+    assert not load(write_stream(tmp_path, LIVE)).fresh_project
+    with pytest.raises(StreamError, match="fresh_project is true or false"):
+        load(write_stream(tmp_path, LIVE.replace("model: live\n", "model: live\nfresh_project: yes please\n")))
+
+
+def test_unseen_requirement_stream_starts_every_session_fresh_and_checks_registration():
+    streams = load_all(REPO / "workload" / "live" / "6-unseen-requirement.yaml")
+    assert [s.name for s in streams] == ["unseen-requirement-gated", "unseen-requirement-ungated", "unseen-requirement-none"]
+    stream = streams[0]
+    assert stream.fresh_project and stream.fixture.name == "calc-uv"
+    assert len(stream.sessions) == 20 and not any(s.plant for s in stream.sessions)
+    assert stream.config["checks"]["outcome"]["command"][0] == "{python}"
+    assert all("registered in OPERATIONS" in {o.label for o in s.observe} for s in stream.sessions)
