@@ -23,7 +23,7 @@ from typing import Any, Callable, Mapping
 
 from rka_memory import commands
 from rka_memory.commands import CommandError
-from rka_memory.domain import Kind, State, clock_now, parse_ts
+from rka_memory.domain import Event, Kind, State, clock_now, derived_id, parse_ts
 from rka_memory.ledger import checks as runner_checks
 from rka_memory.ledger import signals
 from rka_memory.ledger import state as state_mod
@@ -160,13 +160,19 @@ def _snapshot_file(memory: Memory, session_id: str) -> Path:
     return _pending(memory, session_id) / "_checks.json"
 
 
+def _baseline_file(memory: Memory, session_id: str) -> Path:
+    return _pending(memory, session_id) / "_baseline.json"
+
+
 def _start_checks(memory: Memory, session_id: str, state: State) -> None:
     """Before the session's packet is built: hash the files whose change makes
     its test results weak, and check the citations of every record that could
     apply here, so the packet reads only logged checks (DESIGN_V2 8)."""
     if not state.project:
         return
-    _write_json(_snapshot_file(memory, session_id), runner_checks.snapshot(Path(state.project), memory.cfg))
+    snap = runner_checks.snapshot(Path(state.project), memory.cfg)
+    _write_json(_snapshot_file(memory, session_id), snap)
+    _write_json(_baseline_file(memory, session_id), snap)
     labels = memory.labels()
     cited = [
         r for r in memory.world().records.values()
@@ -265,18 +271,59 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
         decision = adapter.decision_event(payload, memory.session_state(use.session_id), memory.cfg, state_hash)
         if decision is not None:
             events.append(decision)
-    if path and not failed and isinstance(pre, dict) and "pre" in pre:
-        # Each write that changes an existing test is on record as it
-        # happens, so reverting it before the session ends hides nothing.
-        check = runner_checks.write_check(str(path), pre["pre"], memory.cfg, use.session_id, memory.session_state(use.session_id))
-        if check is not None:
-            events.append(check)
+    check = _step_check(memory, use, path, pre.get("pre") if isinstance(pre, dict) and "pre" in pre else _NO_ENTRY)
+    if check is not None:
+        events.append(check)
     memory.append(*events)
     if tracked:
         _write_json(tracked_path, tracked)
     if stash:
         stash.unlink(missing_ok=True)
     return None
+
+
+_NO_ENTRY = object()
+
+
+def _snapshot_key(path: str, project: str) -> str | None:
+    """`path` spelled as runner_checks.snapshot spells it, or None outside the
+    project (the tool payload's cwd and git's toplevel may differ by links)."""
+    try:
+        rel = Path(path).resolve().relative_to(Path(project).resolve())
+    except (OSError, ValueError):
+        return None
+    return str(Path(project) / rel)
+
+
+def _step_check(memory: Memory, use: adapter.ToolUse, path: str | None, pre: Any) -> Event | None:
+    """Compare the tests and test configuration with how they stood after the
+    previous tool call, so each change is on record as it happens and a revert
+    hides nothing (rule 2). A single-file write is compared from the entry
+    taken just before it; any other tool not known to be read-only (a shell
+    command, a patch, an unknown tool) re-reads the whole project. Not caught:
+    one command that edits a test, runs it and reverts the edit before it
+    returns, and a backgrounded edit that a later write overwrites."""
+    state = memory.session_state(use.session_id)
+    baseline_path = _baseline_file(memory, use.session_id)
+    baseline = _read_json(baseline_path)
+    if not state.project or not isinstance(baseline, dict):
+        return None
+    key = _snapshot_key(path, state.project) if path else None
+    if path and pre is not _NO_ENTRY:
+        if key is None:
+            return None
+        before = {k: v for k, v in baseline.items() if k != key} | ({key: pre} if pre else {})
+        post = runner_checks.entry(Path(key), memory.cfg)
+        after = {k: v for k, v in before.items() if k != key} | ({key: post} if post else {})
+        on = "write"
+    elif use.tool in adapter.READ_ONLY_TOOLS:
+        return None
+    else:
+        before, after, on = baseline, runner_checks.snapshot(Path(state.project), memory.cfg), "shell"
+    if after != baseline:
+        _write_json(baseline_path, after)
+    event_id = derived_id("ev", "modification", use.session_id, use.tool_use_id) if use.tool_use_id else None
+    return runner_checks.step_check(before, after, use.session_id, state, on, event_id)
 
 
 def _late_writes(memory: Memory, session_id: str) -> list:

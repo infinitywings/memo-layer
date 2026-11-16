@@ -8,16 +8,19 @@ label reads them (DESIGN_V2 4.1, 8).
   The paths come from the model, so a path that is not a relative path
   inside the project is never read; its check is logged as failed.
 - Modification: the test files and test configuration, taken at session
-  start and compared at session end. A session that changed existing test
-  content, or any test configuration, makes its own test and exit results
-  weak; one that only added tests does not (rule 2 as the PI refined it).
+  start and compared after each tool call (step_check) and at session end.
+  A session that changed existing test content, or any test configuration,
+  makes its own test and exit results weak; one that only added tests does
+  not (rule 2 as the PI refined it).
 """
 
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 import os
+import sys
 from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Iterable
@@ -29,6 +32,7 @@ from rka_memory.kernel.evidence import _matches
 from rka_memory.world import RecordState
 
 MAX_BYTES = 1_000_000
+BUILTIN_NAMES = frozenset(dir(builtins))
 SKIP_DIRS = frozenset({".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
 
 
@@ -123,8 +127,29 @@ def snapshot(root: Path, cfg: Config) -> dict[str, dict]:
     return out
 
 
+def _literal(node: ast.AST | None) -> bool:
+    """Evaluating it runs no code: a constant or a container of constants."""
+    if node is None:
+        return True
+    try:
+        ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False
+    return True
+
+
+def _simple_annotation(node: ast.AST | None) -> bool:
+    """None, a string, a name or a dotted name: looked up, never called."""
+    if node is None or (isinstance(node, ast.Constant) and isinstance(node.value, (str, type(None)))):
+        return True
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return isinstance(node, ast.Name)
+
+
 def _plain_marks(node: ast.AST) -> bool:
-    """Decorated only with pytest marks (pytest.mark.<name>, called or not)."""
+    """Decorated only with pytest marks (pytest.mark.<name>, called or not,
+    with literal arguments)."""
     for dec in getattr(node, "decorator_list", ()):
         target = dec.func if isinstance(dec, ast.Call) else dec
         if not (
@@ -135,7 +160,31 @@ def _plain_marks(node: ast.AST) -> bool:
             and target.value.value.id == "pytest"
         ):
             return False
-    return True
+        if isinstance(dec, ast.Call) and not (
+            all(_literal(a) for a in dec.args) and all(k.arg is not None and _literal(k.value) for k in dec.keywords)
+        ):
+            return False
+    return not getattr(node, "type_params", None)
+
+
+def _signature_runs_nothing(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Defining it runs no code: literal defaults, simple annotations."""
+    a = fn.args
+    params = [*a.posonlyargs, *a.args, *a.kwonlyargs, *(p for p in (a.vararg, a.kwarg) if p)]
+    return (
+        all(_literal(d) for d in [*a.defaults, *a.kw_defaults])
+        and all(_simple_annotation(p.annotation) for p in params)
+        and _simple_annotation(fn.returns)
+    )
+
+
+def _test_function(node: ast.AST) -> bool:
+    return (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+        and _plain_marks(node)
+        and _signature_runs_nothing(node)
+    )
 
 
 def _docstring(node: ast.AST) -> bool:
@@ -144,9 +193,10 @@ def _docstring(node: ast.AST) -> bool:
 
 def _new_test(node: ast.AST, taken: set[str]) -> bool:
     """A new, uniquely named test function, or a test class holding only test
-    methods; no fixture, hook or other decorator."""
+    methods; no fixture, hook, other decorator, or code that runs when the
+    file loads."""
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return node.name.startswith("test") and node.name not in taken and _plain_marks(node)
+        return node.name not in taken and _test_function(node)
     if isinstance(node, ast.ClassDef):
         return (
             node.name.startswith("Test")
@@ -154,20 +204,94 @@ def _new_test(node: ast.AST, taken: set[str]) -> bool:
             and not node.bases
             and not node.keywords
             and _plain_marks(node)
-            and all(
-                _docstring(b) or (isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)) and b.name.startswith("test") and _plain_marks(b))
-                for b in node.body
-            )
+            and all(_docstring(b) or _test_function(b) for b in node.body)
         )
     return False
 
 
-def _python_test_changed(old: str | None, new: str) -> bool:
+def _bound(alias: ast.alias, node: ast.Import | ast.ImportFrom) -> str:
+    if alias.asname:
+        return alias.asname
+    return alias.name.split(".")[0] if isinstance(node, ast.Import) else alias.name
+
+
+def _names(tree: ast.AST) -> set[str]:
+    """Every name the file binds or mentions, at any depth."""
+    out: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name):
+            out.add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.add(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            out.update(_bound(a, n) for a in n.names)
+        elif isinstance(n, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and n.name:
+            out.add(n.name)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)):
+            out.update(n.names)
+    return out
+
+
+def _module_key(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> tuple[int, str]:
+    """What an import loads: (0, top-level package) for an absolute import,
+    (level, module) for a relative one."""
+    if isinstance(node, ast.Import):
+        return 0, alias.name.split(".")[0]
+    if node.level:
+        return node.level, node.module or ""
+    return 0, (node.module or "").split(".")[0]
+
+
+def known_imports(snap: dict[str, dict]) -> frozenset[tuple[int, str]]:
+    """The modules some test file in the snapshot imports, anywhere in it."""
+    out: set[tuple[int, str]] = set()
+    for path, e in snap.items():
+        if e.get("kind") != "test" or "text" not in e or not path.endswith(".py"):
+            continue
+        try:
+            tree = ast.parse(e["text"])
+        except (SyntaxError, ValueError):
+            continue
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                out.update(_module_key(n, a) for a in n.names)
+    return frozenset(out)
+
+
+def _import_adds_nothing(
+    node: ast.Import | ast.ImportFrom, old_imports: set[str], taken: set[str], known: frozenset[tuple[int, str]]
+) -> bool:
+    """An added import that cannot change how existing tests run: it repeats
+    one the file had, or it binds only fresh, ordinary names and loads
+    pytest, the standard library, or a module existing tests already load."""
+    if ast.dump(node) in old_imports:
+        return True
+    if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+        return False
+    for alias in node.names:
+        name = _bound(alias, node)
+        if (
+            alias.name == "*"
+            or name in taken
+            or name.startswith(("test", "Test", "pytest_"))
+            or name == "pytest_plugins"
+            or (name.startswith("__") and name.endswith("__"))
+            or name in BUILTIN_NAMES
+        ):
+            return False
+        level, module = _module_key(node, alias)
+        if not ((level == 0 and module in ({"pytest"} | sys.stdlib_module_names)) or (level, module) in known):
+            return False
+    return True
+
+
+def _python_test_changed(old: str | None, new: str, known: frozenset[tuple[int, str]] = frozenset()) -> bool:
     """Whether a Python test file changed beyond added tests. Fails closed:
     every top-level statement of the old file must still be there, unchanged
     (test bodies and decorators included), and every new one must be a new
-    test, an import (not a star import) or a docstring. Anything else, and
-    anything that does not parse, is a change."""
+    test (_new_test), a docstring, or an import that adds nothing
+    (_import_adds_nothing; `known` holds the modules existing tests load).
+    Anything else, and anything that does not parse, is a change."""
     try:
         old_tree = ast.parse(old) if old is not None else ast.Module(body=[], type_ignores=[])
         new_tree = ast.parse(new)
@@ -186,11 +310,12 @@ def _python_test_changed(old: str | None, new: str) -> bool:
             added.append(node)
     if +remaining:
         return True
-    taken = {n.name for n in old_tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    taken = _names(old_tree)
+    old_imports = {ast.dump(n) for n in ast.walk(old_tree) if isinstance(n, (ast.Import, ast.ImportFrom))}
     for node in added:
         if _new_test(node, taken) or _docstring(node):
             continue
-        if isinstance(node, (ast.Import, ast.ImportFrom)) and not any(a.name == "*" for a in node.names):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and _import_adds_nothing(node, old_imports, taken, known):
             continue
         return True
     return False
@@ -199,9 +324,11 @@ def _python_test_changed(old: str | None, new: str) -> bool:
 def changes(before: dict[str, dict], after: dict[str, dict]) -> tuple[list[str], list[str]]:
     """(changed, added) between two snapshots. Test configuration created,
     edited or removed is a change; a test file removed is a change; a Python
-    test file that changed beyond added tests (_python_test_changed) is a
-    change; outside Python, only a brand-new test file is an addition."""
+    test file that changed beyond added tests (_python_test_changed, with the
+    imports of `before`'s test files as known) is a change; outside Python,
+    only a brand-new test file is an addition."""
     changed, added = [], []
+    known = known_imports(before)
     for path in sorted(set(before) | set(after)):
         old, new = before.get(path), after.get(path)
         if old is not None and new is not None and old["hash"] == new["hash"]:
@@ -212,29 +339,29 @@ def changes(before: dict[str, dict], after: dict[str, dict]) -> tuple[list[str],
             if old is not None and "text" not in old:
                 changed.append(path)
             else:
-                (changed if _python_test_changed(old["text"] if old else None, new["text"]) else added).append(path)
+                (changed if _python_test_changed(old["text"] if old else None, new["text"], known) else added).append(path)
         else:
             (added if old is None else changed).append(path)
     return changed, added
 
 
-def write_check(path: str, pre: dict | None, cfg: Config, session_id: str, state: State) -> Event | None:
-    """A failed modification check for one write that changed an existing
-    test, logged as it happens, so a change reverted before the session ends
-    is still on record. None when the write only added tests or is not to a
-    test file (writes to test configuration count on their own)."""
-    post = entry(Path(path), cfg)
-    if (pre or post) is None or (pre or post)["kind"] != "test":
-        return None
-    changed, _ = changes({path: pre} if pre else {}, {path: post} if post else {})
+def step_check(before: dict[str, dict], after: dict[str, dict], session_id: str, state: State, on: str, event_id: str | None = None) -> Event | None:
+    """A failed modification check for what one tool call changed in the
+    tests or test configuration, logged as the call returns, so a change
+    reverted before the session ends is still on record. None when the call
+    only added tests or touched neither. `on` says how the runner saw the
+    call: "write" for a single-file write, "shell" for a whole-project
+    comparison after any other tool that may write."""
+    changed, _ = changes(before, after)
     if not changed:
         return None
     return Event.new(
         Kind.CHECK,
         Actor.RUNNER,
         session_id,
-        {"check": "modification", "passed": False, "paths": changed, "on": "write"},
+        {"check": "modification", "passed": False, "paths": changed, "on": on},
         state_hash=state.hash(),
+        id=event_id,
     )
 
 

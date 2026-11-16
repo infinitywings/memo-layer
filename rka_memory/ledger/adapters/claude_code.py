@@ -19,6 +19,9 @@ from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, RecordKind, RecordSpec, Scope, State, canonical_json, derived_id
 
 WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+# Tools that cannot change a file. After any other tool the runner re-reads
+# the tests and test configuration (hooks._step_check).
+READ_ONLY_TOOLS = frozenset({"Read", "Glob", "Grep", "LS", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite", "decide"})
 EXIT_CODE_FIELDS = ("exit_code", "exitCode", "returnCode", "return_code")
 _EXIT_CODE_TEXT = re.compile(r"Exit code (-?\d+)")
 
