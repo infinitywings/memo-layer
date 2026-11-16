@@ -66,8 +66,9 @@ class Label:
     affirmed: bool = False
     withdrawn: bool = False
     learned_under: tuple[str, ...] = ()
-    # Miner restrictions of this record that have evidence but are not yet
-    # valid: the record keeps its rung but is not delivered (DESIGN_V2 6.1).
+    # Miner restrictions of this record that have evidence, are not yet
+    # valid, and cite a failed session that had this record: the record
+    # keeps its rung but is not delivered (DESIGN_V2 6.1).
     withheld_by: tuple[str, ...] = ()
     # For a prescriptive record whose support met the threshold: its
     # randomized trial, "open", "positive" or "closed" (DESIGN_V2 5.3).
@@ -250,25 +251,30 @@ def label(world: World, cfg: Config, now: datetime) -> Labels:
     ordered = list(world.events.values())
     for rec in sorted(world.records.values(), key=lambda r: world.position[r.proposed.id]):
         out.by_id[rec.id] = _label_one(rec, world, cfg, now, influence, reach, withdrawn, roots, held, out, ordered)
-    _withhold_pending_restrictions(world, out)
+    _withhold_pending_restrictions(world, out, held)
     return out
 
 
-def _withhold_pending_restrictions(world: World, labels: Labels) -> None:
+def _withhold_pending_restrictions(world: World, labels: Labels, held: dict[str, frozenset[str]]) -> None:
     """A model-proposed qualification with evidence of its own (L1) may be
-    true, and delivering its target alone would deliver the unqualified claim,
-    so the target is withheld until the qualification is valid or withdrawn.
-    A target the user affirmed is never withheld, and a proposal with no
-    counted evidence withholds nothing: a model proposal can withhold only at
-    the cost of evidence, and never over the user's word."""
+    true, and delivering its target alone would deliver the unqualified claim.
+    Withholding a valid record costs every session it would help, so the
+    qualification withholds its target, until it is valid or withdrawn, only
+    once its counted support includes an event from a failed session that had
+    the target in context. A target the user affirmed is never withheld: a
+    model proposal can withhold only at the cost of evidence of a failure,
+    and never over the user's word."""
     pending: dict[str, list[str]] = {}
     for rec in world.records.values():
         lab = labels.by_id[rec.id]
         if rec.proposed.kind is not Kind.RECORD_PROPOSED or lab.rung is not Rung.L1:
             continue
+        cited = {world.events[e].session_id for e in lab.support}
         for target in rec.spec.refines:
-            held = labels.by_id.get(target)
-            if held is not None and held.valid and not held.affirmed:
+            tlab = labels.by_id.get(target)
+            if tlab is None or not tlab.valid or tlab.affirmed:
+                continue
+            if any(trials.failed(world, world.sessions[s]) for s in cited & held.get(target, frozenset()) if s in world.sessions):
                 pending.setdefault(target, []).append(rec.id)
     for target, by in pending.items():
         labels.by_id[target] = replace(labels.by_id[target], withheld_by=tuple(sorted(by)))

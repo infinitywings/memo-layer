@@ -83,6 +83,16 @@ def outcome(world: World, session: Session) -> bool:
     return _outcome_check(session) is not False and not _corrected(world, session)
 
 
+def failed(world: World, session: Session) -> bool:
+    """The user corrected the session, its outcome check failed or never
+    logged a result, or its last test run failed. A pending restriction
+    withholds only a target that was in context in such a session
+    (DESIGN_V2 6.1)."""
+    check = _outcome_check(session)
+    tests = [e for e in session.events if e.kind is Kind.TEST_RESULT]
+    return check is False or check == "due" or _corrected(world, session) or bool(tests and not tests[-1].payload.get("passed"))
+
+
 def evaluate(rec: RecordState, world: World, cfg: Config, suspect: frozenset[str] = frozenset()) -> Trial:
     """The record's trial, from the logged coins and the ended sessions.
 

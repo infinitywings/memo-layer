@@ -53,9 +53,8 @@ sessions:
       - {record: calc.divide returns an int when both arguments divide evenly under //, rung: L1}
 
   - at: +2d
-    prompt: Add a power function to calc.py, with a test
+    prompt: Write a test for a power function in test_calc.py first
     agent:
-      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a * b\n\n\ndef subtract"}
       - edit: {path: test_calc.py, old: "def test_subtract", new: "def test_power():\n    assert calc.power(2, 3) == 8\n\n\ndef test_subtract"}
       - bash: pytest -q
     miner:
@@ -69,9 +68,9 @@ sessions:
       - {record: calc.divide returns an int when both arguments divide evenly under //, rung: L1}
 
   - at: +3d
-    prompt: Fix calc.power so its test passes
+    prompt: Add the power function to calc.py so its test passes
     agent:
-      - edit: {path: calc.py, old: "    return a * b\n", new: "    return a ** b\n"}
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
       - bash: pytest -q
     miner:
       support_links:
