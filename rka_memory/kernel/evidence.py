@@ -36,17 +36,24 @@ OUTCOMES = (Kind.TEST_RESULT, Kind.EXIT_CODE)
 
 
 def modified_sessions(world: World, cfg: Config) -> frozenset[str]:
-    """Sessions that created or changed a test or its configuration: the agent
-    wrote a path matching `checks.globs`, or the runner's modification check
-    found one changed (DESIGN_V2 8.1). Their test and exit results are weak."""
+    """Sessions whose test and exit results are weak (DESIGN_V2 5.1 rule 2,
+    8.1, as the PI refined it): the runner's modification check found
+    existing test content or test configuration changed. A session with no
+    modification check logged (a ledger from before the check existed) is
+    judged by the strict rule: any agent write to a test path counts."""
     cache = world.__dict__.setdefault("_modified", {})
     if world.revision not in cache:
+        checked = {ev.session_id for ev in world.checks if ev.payload.get("check") == "modification"}
         out = {
             ev.session_id for ev in world.checks
             if ev.payload.get("check") == "modification" and not ev.payload.get("passed")
         }
         for ev in world.events.values():
-            if ev.kind is Kind.FILE_WRITE and _matches(str(ev.payload.get("path") or ""), cfg.check_globs):
+            if (
+                ev.kind is Kind.FILE_WRITE
+                and ev.session_id not in checked
+                and _matches(str(ev.payload.get("path") or ""), cfg.check_globs)
+            ):
                 out.add(ev.session_id)
         cache.clear()
         cache[world.revision] = frozenset(out)

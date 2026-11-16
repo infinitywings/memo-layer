@@ -63,8 +63,11 @@ trials:                       # randomized trials for prescriptive records (DESI
   m: 3                        # sessions each arm needs before the trial ends
   delta: "1/3"                # the treated arm must beat the withheld one by this share of sessions
 
-checks:                       # a session that changed any of these makes its test results weak (DESIGN_V2 8.1)
-  globs: ["test_*.py", "*_test.py", "tests/**", "test/**", "conftest.py", "**/conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml", "noxfile.py", ".github/**", "Makefile", "package.json", "jest.config.*", "vitest.config.*"]
+checks:                       # when a session's test results are weak (DESIGN_V2 5.1 rule 2, 8.1; refined by the PI)
+  # Changing or removing existing content of a test file makes them weak; adding tests does not.
+  test_globs: ["test_*.py", "*_test.py", "tests/**", "test/**", "*.test.js", "*.test.ts", "*.spec.js", "*.spec.ts"]
+  # Any change to test configuration makes them weak.
+  config_globs: ["conftest.py", "**/conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml", "noxfile.py", ".github/**", "Makefile", "package.json", "jest.config.*", "vitest.config.*"]
 
 graph:
   anchors: true               # the miner may say which files, commands and tools a record is about; packets put those first

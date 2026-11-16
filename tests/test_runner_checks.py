@@ -15,7 +15,7 @@ TEST = "import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n"
 
 def project(tmp_path: Path, **files: str) -> Path:
     root = tmp_path / "proj"
-    root.mkdir(exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
     for name, text in files.items():
         path = root / name.replace("__", "/")
         path.parent.mkdir(parents=True, exist_ok=True)

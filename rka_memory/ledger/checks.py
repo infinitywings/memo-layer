@@ -7,15 +7,18 @@ label reads them (DESIGN_V2 4.1, 8).
   evidence; a failing one withdraws the record (its cited basis is gone).
   The paths come from the model, so a path that is not a relative path
   inside the project is never read; its check is logged as failed.
-- Modification: the hashes of the files matching `checks.globs`, taken at
-  session start and compared at session end. A session that changed any
-  makes its own test and exit results weak.
+- Modification: the test files and test configuration, taken at session
+  start and compared at session end. A session that changed existing test
+  content, or any test configuration, makes its own test and exit results
+  weak; one that only added tests does not (rule 2 as the PI refined it).
 """
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import os
+import re
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -79,30 +82,71 @@ def citation_events(records: Iterable[RecordState], state: State, session_id: st
     return out
 
 
-def snapshot(root: Path, cfg: Config) -> dict[str, str]:
-    """Content hashes of the project files matching `checks.globs`."""
-    out: dict[str, str] = {}
+# An added line that changes how existing tests run without touching them.
+HOOK = re.compile(r"autouse|^\s*def\s+pytest_|^\s*pytest_plugins\b")
+
+
+def snapshot(root: Path, cfg: Config) -> dict[str, dict]:
+    """The project files matching the check globs: for test configuration a
+    content hash, for a test file also its lines, so the end of the session
+    can tell an added test from a changed one."""
+    out: dict[str, dict] = {}
     if not root.is_dir():
         return out
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in filenames:
             path = Path(dirpath) / name
-            if not _matches(str(path), cfg.check_globs):
+            config = _matches(str(path), cfg.check_config_globs)
+            if not config and not _matches(str(path), cfg.check_test_globs):
                 continue
             try:
-                out[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+                data = path.read_bytes()
             except OSError:
                 continue
+            entry: dict = {"kind": "config" if config else "test", "hash": hashlib.sha256(data).hexdigest()}
+            if not config and len(data) <= MAX_BYTES:
+                entry["lines"] = data.decode("utf-8", errors="replace").splitlines()
+            out[str(path)] = entry
     return out
 
 
-def modification_event(before: dict[str, str], after: dict[str, str], session_id: str, state: State) -> Event:
-    changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+def changes(before: dict[str, dict], after: dict[str, dict]) -> tuple[list[str], list[str]]:
+    """(changed, added) between two snapshots. Changed: test configuration
+    created, edited or removed; a test file removed, or with an existing line
+    replaced or deleted, or with an added autouse fixture or pytest hook.
+    Added: a new test file, or new lines in one that leave every existing
+    line in place. Only a change can make a failing check pass."""
+    changed, added = [], []
+    for path in sorted(set(before) | set(after)):
+        old, new = before.get(path), after.get(path)
+        if old is not None and new is not None and old["hash"] == new["hash"]:
+            continue
+        kind = (new or old)["kind"]
+        if kind == "config" or new is None or "lines" not in new:
+            changed.append(path)
+            continue
+        if old is None:
+            inserted = new["lines"]
+        elif "lines" not in old:
+            changed.append(path)
+            continue
+        else:
+            ops = difflib.SequenceMatcher(None, old["lines"], new["lines"], autojunk=False).get_opcodes()
+            if any(tag in ("replace", "delete") for tag, *_ in ops):
+                changed.append(path)
+                continue
+            inserted = [line for tag, _, _, j1, j2 in ops if tag == "insert" for line in new["lines"][j1:j2]]
+        (changed if any(HOOK.search(line) for line in inserted) else added).append(path)
+    return changed, added
+
+
+def modification_event(before: dict[str, dict], after: dict[str, dict], session_id: str, state: State) -> Event:
+    changed, added = changes(before, after)
     return Event.new(
         Kind.CHECK,
         Actor.RUNNER,
         session_id,
-        {"check": "modification", "passed": not changed, "paths": changed},
+        {"check": "modification", "passed": not changed, "paths": changed, "added": added},
         state_hash=state.hash(),
     )

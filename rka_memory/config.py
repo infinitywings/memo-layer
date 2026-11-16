@@ -70,12 +70,20 @@ class Config:
     skills_dir: Path
     skills_export_files: bool
     trials: TrialConfig = field(default_factory=TrialConfig)
-    # Paths whose change in a session makes its test results weak (8.1).
-    check_globs: tuple[str, ...] = ()
+    # Test files: changing or removing existing content in one makes a
+    # session's test results weak; adding tests does not (8.1, rule 2).
+    check_test_globs: tuple[str, ...] = ()
+    # Test configuration: any change makes a session's test results weak.
+    check_config_globs: tuple[str, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
         return self.weights.get(kind, 0.0)
+
+    @property
+    def check_globs(self) -> tuple[str, ...]:
+        """Every path whose change the modification check looks at."""
+        return (*self.check_config_globs, *self.check_test_globs)
 
     @property
     def open_scope_fields(self) -> frozenset[str]:
@@ -175,6 +183,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
             m=int(raw.get("trials", {}).get("m", TrialConfig.m)),
             delta=_number(raw.get("trials", {}).get("delta", TrialConfig.delta)),
         ),
-        check_globs=tuple(str(g) for g in raw.get("checks", {}).get("globs") or ()),
+        check_test_globs=tuple(str(g) for g in raw.get("checks", {}).get("test_globs") or ()),
+        check_config_globs=tuple(str(g) for g in raw.get("checks", {}).get("config_globs") or ()),
         raw=raw,
     )
