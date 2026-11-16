@@ -33,11 +33,11 @@ class GateConfig:
 class TrialConfig:
     """Randomized trials for prescriptive records (DESIGN_V2 5.3), registered
     before any run: the chance a candidate is delivered, the sessions each arm
-    needs, and the margin the treated arm must win by."""
+    needs, and the level of the one-sided Fisher test that decides it."""
 
     q: float = 0.5
     m: int = 3
-    delta: float = 1 / 3
+    alpha: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -60,6 +60,17 @@ class IsolationConfig:
     framework: str = "auto"
     workers: int = 4
     budget_seconds: float = 20.0
+
+
+@dataclass(frozen=True)
+class OutcomeConfig:
+    """The user's own check of a session's work (DESIGN_V2 5.3): a command
+    the runner runs at session end in a copy of the project, through the
+    isolation re-run's confinement, within `budget_seconds`. `{python}` in it
+    stands for the isolation interpreter. None: no outcome check."""
+
+    command: tuple[str, ...] | None = None
+    budget_seconds: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -98,6 +109,7 @@ class Config:
     # Test configuration: any change makes a session's test results weak.
     check_config_globs: tuple[str, ...] = ()
     isolation: IsolationConfig = field(default_factory=IsolationConfig)
+    outcome: OutcomeConfig = field(default_factory=OutcomeConfig)
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
@@ -173,6 +185,16 @@ def _isolation(raw: dict[str, Any]) -> IsolationConfig:
     )
 
 
+def _outcome(raw: dict[str, Any]) -> OutcomeConfig:
+    command = raw.get("command")
+    if command is not None and (not isinstance(command, list) or not command or not all(isinstance(a, str) for a in command)):
+        raise ValueError("checks.outcome.command must be a non-empty list of strings")
+    return OutcomeConfig(
+        command=tuple(command) if command else None,
+        budget_seconds=_number(raw.get("budget_seconds", OutcomeConfig.budget_seconds)),
+    )
+
+
 def from_dict(raw: dict[str, Any]) -> Config:
     gate_raw = raw.get("gate", {})
     scope_fields = tuple(raw["scope"].get("fields", SCOPE_FIELDS))
@@ -220,10 +242,11 @@ def from_dict(raw: dict[str, Any]) -> Config:
         trials=TrialConfig(
             q=float(raw.get("trials", {}).get("q", TrialConfig.q)),
             m=int(raw.get("trials", {}).get("m", TrialConfig.m)),
-            delta=_number(raw.get("trials", {}).get("delta", TrialConfig.delta)),
+            alpha=_number(raw.get("trials", {}).get("alpha", TrialConfig.alpha)),
         ),
         check_test_globs=tuple(str(g) for g in raw.get("checks", {}).get("test_globs") or ()),
         check_config_globs=tuple(str(g) for g in raw.get("checks", {}).get("config_globs") or ()),
         isolation=_isolation(raw.get("checks", {}).get("isolation") or {}),
+        outcome=_outcome(raw.get("checks", {}).get("outcome") or {}),
         raw=raw,
     )

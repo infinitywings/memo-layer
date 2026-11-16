@@ -195,10 +195,35 @@ def rules_reply(prompt: str, script: dict[str, Any]) -> tuple[dict[str, Any], li
     return {"rules": rules, "withdrawn": withdrawn}, problems
 
 
+def request_text(body: dict[str, Any]) -> str:
+    """Every message's text, as the model reads it."""
+    parts = []
+    for m in body.get("messages") or ():
+        content = m.get("content")
+        if isinstance(content, list):
+            parts.extend(str(p.get("text", "")) for p in content if isinstance(p, dict))
+        elif content:
+            parts.append(str(content))
+    return "\n".join(parts)
+
+
+def expand(steps: list[dict[str, Any]], body: dict[str, Any]) -> list[dict[str, Any]]:
+    """A `told` step becomes its `then` steps when the request holds its
+    text (the packet delivered a record, say), else its `else` steps."""
+    told = normalize(request_text(body))
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        if "told" in step:
+            out.extend(step["then"] if normalize(step["told"]) in told else step["else"])
+        else:
+            out.append(step)
+    return out
+
+
 def agent_reply(body: dict[str, Any], script: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """The next scripted tool call, or the final text once every step has a result."""
     done = sum(1 for m in body.get("messages") or () if m.get("role") == "tool")
-    steps = script.get("agent") or []
+    steps = expand(script.get("agent") or [], body)
     if done >= len(steps):
         return {"content": script.get("say") or "Done."}, []
     step = steps[done]

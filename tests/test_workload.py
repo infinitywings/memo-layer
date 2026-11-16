@@ -818,10 +818,10 @@ def test_a_told_step_parses_into_its_two_branches(tmp_path):
 
 
 def test_fresh_project_is_a_stream_level_switch(tmp_path):
-    assert load(write_stream(tmp_path, LIVE.replace("model: live\n", "model: live\nfresh_project: true\n"))).fresh_project
-    assert not load(write_stream(tmp_path, LIVE)).fresh_project
+    assert load(write_stream(tmp_path / "a", LIVE.replace("model: live\n", "model: live\nfresh_project: true\n"))).fresh_project
+    assert not load(write_stream(tmp_path / "b", LIVE)).fresh_project
     with pytest.raises(StreamError, match="fresh_project is true or false"):
-        load(write_stream(tmp_path, LIVE.replace("model: live\n", "model: live\nfresh_project: yes please\n")))
+        load(write_stream(tmp_path / "c", LIVE.replace("model: live\n", "model: live\nfresh_project: yes please\n")))
 
 
 def test_unseen_requirement_stream_starts_every_session_fresh_and_checks_registration():

@@ -3,28 +3,29 @@
 A prescriptive record at L1 whose own counted support meets the threshold
 that would validate a fact is a trial candidate. In each gated session where
 it applies, the runner logs a coin before building the packet: with chance
-`q` the candidate is delivered (treated), otherwise withheld. The trial ends
-when both arms hold `m` ended sessions. The record goes to L2 if the treated
-arm's outcome share beats the withheld arm's by at least `delta`, and closes
-at L1 otherwise; a closed trial never reopens. The outcome of a session is,
-for a procedure or a decision, whether its final check passed, and for a
-preference or a constraint, whether the user left the session uncorrected
-(no undo or edit of what it wrote, no repeated request). The PI registered
-q = 0.5, m = 3 and delta = 1/3 before any run.
+`q` the candidate is delivered (treated), otherwise withheld. The trial is
+decided once, when both arms first hold `m` ended sessions: the record goes
+to L2 if a one-sided Fisher exact test finds the treated arm's share of good
+outcomes higher than the withheld arm's at level `alpha`, and closes at L1
+otherwise; a closed trial never reopens. A session's outcome, for every
+prescriptive kind, is good when the user left it uncorrected (no undo or
+edit of what it wrote, no repeated request) and the user's outcome check,
+if one ran, passed. The PI registered q = 0.5 and m = 3 before any run, and
+alpha = 0.05 in place of the margin delta = 1/3 after the trial-ceiling
+study.
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from math import comb
 
 from rka_memory.config import Config
 from rka_memory.domain import Kind, RecordKind
-from rka_memory.skills.gate import final_outcome, outcome_ok
 from rka_memory.world import RecordState, Session, World
 
 PRESCRIPTIVE = frozenset({RecordKind.PROCEDURE, RecordKind.CONSTRAINT, RecordKind.PREFERENCE, RecordKind.DECISION})
-BY_OUTCOME = frozenset({RecordKind.PROCEDURE, RecordKind.DECISION})
 CORRECTIONS = frozenset({Kind.USER_UNDO, Kind.USER_EDIT})
 
 
@@ -35,19 +36,29 @@ def coin(session_id: str, record_id: str) -> float:
     return int(digest[:12], 16) / 16**12
 
 
+def fisher(treated: tuple[int, int], withheld: tuple[int, int]) -> float:
+    """One-sided Fisher exact p: the chance, with the arms' outcomes
+    exchangeable, that the treated arm holds at least as many good outcomes
+    as it does. `treated` and `withheld` are (sessions, good outcomes)."""
+    (tn, tk), (wn, wk) = treated, withheld
+    good = tk + wk
+    return sum(comb(good, x) * comb(tn + wn - good, tn - x) for x in range(tk, min(good, tn) + 1)) / comb(tn + wn, tn)
+
+
 @dataclass(frozen=True)
 class Trial:
     status: str  # "open", "positive" or "closed"
     treated: tuple[int, int]  # sessions, of which with a good outcome
     withheld: tuple[int, int]
     completed_at: int | None = None  # ledger position of the session end that completed it
+    p: float | None = None
 
     def reason(self) -> str:
         (tn, tk), (wn, wk) = self.treated, self.withheld
         if self.status == "open":
             return f"in trial: treated {tn}, withheld {wn} sessions"
         verdict = "positive interventional contrast" if self.status == "positive" else "trial closed without a positive contrast"
-        return f"{verdict}: treated {tk}/{tn}, withheld {wk}/{wn}"
+        return f"{verdict}: treated {tk}/{tn}, withheld {wk}/{wn}, p = {self.p:.3f}"
 
 
 def _corrected(world: World, session: Session) -> bool:
@@ -58,11 +69,18 @@ def _corrected(world: World, session: Session) -> bool:
     )
 
 
-def outcome(rec: RecordState, world: World, session: Session) -> bool:
-    if rec.spec.kind in BY_OUTCOME:
-        fin = final_outcome(session)
-        return fin is not None and outcome_ok(fin)
-    return not _corrected(world, session)
+def _outcome_check(session: Session) -> bool | str | None:
+    """The verdict of the session's last outcome check: True or False, None
+    when it ran none, and "due" when one was due and never logged a result."""
+    checks = [e for e in session.events if e.kind is Kind.CHECK and e.payload.get("check") == "outcome"]
+    if not checks:
+        return None
+    last = checks[-1].payload
+    return "due" if "passed" not in last else bool(last["passed"])
+
+
+def outcome(world: World, session: Session) -> bool:
+    return _outcome_check(session) is not False and not _corrected(world, session)
 
 
 def evaluate(rec: RecordState, world: World, cfg: Config, suspect: frozenset[str] = frozenset()) -> Trial:
@@ -70,11 +88,11 @@ def evaluate(rec: RecordState, world: World, cfg: Config, suspect: frozenset[str
 
     A `suspect` session still counts in its arm, but its outcome is set
     against promotion: a failure if treated, a success if withheld. These
-    are sessions that changed their own tests, whose checks then prove
-    nothing, and sessions that had a withdrawn record in context. Dropping
-    them instead would let what happens after the coin (an agent editing the
-    tests of a treated session that was failing) choose which sessions
-    count; scored this way, no such session can help a record pass."""
+    are sessions that changed their own tests, sessions that had a withdrawn
+    record in context, and sessions whose outcome check was due and never
+    logged a result. Dropping them instead would let what happens after the
+    coin choose which sessions count; scored this way, no such session can
+    help a record pass."""
     arms: dict[str, str] = {}
     for ev in world.trials:
         if ev.payload.get("record_id") == rec.id and ev.session_id not in arms:
@@ -91,11 +109,12 @@ def evaluate(rec: RecordState, world: World, cfg: Config, suspect: frozenset[str
         if arm is None:
             continue
         arm[0] += 1
-        arm[1] += (arms[sess.id] == "withheld") if sess.id in suspect else outcome(rec, world, sess)
+        against = sess.id in suspect or _outcome_check(sess) == "due"
+        arm[1] += (arms[sess.id] == "withheld") if against else outcome(world, sess)
         if counts["treated"][0] >= m and counts["withheld"][0] >= m:
-            (tn, tk), (wn, wk) = counts["treated"], counts["withheld"]
-            positive = tk / tn - wk / wn >= cfg.trials.delta - 1e-9
-            return Trial("positive" if positive else "closed", (tn, tk), (wn, wk), pos)
+            treated, withheld = tuple(counts["treated"]), tuple(counts["withheld"])
+            p = fisher(treated, withheld)
+            return Trial("positive" if p <= cfg.trials.alpha + 1e-12 else "closed", treated, withheld, pos, p)
     return Trial("open", tuple(counts["treated"]), tuple(counts["withheld"]))
 
 

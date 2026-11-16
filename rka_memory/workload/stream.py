@@ -79,6 +79,10 @@ class Stream:
     sessions: tuple[Session, ...]
     source: Path
     per_arm: bool = False
+    # Every session starts from a fresh copy of the fixture, with a new
+    # repository: no session sees another's work. The runner's own
+    # housekeeping (workspace_reset), so it never reads as the user's undo.
+    fresh_project: bool = False
 
 
 def parse_offset(text: str) -> timedelta:
@@ -184,8 +188,16 @@ def _in_project(path: str) -> str:
 
 
 def _agent_step(raw: Any, where: str) -> dict[str, Any]:
-    """One scripted tool call, in the shape the mock model sends."""
-    key, value = _single(raw, where, {"bash", "write", "edit", "skill", "call"})
+    """One scripted tool call, in the shape the mock model sends; or `told`,
+    whose `then` steps run when the request holds its `text` (say, the
+    packet delivered a record) and whose `else` steps run otherwise."""
+    key, value = _single(raw, where, {"bash", "write", "edit", "skill", "call", "told"})
+    if key == "told":
+        d = _keys(value, where, {"text", "then", "else"})
+        branch = {b: [_agent_step(x, f"{where}.{b}[{i}]") for i, x in enumerate(_list(d[b], where))] for b in ("then", "else")}
+        if any("told" in x for b in branch.values() for x in b):
+            raise StreamError(f"{where}: a told step's branches hold tool calls, not another told step")
+        return {"told": _str(d["text"], where), **branch}
     if key == "bash":
         args = {"command": value} if isinstance(value, str) else dict(_keys(value, where, {"command"}, {"sandbox_permissions", "justification"}))
         return {"tool": "bash", "args": {"description": "run a command", **args}}
@@ -362,7 +374,7 @@ def find_fixture(source: Path, name: str) -> Path:
 
 def parse(doc: Any, source: Path) -> Stream:
     where = str(source)
-    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config", "model", "per_arm"})
+    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config", "model", "per_arm", "fresh_project"})
     model = d.get("model", "scripted")
     if model not in MODELS:
         raise StreamError(f"{where}: model must be one of {list(MODELS)}, got {model!r}")
@@ -395,6 +407,9 @@ def parse(doc: Any, source: Path) -> Stream:
         raise StreamError(f"{where}: per_arm is true or false")
     if per_arm and (len(arms) < 2 or len(set(arms)) != len(arms)):
         raise StreamError(f"{where}: per_arm runs one stream per arm, so config.packet.arms needs two or more distinct arms")
+    fresh_project = d.get("fresh_project", False)
+    if not isinstance(fresh_project, bool):
+        raise StreamError(f"{where}: fresh_project is true or false")
     return Stream(
         name=_str(d["name"], where),
         description=str(d.get("description") or ""),
@@ -405,6 +420,7 @@ def parse(doc: Any, source: Path) -> Stream:
         sessions=sessions,
         source=source,
         per_arm=per_arm,
+        fresh_project=fresh_project,
     )
 
 

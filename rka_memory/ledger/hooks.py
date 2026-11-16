@@ -23,7 +23,7 @@ from typing import Any, Callable, Mapping
 
 from rka_memory import commands
 from rka_memory.commands import CommandError
-from rka_memory.domain import Event, Kind, State, clock_now, derived_id, parse_ts
+from rka_memory.domain import Actor, Event, Kind, State, clock_now, derived_id, parse_ts
 from rka_memory.ledger import checks as runner_checks
 from rka_memory.ledger import signals
 from rka_memory.ledger import state as state_mod
@@ -208,6 +208,18 @@ def _isolation_check(memory: Memory, session_id: str, end: Event) -> Event:
     )
 
 
+def _outcome_check(memory: Memory, session_id: str) -> list[Event]:
+    """The user's outcome check (DESIGN_V2 5.3), after the agent's last
+    action and before the session ends, so the miner sees what it printed.
+    Its due mark goes into the log first: a hook killed during the check
+    leaves the session owing a result, which counts against promotion."""
+    state = memory.session_state(session_id)
+    if not memory.cfg.outcome.command or not state.project:
+        return []
+    memory.append(Event.new(Kind.CHECK, Actor.RUNNER, session_id, {"check": "outcome", "status": "due"}, state_hash=state.hash()))
+    return runner_checks.outcome_events(Path(state.project), memory.cfg, session_id, state)
+
+
 def _rkm_command(memory: Memory, session_id: str, prompt: str) -> Output:
     try:
         return _block(commands.run(memory, prompt, session_id))
@@ -376,7 +388,8 @@ def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
     # killed during the re-run leaves the session marked as owing one.
     memory.append(*_late_writes(memory, sid), *([end] if end else []))
     rerun = [_isolation_check(memory, sid, end)] if end and end.payload.get("isolation") == "due" else []
-    memory.append(*rerun, adapter.session_end_event(payload, usage))
+    memory.append(*rerun)
+    memory.append(*_outcome_check(memory, sid), adapter.session_end_event(payload, usage))
     shutil.rmtree(_pending(memory, sid), ignore_errors=True)
     sync = memory.cfg.sync_on_session_end and bool(memory.cfg.core_project_id)
     if memory.cfg.hooks_background == "spawn":

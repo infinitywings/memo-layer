@@ -148,6 +148,22 @@ def _tokens(text: str) -> frozenset[str]:
     return frozenset(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+# Words a restatement may add or drop without asking for something else.
+FILLER = frozenset(
+    "a an the and or but so then to of in on at for with by from as is are was were be been it its this that "
+    "these those i me my we us our you your please kindly thanks thank again still now just also once more "
+    "can could would will should do does did ok okay s t".split()
+)
+
+
+def substituted(a: str, b: str) -> bool:
+    """Each prompt has a content word the other lacks: the user changed what
+    they ask for, as two tasks from one template naming different functions
+    do, however similar the rest."""
+    ta, tb = _tokens(a), _tokens(b)
+    return bool((ta - tb) - FILLER) and bool((tb - ta) - FILLER)
+
+
 def similarity(a: str, b: str) -> float:
     """Jaccard similarity of normalized token sets.
 
@@ -161,7 +177,8 @@ def similarity(a: str, b: str) -> float:
 
 
 def detect_repeat(world: World, prompt_event: Event, cfg: Config) -> Event | None:
-    """A USER_REPEAT when the prompt restates one from an earlier session."""
+    """A USER_REPEAT when the prompt restates one from an earlier session:
+    similar enough, and asking for the same thing (`substituted`)."""
     text = str(prompt_event.payload.get("text") or "")
     if not _tokens(text):
         return None
@@ -174,8 +191,9 @@ def detect_repeat(world: World, prompt_event: Event, cfg: Config) -> Event | Non
     best: tuple[float, Event] | None = None
     for msgs in earlier[-cfg.repeat_lookback_sessions :]:
         for ev in msgs:
-            score = similarity(text, str(ev.payload.get("text") or ""))
-            if score >= cfg.repeat_threshold and (best is None or score >= best[0]):
+            other = str(ev.payload.get("text") or "")
+            score = similarity(text, other)
+            if score >= cfg.repeat_threshold and not substituted(text, other) and (best is None or score >= best[0]):
                 best = (score, ev)
     if best is None:
         return None

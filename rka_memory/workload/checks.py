@@ -10,6 +10,7 @@ it, so a typo in a scenario fails when the file loads, not after a long run.
 from __future__ import annotations
 
 import json
+import math
 import operator
 import subprocess
 from dataclasses import dataclass
@@ -146,16 +147,24 @@ def _impact(obs: Observed, want: dict[str, Any]) -> Outcome:
 
 
 # The trial parameters the PI registered (DESIGN_V2 5.3), restated here so
-# the check does not read them from the code it checks.
-TRIAL_M, TRIAL_DELTA = 3, 1 / 3
+# the check does not read the kernel's config: q = 0.5 needs no restating.
+TRIAL_M = 3
+TRIAL_ALPHA = 0.05
+
+
+def _fisher(tn: int, tk: int, wn: int, wk: int) -> float:
+    good = tk + wk
+    return sum(math.comb(good, x) * math.comb(tn + wn - good, tn - x) for x in range(tk, min(good, tn) + 1)) / math.comb(tn + wn, tn)
 
 
 def _trial_status(world: World, arms: dict[str, str], before: int | None) -> str:
     """A procedure's trial recomputed from the log: sessions with a coin, in
-    the order they ended (before position `before` if given), each counted
-    as passing if its last test or exit result passed. A session whose
-    modification check found its tests changed counts against promotion: a
-    failure if treated, a pass if withheld."""
+    the order they ended (before position `before` if given). A session is
+    good when its last outcome check, if any, passed and the user corrected
+    nothing it did. A session whose modification check found its tests
+    changed, or whose outcome check never logged a result, counts against
+    promotion: a failure if treated, a pass if withheld. Decided once, when
+    both arms hold three sessions, by a one-sided Fisher test at 0.05."""
     n = {"treated": [0, 0], "withheld": [0, 0]}
     changed = {e.session_id for e in world.checks if e.payload.get("check") == "modification" and not e.payload.get("passed")}
     ended = sorted(
@@ -164,26 +173,31 @@ def _trial_status(world: World, arms: dict[str, str], before: int | None) -> str
         if s is not None and s.ended is not None and (before is None or world.position[s.ended.id] < before)
     )
     for _, s in ended:
-        outs = [e for e in s.events if e.kind in (Kind.TEST_RESULT, Kind.EXIT_CODE)]
-        last = outs[-1] if outs else None
-        ok = last is not None and (bool(last.payload.get("passed")) if last.kind is Kind.TEST_RESULT else last.payload.get("code") == 0)
+        verdicts = [e.payload for e in s.events if e.kind is Kind.CHECK and e.payload.get("check") == "outcome"]
+        unfinished = bool(verdicts) and "passed" not in verdicts[-1]
+        corrected = any(e.kind is Kind.USER_REPEAT for e in s.events) or any(
+            e.kind in (Kind.USER_UNDO, Kind.USER_EDIT) and e.payload.get("write_session_id") == s.id for e in world.events.values()
+        )
+        ok = not corrected and (not verdicts or verdicts[-1].get("passed") is True)
         arm = n.get(arms[s.id])
         if arm is None:
             continue
         arm[0] += 1
-        arm[1] += (arms[s.id] == "withheld") if s.id in changed else ok
+        arm[1] += (arms[s.id] == "withheld") if s.id in changed or unfinished else ok
         if n["treated"][0] >= TRIAL_M and n["withheld"][0] >= TRIAL_M:
-            gap = n["treated"][1] / n["treated"][0] - n["withheld"][1] / n["withheld"][0]
-            return "positive" if gap >= TRIAL_DELTA - 1e-9 else "closed"
+            p = _fisher(n["treated"][0], n["treated"][1], n["withheld"][0], n["withheld"][1])
+            return "positive" if p <= TRIAL_ALPHA + 1e-12 else "closed"
     return "open"
 
 
 def _trial(obs: Observed, content: str) -> Outcome:
-    """A procedure in a randomized trial, checked against the log: one coin
-    in this session if the trial was open when it began, the procedure
-    delivered exactly when that coin treated it, and its rung what the
-    logged coins and outcomes say (L2 or above only after a positive
-    contrast). Only scenarios whose sessions run in the gated arm use it."""
+    """A procedure in a randomized trial, checked against the log: while the
+    trial is open when a session begins, one coin in it and the procedure
+    delivered exactly when that coin treated it; once it is decided, no coin,
+    and the procedure delivered only if the trial was positive; and its rung
+    what the logged coins and outcomes say (L2 or above only after a
+    positive trial). Only scenarios whose sessions run in the gated arm use
+    it."""
     world, sid = obs.world, obs.session_id
     rec = find_record(world, content)
     mine = [e for e in world.trials if e.payload.get("record_id") == rec.id]
@@ -193,19 +207,41 @@ def _trial(obs: Observed, content: str) -> Outcome:
     sess = world.sessions.get(sid or "")
     start = world.position[sess.started.id] if sess is not None and sess.started is not None else None
     here = [e for e in mine if e.session_id == sid]
-    problems = []
-    if _trial_status(world, arms, start) == "open" and len(here) != 1:
-        problems.append(f"{len(here)} coins in a session that began with the trial open")
-    treated = bool(here) and here[0].payload.get("arm") == "treated"
     delivered = any(rec.id in d.record_ids for d in obs.deliveries())
-    if delivered != treated:
-        problems.append(f"delivered {delivered}, coin {here[0].payload.get('arm') if here else 'none'}")
+    problems = []
+    began = _trial_status(world, arms, start)
+    if began == "open":
+        if len(here) != 1:
+            problems.append(f"{len(here)} coins in a session that began with the trial open")
+        treated = bool(here) and here[0].payload.get("arm") == "treated"
+        if delivered != treated:
+            problems.append(f"delivered {delivered}, coin {here[0].payload.get('arm') if here else 'none'}")
+    else:
+        if here:
+            problems.append(f"{len(here)} coins in a session that began with the trial {began}")
+        if delivered != (began == "positive"):
+            problems.append(f"delivered {delivered} after a {began} trial")
     status = _trial_status(world, arms, None)
     rung = rec.rung.value if rec.rung else None
     if (status == "positive") != (rung in ("L2", "L3")):
         problems.append(f"trial {status} but rung {rung}")
     counts = {a: sum(1 for x in arms.values() if x == a) for a in ("treated", "withheld")}
     return not problems, problems or f"trial {status}; coins {counts}; rung {rung}"
+
+
+def _outcome_check(obs: Observed, want: bool) -> Outcome:
+    """The session's user outcome check: a due mark, then a verdict, both
+    logged before the session ended, the verdict passed as `want`."""
+    world = obs.world
+    sess = world.sessions.get(obs.session_id or "")
+    if sess is None or sess.ended is None:
+        return False, "no ended session"
+    end = world.position[sess.ended.id]
+    marks = [e.payload for e in sess.events if e.kind is Kind.CHECK and e.payload.get("check") == "outcome" and world.position[e.id] < end]
+    if [m.get("status") for m in marks] != ["due", None]:
+        return False, f"outcome checks before the session ended: {marks}"
+    verdict = marks[-1]
+    return verdict.get("passed") is want, f"passed {verdict.get('passed')}" + (f", {verdict['error']}" if verdict.get("error") else "")
 
 
 def _skill_offered(obs: Observed, rec: RecordState, want: bool) -> Outcome:
@@ -423,6 +459,7 @@ CHECKS: dict[str, Check] = {
     "model_saw": Check(_is_str, _model_saw, False),
     "impact": Check(_is_impact, _impact, False),
     "trial": Check(_is_str, _trial, False),
+    "outcome_check": Check(_is_bool, _outcome_check, False),
     "command_passes": Check(_is_str, _command_passes, False),
     "ran": Check(_is_str, _ran, False),
     "wrote": Check(_is_str, _wrote, False),

@@ -502,6 +502,10 @@ class StreamRun:
     def _session(self, s: Session, mock: MockModel | LiveModel) -> None:
         p = self.paths
         self._set_clock(self.stream.start + s.at)
+        if self.stream.fresh_project:
+            shutil.rmtree(p.project)
+            files.create_project(self.stream.fixture, p.project)
+            record_reset((p.project,), self._env())
         for rel in s.reset:
             files.apply(Clean(rel), p.project, self.before, self.confine)
         if s.reset:

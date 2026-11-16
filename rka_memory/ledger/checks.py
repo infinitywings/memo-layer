@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from typing import Iterable
@@ -434,8 +435,8 @@ class _Runner:
             "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(tmp), "HOME": str(tmp),
         }
 
-    def run(self, cmd: list[str], cwd: Path) -> tuple[int | None, str]:
-        """(exit code, stdout); None when the budget ran out."""
+    def run(self, cmd: list[str], cwd: Path, *, stderr: bool = False) -> tuple[int | None, str]:
+        """(exit code, stdout, with stderr if asked); None when the budget ran out."""
         left = self.deadline - time.monotonic()
         if left <= 0:
             return None, ""
@@ -443,7 +444,7 @@ class _Runner:
             try:
                 proc = subprocess.Popen(
                     [*self.prefix, *cmd], cwd=cwd, env=self.env, stdin=subprocess.DEVNULL,
-                    stdout=out, stderr=subprocess.DEVNULL, start_new_session=True,
+                    stdout=out, stderr=subprocess.STDOUT if stderr else subprocess.DEVNULL, start_new_session=True,
                 )
             except OSError as err:
                 return 1, str(err)
@@ -579,3 +580,51 @@ def isolation_event(
         if error:
             payload["error"] = error
     return Event.new(Kind.CHECK, Actor.RUNNER, session_id, payload, state_hash=state.hash(), id=event_id)
+
+
+def outcome_events(root: Path, cfg: Config, session_id: str, state: State, event_id: str | None = None) -> list[Event]:
+    """The user's outcome check of the session's work (DESIGN_V2 5.3): their
+    command (cfg.outcome, `{python}` standing for the isolation interpreter)
+    runs at session end in a copy of the project, through the isolation
+    re-run's confinement and in a fresh directory handed to its user, within
+    the outcome budget. It passes when it exits 0. The verdict is a runner
+    check; what the command printed is an observation of the environment the
+    miner may cite. Without an interpreter and a confinement command nothing
+    runs and the check fails; any error of the runner fails it too."""
+    iso, out = cfg.isolation, cfg.outcome
+    payload: dict = {"check": "outcome", "passed": False}
+    observed: dict | None = None
+    if not (iso.python and iso.confine and out.command):
+        payload["error"] = "not configured"
+    else:
+        error = None
+        if iso.dir:
+            Path(iso.dir).mkdir(mode=0o711, parents=True, exist_ok=True)
+        run = Path(tempfile.mkdtemp(prefix="rkm-outcome-", dir=iso.dir))
+        try:
+            work = run / "project"
+            (run / "tmp").mkdir()
+            if iso.user:
+                _hand_to(run, iso.user)
+            runner = _Runner(replace(iso, budget_seconds=out.budget_seconds), run)
+            code, _ = runner.run([iso.python, "-I", "-c", COPY_PROJECT, str(root), str(work), json.dumps(sorted(SKIP_DIRS))], run)
+            if code != 0:
+                error = "ran out of time copying the project" if code is None else f"copying the project exited with {code}"
+            else:
+                code, printed = runner.run([a.replace("{python}", iso.python) for a in out.command], work, stderr=True)
+                observed = {"tool": "outcome check", "exit_code": code, "output": printed[-cfg.payload_max_chars :]}
+                if code is None:
+                    error = f"ran out of time ({out.budget_seconds:g}s)"
+                elif code != 0:
+                    payload["exit_code"] = code
+        except Exception as err:  # noqa: BLE001 - any failure of the check fails it
+            error = f"outcome check failed to run: {type(err).__name__}: {err}"
+        finally:
+            shutil.rmtree(run, ignore_errors=True)
+        payload["passed"] = error is None and observed is not None and observed["exit_code"] == 0
+        if error:
+            payload["error"] = error
+    verdict = Event.new(Kind.CHECK, Actor.RUNNER, session_id, payload, state_hash=state.hash(), id=event_id)
+    if observed is None:
+        return [verdict]
+    return [verdict, Event.new(Kind.TOOL_RESULT, Actor.ENV, session_id, observed, state_hash=state.hash())]
