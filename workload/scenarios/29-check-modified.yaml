@@ -1,11 +1,13 @@
 name: check-modified
 description: >-
-  A test result is strong only if the session did not create or modify the
-  tests or their configuration (DESIGN_V2 5.1 rule 2, 8.1). In the first two
-  sessions the agent edits test_calc.py before the suite passes, so those
-  results weigh as weak evidence and the fact stays at L1 although it has
-  passing tests in two sessions. Two sessions that leave the tests alone
-  give strong evidence and validate it.
+  A test result is weak if its session changed existing test content or
+  test configuration (DESIGN_V2 5.1 rule 2, as the PI refined it: RKA
+  jrn_01M7GZQRQSGV7C8A2ACZVZ8C00). Only a change to an existing check can
+  make a failing check pass, so adding tests is not one. In the first
+  session the agent rewrites an existing assertion of test_calc.py before
+  the suite passes: weak evidence. In the next two it adds new tests and
+  leaves the existing ones alone: strong evidence, which validates the fact
+  in the third session.
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 sessions:
@@ -13,7 +15,7 @@ sessions:
     prompt: Add a multiply function to calc.py
     agent:
       - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
-      - edit: {path: test_calc.py, old: "def test_add", new: "def test_multiply():\n    assert calc.multiply(2, 3) == 6\n\n\ndef test_add"}
+      - edit: {path: test_calc.py, old: "assert calc.add(2, 3) == 5", new: "assert calc.add(2, 3) == 5.0"}
       - bash: pytest -q
     miner:
       candidates:
@@ -39,16 +41,7 @@ sessions:
     prompt: Add a power function to calc.py
     agent:
       - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
-      - bash: pytest -q
-    miner:
-      candidates: [*mul]
-    expect:
-      - {record: calc.multiply returns the product of its two arguments, rung: L1}
-
-  - at: +3d
-    prompt: Add a negate function to calc.py
-    agent:
-      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - edit: {path: test_calc.py, old: "def test_add", new: "def test_power():\n    assert calc.power(2, 3) == 8\n\n\ndef test_add"}
       - bash: pytest -q
     miner:
       candidates: [*mul]

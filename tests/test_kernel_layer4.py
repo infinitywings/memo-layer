@@ -140,6 +140,25 @@ def test_a_test_result_from_a_session_that_changed_its_tests_is_weak():
     assert rr(lg, "r_a")[0] == "L2"
 
 
+def test_a_session_whose_check_found_only_added_tests_keeps_strong_results():
+    """The check decides when it was run: writing to a test file is an
+    addition unless the check found existing test content changed. Without a
+    check (ledgers from before it existed) a write to a test file counts."""
+    lg = Ledger()
+    lg.start("s1", **UV)
+    lg.propose("s1", "r_a", content="calc.divide raises on zero")
+    lg.write("s1", "/p/app/test_calc.py")
+    lg.check("s1", "modification", passed=True, paths=[])
+    lg.link("r_a", lg.test("s1", True))
+    lg.end("s1")
+    lg.start("s2", **UV)
+    lg.write("s2", "/p/app/test_calc.py")
+    lg.check("s2", "modification", passed=True, paths=[])
+    lg.link("r_a", lg.test("s2", True))
+    lg.end("s2")
+    assert rr(lg, "r_a") == ("L2", "independent grounding in enough distinct sessions")
+
+
 # Runner-owned checks (8.2, 7.2)
 
 
