@@ -99,11 +99,21 @@ test('grep, glob and read cannot start above a protected directory; content and 
     ['grep', { pattern: 'x', path: '/' }],
     ['glob', { pattern: '**/canary.txt', path: join(root, 'run') }],
     ['glob', { pattern: `${root}/**/*.jsonl` }],
+    // a wildcard inside a name: the pattern starts matching at the directory above it
+    ['glob', { pattern: `${root}/ru*/**` }],
+    ['glob', { pattern: '../ru*/ledger/*' }],
+    ['glob', { pattern: '../run/**', path: workspace }],
     ['read', { file_path: join(root, 'run') }],
   ] as const) {
     const decision = await decide(name, args)
     assert.equal(decision.kind, 'deny', `${name} ${JSON.stringify(args)}`)
     assert.match(decision.reason, new RegExp(`holds ${ledger.replaceAll('/', '\\/')}`))
+  }
+  // given no path, grep and glob start in the working directory
+  const above = fakeAgent('s2', root)
+  for (const [name, args] of [['grep', { pattern: 'house rule' }], ['glob', { pattern: '**/*' }]] as const) {
+    const decision = await host.emit('tools/pre-execute', { callId: `c2-${name}`, name, arguments: args, agent: above }, allow)
+    assert.equal(decision.kind, 'deny', `${name} from ${root}`)
   }
   for (const [name, args] of [
     ['grep', { pattern: '/', path: workspace }],

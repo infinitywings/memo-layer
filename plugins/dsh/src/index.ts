@@ -305,15 +305,33 @@ function within(path: string, root: string): boolean {
 }
 
 /**
- * The arguments that say where a tool starts reading: `path` and `file_path`,
- * and for glob its pattern. grep and glob descend from there, so starting
- * above a protected root reaches into it. Other strings, such as a file's new
+ * The directory a glob pattern starts matching from: the pattern before its
+ * first wildcard, cut back to the last separator, so `/opt/rka*` starts at
+ * `/opt` and `**` at `.`. A pattern without a wildcard names its own path.
+ */
+function globBase(pattern: string): string {
+  const wild = pattern.search(/[*?[{]/)
+  if (wild < 0) return pattern
+  const cut = pattern.slice(0, wild).lastIndexOf(sep)
+  return cut < 0 ? '.' : cut === 0 ? sep : pattern.slice(0, cut)
+}
+
+/**
+ * Where a tool starts reading: `path` and `file_path`; for glob also the base
+ * of its pattern, taken from `path`; and for grep and glob given no `path`,
+ * the working directory. grep and glob descend from there, so starting above
+ * a protected root reaches into it. Other strings, such as a file's new
  * content or a grep pattern, open nothing by naming a directory.
  */
 function startsIn(name: string, args: unknown): string[] {
   if (!isRecord(args)) return []
-  const keys = name === 'glob' ? ['path', 'file_path', 'pattern'] : ['path', 'file_path']
-  return keys.flatMap(key => (typeof args[key] === 'string' ? [args[key] as string] : []))
+  const given = ['path', 'file_path'].flatMap(key => (typeof args[key] === 'string' && args[key] !== '' ? [args[key] as string] : []))
+  if (name === 'grep') return given.length > 0 ? given : ['.']
+  if (name === 'glob') {
+    const base = globBase(typeof args.pattern === 'string' ? args.pattern : '')
+    return [...given, isAbsolute(base) ? base : join(given[0] ?? '.', base)]
+  }
+  return given
 }
 
 /**
