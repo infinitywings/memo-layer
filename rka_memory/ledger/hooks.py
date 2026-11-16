@@ -160,8 +160,8 @@ def _snapshot_file(memory: Memory, session_id: str) -> Path:
     return _pending(memory, session_id) / "_checks.json"
 
 
-def _baseline_file(memory: Memory, session_id: str) -> Path:
-    return _pending(memory, session_id) / "_baseline.json"
+def _seen_file(memory: Memory, session_id: str) -> Path:
+    return _pending(memory, session_id) / "_seen.json"
 
 
 def _start_checks(memory: Memory, session_id: str, state: State) -> None:
@@ -172,7 +172,7 @@ def _start_checks(memory: Memory, session_id: str, state: State) -> None:
         return
     snap = runner_checks.snapshot(Path(state.project), memory.cfg)
     _write_json(_snapshot_file(memory, session_id), snap)
-    _write_json(_baseline_file(memory, session_id), snap)
+    _write_json(_seen_file(memory, session_id), snap)
     labels = memory.labels()
     cited = [
         r for r in memory.world().records.values()
@@ -319,34 +319,38 @@ def _snapshot_key(path: str, project: str) -> str | None:
 
 
 def _step_check(memory: Memory, use: adapter.ToolUse, path: str | None, pre: Any) -> Event | None:
-    """Compare the tests and test configuration with how they stood after the
-    previous tool call, so each change is on record as it happens and a revert
-    hides nothing (rule 2). A single-file write is compared from the entry
-    taken just before it; any other tool not known to be read-only (a shell
-    command, a patch, an unknown tool) re-reads the whole project. Not caught:
-    one command that edits a test, runs it and reverts the edit before it
-    returns, and a backgrounded edit that a later write overwrites."""
+    """Compare what the call changed in the tests and test configuration with
+    how they stood at the session's start, so each change is on record as it
+    happens and a revert hides nothing (rule 2). A single-file write is seen
+    from the entry taken just before it, so a change made since the previous
+    call counts too; any other tool not known to be read-only (a shell
+    command, a patch, an unknown tool) re-reads the whole project. Not
+    caught: one command that edits a test, runs it and reverts the edit
+    before it returns, and a backgrounded edit that a later write
+    overwrites."""
     state = memory.session_state(use.session_id)
-    baseline_path = _baseline_file(memory, use.session_id)
-    baseline = _read_json(baseline_path)
-    if not state.project or not isinstance(baseline, dict):
+    start = _read_json(_snapshot_file(memory, use.session_id))
+    seen_path = _seen_file(memory, use.session_id)
+    seen = _read_json(seen_path)
+    if not state.project or not isinstance(start, dict) or not isinstance(seen, dict):
         return None
     key = _snapshot_key(path, state.project) if path else None
     if path and pre is not _NO_ENTRY:
         if key is None:
             return None
-        before = {k: v for k, v in baseline.items() if k != key} | ({key: pre} if pre else {})
+        before = {k: v for k, v in seen.items() if k != key} | ({key: pre} if pre else {})
         post = runner_checks.entry(Path(key), memory.cfg)
         after = {k: v for k, v in before.items() if k != key} | ({key: post} if post else {})
-        on = "write"
+        states, on = [seen, before, after], "write"
     elif use.tool in adapter.READ_ONLY_TOOLS:
         return None
     else:
-        before, after, on = baseline, runner_checks.snapshot(Path(state.project), memory.cfg), "shell"
-    if after != baseline:
-        _write_json(baseline_path, after)
+        after = runner_checks.snapshot(Path(state.project), memory.cfg)
+        states, on = [seen, after], "shell"
+    if after != seen:
+        _write_json(seen_path, after)
     event_id = derived_id("ev", "modification", use.session_id, use.tool_use_id) if use.tool_use_id else None
-    return runner_checks.step_check(before, after, use.session_id, state, on, event_id)
+    return runner_checks.step_check(start, states, use.session_id, state, on, event_id)
 
 
 def _late_writes(memory: Memory, session_id: str) -> list:

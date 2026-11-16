@@ -364,21 +364,31 @@ def changes(before: dict[str, dict], after: dict[str, dict]) -> tuple[list[str],
     return changed, added
 
 
-def step_check(before: dict[str, dict], after: dict[str, dict], session_id: str, state: State, on: str, event_id: str | None = None) -> Event | None:
+def step_check(start: dict[str, dict], seen: list[dict[str, dict]], session_id: str, state: State, on: str, event_id: str | None = None) -> Event | None:
     """A failed modification check for what one tool call changed in the
     tests or test configuration, logged as the call returns, so a change
-    reverted before the session ends is still on record. None when the call
-    only added tests or touched neither. `on` says how the runner saw the
-    call: "write" for a single-file write, "shell" for a whole-project
-    comparison after any other tool that may write."""
-    changed, _ = changes(before, after)
-    if not changed:
+    reverted before the session ends is still on record. `seen` holds the
+    snapshots the runner took, oldest first: how it last saw them, then, for
+    a single-file write, the file just before the write, then how they stand
+    after the call. Each path that moved from one to the next is compared
+    with the session's start, as at session end, so the session may edit a
+    test it added and import what that test uses. None when the call only
+    added tests or touched neither. `on` says how the runner saw the call:
+    "write" for a single-file write, "shell" for a whole-project comparison
+    after any other tool that may write."""
+    paths: list[str] = []
+    for prev, cur in zip(seen, seen[1:]):
+        if cur == prev:
+            continue
+        changed, _ = changes(start, cur)
+        paths += [p for p in changed if cur.get(p) != prev.get(p) and p not in paths]
+    if not paths:
         return None
     return Event.new(
         Kind.CHECK,
         Actor.RUNNER,
         session_id,
-        {"check": "modification", "passed": False, "paths": changed, "on": on},
+        {"check": "modification", "passed": False, "paths": paths, "on": on},
         state_hash=state.hash(),
         id=event_id,
     )
