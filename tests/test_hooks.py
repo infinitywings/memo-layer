@@ -454,9 +454,9 @@ def test_each_write_that_changes_an_existing_test_is_logged_as_a_failed_check(me
     from rka_memory.domain import Kind as K
 
     sid = "mod-1"
-    fire(capsys, "SessionStart", {**base(sid, proj, tmp_path), "source": "startup"})
     test_file = proj / "test_calc.py"
     test_file.write_text("import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n")
+    fire(capsys, "SessionStart", {**base(sid, proj, tmp_path), "source": "startup"})
 
     def write(text, use_id):
         call = {**base(sid, proj, tmp_path), "tool_name": "Write", "tool_use_id": use_id, "tool_input": {"file_path": str(test_file), "content": text}}
@@ -622,3 +622,74 @@ def test_a_rerun_that_never_logs_its_result_counts_as_a_change(memory, proj, tmp
     checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == "iso-4"]
     assert [(c.get("on"), c["passed"], c.get("isolation")) for c in checks] == [(None, True, "due")]
     assert "iso-4" in modified_sessions(memory.world(), memory.cfg)
+
+
+# Per-call checks against the session start, not the previous call (live run
+# 20261116T022449Z, mislead-gated s6): the agent added a test using math.e,
+# then `import math` in a second write; against the state the first write
+# left, `math` was no longer a fresh name. Written before the code.
+
+ORIGINAL = "import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n"
+
+
+def _write(capsys, a, path, text, use_id):
+    call = {**a, "tool_name": "Write", "tool_use_id": use_id, "tool_input": {"file_path": str(path), "content": text}}
+    fire(capsys, "PreToolUse", call)
+    kind = "update" if path.exists() else "create"
+    path.write_text(text)
+    fire(capsys, "PostToolUse", {**call, "tool_response": {"type": kind}})
+
+
+def _failed(memory, sid):
+    from rka_memory.domain import Kind as K
+
+    return [(e.payload["on"], e.payload["paths"]) for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid and not e.payload["passed"]]
+
+
+def test_a_session_may_import_a_name_its_own_new_test_already_uses(memory, proj, tmp_path, spawned, capsys):
+    test_file = proj / "test_calc.py"
+    test_file.write_text(ORIGINAL)
+    a = base("own-1", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    _write(capsys, a, test_file, ORIGINAL + "\n\ndef test_e():\n    assert 2 < math.e < 3\n", "w1")
+    _write(capsys, a, test_file, "import math\n" + test_file.read_text(), "w2")
+    assert _failed(memory, "own-1") == []
+
+
+@pytest.mark.parametrize("name", ["test_calc.py", "test_more.py"])
+def test_a_session_may_edit_a_test_it_added(memory, proj, tmp_path, spawned, capsys, name):
+    (proj / "test_calc.py").write_text(ORIGINAL)
+    path = proj / name
+    a = base("own-2", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    head = path.read_text() if path.exists() else "import calc\n"
+    _write(capsys, a, path, head + "\n\ndef test_more():\n    assert calc.add(1, 1) == 2\n", "w1")
+    _write(capsys, a, path, path.read_text().replace("add(1, 1) == 2", "add(2, 2) == 4"), "w2")
+    assert _failed(memory, "own-2") == []
+
+
+def test_a_changed_test_is_logged_by_the_call_that_changed_it_only(memory, proj, tmp_path, spawned, capsys):
+    test_file = proj / "test_calc.py"
+    test_file.write_text(ORIGINAL)
+    a = base("once-1", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+
+    def shell(use_id):
+        fire(capsys, "PostToolUse", {**a, "tool_name": "Bash", "tool_use_id": use_id, "tool_input": {"command": "..."}, "tool_response": {"stdout": "", "exit_code": 0}})
+
+    test_file.write_text(ORIGINAL.replace("== 5", "== 5 or True"))
+    shell("t1")
+    _write(capsys, a, proj / "test_more.py", "import calc\n\n\ndef test_more():\n    assert calc.add(1, 1) == 2\n", "w2")
+    shell("t3")
+    assert _failed(memory, "once-1") == [("shell", [str(test_file)])]
+
+
+def test_a_change_made_between_calls_is_on_record_when_a_write_reverts_it(memory, proj, tmp_path, spawned, capsys):
+    # Between calls: a process the agent left running, say.
+    test_file = proj / "test_calc.py"
+    test_file.write_text(ORIGINAL)
+    a = base("between-1", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    test_file.write_text(ORIGINAL.replace("== 5", "== 5 or True"))
+    _write(capsys, a, test_file, ORIGINAL, "w1")
+    assert _failed(memory, "between-1") == [("write", [str(test_file)])]
