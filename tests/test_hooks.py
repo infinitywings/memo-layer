@@ -468,3 +468,57 @@ def test_each_write_that_changes_an_existing_test_is_logged_as_a_failed_check(me
     write(test_file.read_text().replace("def test_add():\n", "def test_add():\n    return\n"), "w2")
     checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid]
     assert [(c["check"], c["passed"], c["paths"]) for c in checks] == [("modification", False, [str(test_file)])]
+
+
+# Added after the same review: a write by a shell command (or any tool not
+# known to be read-only) to an existing test was caught only if it lasted
+# until the session ended. Residual risk, not covered: one command that edits
+# a test, runs it and reverts the edit before it returns.
+
+
+@pytest.mark.parametrize("tool", ["Bash", "ApplyPatch", "pwsh"])
+def test_a_tool_call_that_changes_an_existing_test_is_on_record_even_if_reverted(memory, proj, tmp_path, spawned, capsys, tool):
+    from rka_memory.domain import Kind as K
+    from rka_memory.kernel.evidence import modified_sessions
+
+    original = "import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n"
+    test_file = proj / "test_calc.py"
+    test_file.write_text(original)
+    sid = "shell-1"
+    a = base(sid, proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+
+    def call(use_id):
+        fire(capsys, "PostToolUse", {**a, "tool_name": tool, "tool_use_id": use_id, "tool_input": {"command": "..."}, "tool_response": {"stdout": "", "exit_code": 0}})
+
+    test_file.write_text(original + "\n\ndef test_more():\n    assert True\n")
+    call("t1")
+    assert [e for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid and not e.payload["passed"]] == []
+    test_file.write_text(original.replace("== 5", "== 5 or True"))
+    call("t2")
+    test_file.write_text(original)
+    call("t3")
+    fire(capsys, "SessionEnd", {**a, "reason": "other"})
+    checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid]
+    first_failed = next(c for c in checks if not c["passed"])
+    assert (first_failed["on"], first_failed["paths"]) == ("shell", [str(test_file)])
+    assert checks[-1]["passed"] is True
+    assert sid in modified_sessions(memory.world(), memory.cfg)
+
+
+def test_a_new_test_file_may_import_what_existing_tests_import(memory, proj, tmp_path, spawned, capsys):
+    from rka_memory.domain import Kind as K
+
+    (proj / "test_calc.py").write_text("import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n")
+    sid = "new-1"
+    fire(capsys, "SessionStart", {**base(sid, proj, tmp_path), "source": "startup"})
+    new = proj / "test_more.py"
+    text = "import calc\n\n\ndef test_double():\n    assert calc.add(1, 1) == 2\n"
+    call = {**base(sid, proj, tmp_path), "tool_name": "Write", "tool_use_id": "w1", "tool_input": {"file_path": str(new), "content": text}}
+    fire(capsys, "PreToolUse", call)
+    new.write_text(text)
+    fire(capsys, "PostToolUse", {**call, "tool_response": {"type": "create"}})
+    fire(capsys, "PostToolUse", {**base(sid, proj, tmp_path), "tool_name": "Bash", "tool_use_id": "b1", "tool_input": {"command": "python -m pytest"}, "tool_response": {"stdout": "", "exit_code": 0}})
+    fire(capsys, "SessionEnd", {**base(sid, proj, tmp_path), "reason": "other"})
+    checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid]
+    assert [(c["passed"], c["paths"], c.get("added")) for c in checks] == [(True, [], [str(new)])]

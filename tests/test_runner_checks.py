@@ -119,3 +119,71 @@ def test_outside_python_only_a_new_test_file_is_an_addition(tmp_path):
     js = "test('adds', () => { expect(add(2, 3)).toBe(5) })\n"
     assert compare(tmp_path, {"calc.test.js": js}, {"calc.test.js": js + "test('more', () => {})\n"}) == (["calc.test.js"], [])
     assert compare(tmp_path / "b", {"calc.test.js": js}, {"calc.test.js": js, "extra.test.js": js}) == ([], ["extra.test.js"])
+
+
+# Added after a security review of the syntax-tree version (9f8d7c5): an
+# added import could rebind a name existing tests use or run agent-written
+# code when the file loads, and a new test's defaults, decorator arguments
+# and annotations run at import too. Fail closed on all of them.
+
+
+def test_an_added_import_that_rebinds_a_name_the_old_file_uses_is_a_change(tmp_path):
+    rebinding = TEST + "\nimport math as calc\n"
+    free_name = "import calc\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+    data = TEST + "\ntest_data = [1, 2]\n"
+    assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": rebinding}) == (["test_calc.py"], [])
+    assert compare(tmp_path / "b", {"test_calc.py": free_name}, {"test_calc.py": "from calc import add\n" + free_name}) == (["test_calc.py"], [])
+    assert compare(tmp_path / "c", {"test_calc.py": data}, {"test_calc.py": data + "\n\ndef test_data():\n    pass\n"}) == (["test_calc.py"], [])
+
+
+def test_repeating_an_existing_import_is_not_a_change(tmp_path):
+    assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": "import calc\n" + TEST}) == ([], ["test_calc.py"])
+
+
+def test_an_added_import_of_a_module_no_existing_test_imports_is_a_change(tmp_path):
+    helper = "import helpers\n\n\ndef test_ok():\n    assert helpers.ok()\n"
+    assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": TEST, "test_more.py": helper}) == (["test_more.py"], [])
+    assert compare(tmp_path / "b", {"test_calc.py": TEST}, {"test_calc.py": TEST + "\n" + helper}) == (["test_calc.py"], [])
+
+
+def test_added_imports_of_pytest_the_standard_library_or_what_tests_already_import_are_additions(tmp_path):
+    more = (
+        "import math\nimport pytest\nimport calc\nfrom calc import add\nfrom unittest import mock\n\n\n"
+        "def test_sum():\n    assert add(1, 2) == math.fsum([1, 2])\n"
+    )
+    assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": TEST, "test_more.py": more}) == ([], ["test_more.py"])
+
+
+def test_an_added_import_binding_a_test_or_hook_name_a_builtin_a_dunder_or_a_future_is_a_change(tmp_path):
+    for i, line in enumerate((
+        "from calc import add as test_add_again",
+        "from math import floor as pytest_configure",
+        "from os import sep as pytest_plugins",
+        "from operator import abs",
+        "from math import pi as __builtins__",
+        "from __future__ import annotations",
+    )):
+        after = line + "\n" + TEST
+        assert compare(tmp_path / str(i), {"test_calc.py": TEST}, {"test_calc.py": after}) == (["test_calc.py"], []), line
+
+
+def test_code_in_a_new_tests_defaults_decorators_or_annotations_is_a_change(tmp_path):
+    for i, new in enumerate((
+        "def test_d(x=setattr(calc, 'add', lambda a, b: 5)):\n    pass\n",
+        "def test_k(*, x=calc.patch()):\n    pass\n",
+        "import pytest\n\n\n@pytest.mark.skipif(calc.patch(), reason='')\ndef test_s():\n    pass\n",
+        "def test_a(x: calc.patch() = 1):\n    pass\n",
+        "def test_r() -> calc.patch():\n    pass\n",
+        "class TestM:\n    def test_m(self, x=calc.patch()):\n        pass\n",
+    )):
+        after = TEST + "\n\n" + new
+        assert compare(tmp_path / str(i), {"test_calc.py": TEST}, {"test_calc.py": after}) == (["test_calc.py"], []), new
+
+
+def test_literal_defaults_mark_arguments_and_simple_annotations_are_additions(tmp_path):
+    after = (
+        "import pytest\n" + TEST
+        + "\n\n@pytest.mark.slow\n@pytest.mark.parametrize('a,b', [(1, 2), (-1, 0)])\n"
+        + "def test_p(a: int, b: 'int' = 0, *, c: calc.Number = None) -> None:\n    assert calc.add(a, b) is not None\n"
+    )
+    assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": after}) == ([], ["test_calc.py"])
