@@ -22,6 +22,7 @@ import ast
 import builtins
 import contextlib
 import hashlib
+import json
 import os
 import pwd
 import shutil
@@ -480,24 +481,23 @@ def _alone(python: str, framework: str, index: int, test_id: str, work: Path, ru
     return None if code is None else code == 0
 
 
-def _copy(root: Path, work: Path) -> None:
-    """The project without caches, venvs or links that lead out of it."""
-    real = root.resolve()
-
-    def ignore(dirpath: str, names: list[str]) -> set[str]:
-        out = {n for n in names if n in SKIP_DIRS}
-        for n in names:
-            path = Path(dirpath) / n
-            if path.is_symlink():
-                try:
-                    inside = path.resolve().is_relative_to(real)
-                except (OSError, RuntimeError):
-                    inside = False
-                if not inside:
-                    out.add(n)
-        return out
-
-    shutil.copytree(root, work, ignore=ignore, symlinks=True)
+# The project's copy, made inside the confinement with the agent's rights, so
+# a file swapped for a link to something the agent cannot read is not copied:
+# the project without caches, venvs or links that lead out of it.
+COPY_PROJECT = (
+    "import json, shutil, sys\n"
+    "from pathlib import Path\n"
+    "root, work, skip = Path(sys.argv[1]), Path(sys.argv[2]), set(json.loads(sys.argv[3]))\n"
+    "real = root.resolve()\n"
+    "def inside(p):\n"
+    "    try:\n"
+    "        return p.resolve().is_relative_to(real)\n"
+    "    except (OSError, RuntimeError):\n"
+    "        return False\n"
+    "def ignore(d, names):\n"
+    "    return {n for n in names if n in skip or ((Path(d) / n).is_symlink() and not inside(Path(d) / n))}\n"
+    "shutil.copytree(root, work, ignore=ignore, symlinks=True)\n"
+)
 
 
 def _hand_to(run: Path, user: str) -> None:
@@ -527,7 +527,8 @@ def isolation_event(
     left behind. A test that fails alone, a collection error, running out of
     the budget or any error of the runner fails the check. The tests are
     code the agent wrote, so they run only through the confinement command,
-    in a fresh directory handed to `user` (cfg.isolation); without both an
+    in a fresh directory handed to `user` (cfg.isolation), and the project
+    is copied there by a confined command too; without both an
     interpreter and that command nothing runs, and the check fails with the
     added tests (`added`) as its paths."""
     iso = cfg.isolation
@@ -541,13 +542,17 @@ def isolation_event(
         run = Path(tempfile.mkdtemp(prefix="rkm-isolation-", dir=iso.dir))
         try:
             work = run / "project"
-            _copy(root, work)
             (run / "tmp").mkdir()
             if iso.user:
                 _hand_to(run, iso.user)
             runner = _Runner(iso, run)
-            framework = _framework(iso.python, iso.framework, work, runner)
-            ids, error = _collect(iso.python, framework, work, runner)
+            code, _ = runner.run([iso.python, "-I", "-c", COPY_PROJECT, str(root), str(work), json.dumps(sorted(SKIP_DIRS))], run)
+            ids = None
+            if code != 0:
+                error = "ran out of time copying the project" if code is None else f"copying the project exited with {code}"
+            else:
+                framework = _framework(iso.python, iso.framework, work, runner)
+                ids, error = _collect(iso.python, framework, work, runner)
             if ids is not None:
                 with ThreadPoolExecutor(max_workers=iso.workers) as pool:
                     results = list(pool.map(lambda it: _alone(iso.python, framework, it[0], it[1], work, runner), enumerate(ids)))
