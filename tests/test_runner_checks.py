@@ -148,8 +148,8 @@ def test_an_added_import_of_a_module_no_existing_test_imports_is_a_change(tmp_pa
 
 def test_added_imports_of_pytest_the_standard_library_or_what_tests_already_import_are_additions(tmp_path):
     more = (
-        "import math\nimport pytest\nimport calc\nfrom calc import add\nfrom unittest import mock\n\n\n"
-        "def test_sum():\n    assert add(1, 2) == math.fsum([1, 2])\n"
+        "import math\nimport pytest\nimport calc\nfrom unittest import mock\n\n\n"
+        "def test_sum():\n    assert calc.add(1, 2) == math.fsum([1, 2])\n"
     )
     assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": TEST, "test_more.py": more}) == ([], ["test_more.py"])
 
@@ -187,3 +187,32 @@ def test_literal_defaults_mark_arguments_and_simple_annotations_are_additions(tm
         + "def test_p(a: int, b: 'int' = 0, *, c: calc.Number = None) -> None:\n    assert calc.add(a, b) is not None\n"
     )
     assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": after}) == ([], ["test_calc.py"])
+
+
+# Added after a third review (ebd2cc7) and the PI's decision on shared state
+# (RKA jrn_01M7H11MZ72N1FEQ01P1D5JQ2Y). Pytest and unittest act on some module
+# names that nothing in the file mentions, and pytest registers every fixture
+# object it finds in a test module, under any name. So a from-import from a
+# module outside pytest and the standard library is a change (it may bind a
+# fixture); the earlier expectation that allowed `from calc import add` in a
+# new test file is withdrawn.
+
+
+def test_an_added_import_binding_a_name_pytest_or_unittest_acts_on_is_a_change(tmp_path):
+    for i, name in enumerate(("setup_module", "teardown_function", "setup", "pytestmark", "load_tests", "setUpModule", "collect_ignore")):
+        after = f"from math import floor as {name}\n" + TEST
+        assert compare(tmp_path / str(i), {"test_calc.py": TEST}, {"test_calc.py": after}) == (["test_calc.py"], []), name
+
+
+def test_an_added_import_binding_a_fixture_an_existing_test_requests_is_a_change(tmp_path):
+    param = "import calc\n\n\ndef test_add(numbers):\n    assert calc.add(*numbers) == 5\n"
+    marked = "import calc\nimport pytest\n\n\n@pytest.mark.usefixtures('db')\ndef test_add():\n    assert calc.add(2, 3) == 5\n"
+    dynamic = "import calc\n\n\ndef test_add(request):\n    assert calc.add(*request.getfixturevalue('pair')) == 5\n"
+    for i, (old, name) in enumerate(((param, "numbers"), (marked, "db"), (dynamic, "pair"))):
+        after = f"from math import floor as {name}\n" + old
+        assert compare(tmp_path / str(i), {"test_calc.py": old}, {"test_calc.py": after}) == (["test_calc.py"], []), name
+
+
+def test_a_from_import_of_a_project_module_is_a_change(tmp_path):
+    more = "from calc import add\n\n\ndef test_sum():\n    assert add(1, 2) == 3\n"
+    assert compare(tmp_path, {"test_calc.py": TEST}, {"test_calc.py": TEST, "test_more.py": more}) == (["test_more.py"], [])

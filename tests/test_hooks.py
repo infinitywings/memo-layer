@@ -522,3 +522,78 @@ def test_a_new_test_file_may_import_what_existing_tests_import(memory, proj, tmp
     fire(capsys, "SessionEnd", {**base(sid, proj, tmp_path), "reason": "other"})
     checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid]
     assert [(c["passed"], c["paths"], c.get("added")) for c in checks] == [(True, [], [str(new)])]
+
+
+# The isolation re-run at session end (RKA jrn_01M7H11MZ72N1FEQ01P1D5JQ2Y),
+# and a write through a link (third review of ebd2cc7). Written before the code.
+
+
+def _session_adding_a_test(capsys, proj, tmp_path, sid, added, exit_code):
+    (proj / "calc.py").write_text("def add(a, b):\n    return a - b\n")
+    (proj / "test_calc.py").write_text("import calc\n\n\ndef test_add():\n    assert calc.add(2, 3) == 5\n")
+    a = base(sid, proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    new = proj / "test_00_more.py"
+    call = {**a, "tool_name": "Write", "tool_use_id": "w1", "tool_input": {"file_path": str(new), "content": added}}
+    fire(capsys, "PreToolUse", call)
+    new.write_text(added)
+    fire(capsys, "PostToolUse", {**call, "tool_response": {"type": "create"}})
+    run = {**a, "tool_name": "Bash", "tool_use_id": "b1", "tool_input": {"command": "python -m pytest -q"}}
+    if exit_code:
+        fire(capsys, "PostToolUseFailure", {**run, "error": f"Exit code {exit_code}"})
+    else:
+        fire(capsys, "PostToolUse", {**run, "tool_response": {"stdout": "2 passed", "exit_code": 0}})
+    fire(capsys, "SessionEnd", {**a, "reason": "other"})
+
+
+PATCHING_TEST = "import calc\n\n\ndef test_setup():\n    calc.add = lambda a, b: a + b\n"
+
+
+def test_a_session_that_added_tests_and_passed_is_rerun_alone_at_session_end(memory, proj, tmp_path, spawned, capsys, user_config):
+    from rka_memory.domain import Kind as K
+    from rka_memory.kernel.evidence import modified_sessions
+
+    user_config(checks={"isolation": {"python": sys.executable}})
+    _session_adding_a_test(capsys, proj, tmp_path, "iso-1", PATCHING_TEST, 0)
+    checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == "iso-1"]
+    assert [(c.get("on"), c["passed"]) for c in checks] == [(None, True), ("isolation", False)]
+    assert checks[-1]["failed"] == ["test_calc.py::test_add"]
+    assert "iso-1" in modified_sessions(memory.world(), memory.cfg)
+
+
+def test_without_the_rerun_a_session_that_added_tests_and_passed_counts_as_changed(memory, proj, tmp_path, spawned, capsys):
+    from rka_memory.domain import Kind as K
+    from rka_memory.kernel.evidence import modified_sessions
+
+    _session_adding_a_test(capsys, proj, tmp_path, "iso-2", PATCHING_TEST, 0)
+    checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == "iso-2"]
+    assert [(c.get("on"), c["passed"], c.get("error")) for c in checks] == [(None, True, None), ("isolation", False, "not configured")]
+    assert "iso-2" in modified_sessions(memory.world(), memory.cfg)
+
+
+def test_a_session_whose_last_test_run_failed_is_not_rerun(memory, proj, tmp_path, spawned, capsys, user_config):
+    from rka_memory.domain import Kind as K
+
+    user_config(checks={"isolation": {"python": sys.executable}})
+    _session_adding_a_test(capsys, proj, tmp_path, "iso-3", PATCHING_TEST, 1)
+    checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == "iso-3"]
+    assert [(c.get("on"), c["passed"]) for c in checks] == [(None, True)]
+
+
+def test_a_write_through_a_link_to_a_test_is_compared_as_that_test(memory, proj, tmp_path, spawned, capsys):
+    from rka_memory.domain import Kind as K
+
+    test_file = proj / "test_floor.py"
+    test_file.write_text("import math\n\n\ndef test_floor():\n    assert math.floor(2.5) == 2\n")
+    link = proj / "notes.py"
+    link.symlink_to(test_file)
+    sid = "link-1"
+    a = base(sid, proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    text = test_file.read_text().replace("== 2", "== 2 or True")
+    call = {**a, "tool_name": "Write", "tool_use_id": "w1", "tool_input": {"file_path": str(link), "content": text}}
+    fire(capsys, "PreToolUse", call)
+    link.write_text(text)
+    fire(capsys, "PostToolUse", {**call, "tool_response": {"type": "update"}})
+    failed = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid and not e.payload["passed"]]
+    assert [(c["on"], c["paths"]) for c in failed] == [("write", [str(test_file)])]
