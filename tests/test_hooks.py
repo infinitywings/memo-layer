@@ -549,11 +549,18 @@ def _session_adding_a_test(capsys, proj, tmp_path, sid, added, exit_code):
 PATCHING_TEST = "import calc\n\n\ndef test_setup():\n    calc.add = lambda a, b: a + b\n"
 
 
+def _isolation_config(tmp_path):
+    script = tmp_path / "confine.sh"
+    script.write_text('#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n')
+    script.chmod(0o755)
+    return {"checks": {"isolation": {"python": sys.executable, "confine": [str(script)]}}}
+
+
 def test_a_session_that_added_tests_and_passed_is_rerun_alone_at_session_end(memory, proj, tmp_path, spawned, capsys, user_config):
     from rka_memory.domain import Kind as K
     from rka_memory.kernel.evidence import modified_sessions
 
-    user_config(checks={"isolation": {"python": sys.executable}})
+    user_config(**_isolation_config(tmp_path))
     _session_adding_a_test(capsys, proj, tmp_path, "iso-1", PATCHING_TEST, 0)
     checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == "iso-1"]
     assert [(c.get("on"), c["passed"]) for c in checks] == [(None, True), ("isolation", False)]
@@ -574,7 +581,7 @@ def test_without_the_rerun_a_session_that_added_tests_and_passed_counts_as_chang
 def test_a_session_whose_last_test_run_failed_is_not_rerun(memory, proj, tmp_path, spawned, capsys, user_config):
     from rka_memory.domain import Kind as K
 
-    user_config(checks={"isolation": {"python": sys.executable}})
+    user_config(**_isolation_config(tmp_path))
     _session_adding_a_test(capsys, proj, tmp_path, "iso-3", PATCHING_TEST, 1)
     checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == "iso-3"]
     assert [(c.get("on"), c["passed"]) for c in checks] == [(None, True)]
@@ -597,3 +604,21 @@ def test_a_write_through_a_link_to_a_test_is_compared_as_that_test(memory, proj,
     fire(capsys, "PostToolUse", {**call, "tool_response": {"type": "update"}})
     failed = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == sid and not e.payload["passed"]]
     assert [(c["on"], c["paths"]) for c in failed] == [("write", [str(test_file)])]
+
+
+def test_a_rerun_that_never_logs_its_result_counts_as_a_change(memory, proj, tmp_path, spawned, capsys, user_config, monkeypatch):
+    # The end-of-session check is logged, marked as owing a re-run, before the
+    # re-run starts; a hook killed or failing during it leaves the mark.
+    from rka_memory.domain import Kind as K
+    from rka_memory.kernel.evidence import modified_sessions
+    from rka_memory.ledger import checks as runner_checks
+
+    def killed(*args, **kwargs):
+        raise RuntimeError("hook killed")
+
+    user_config(**_isolation_config(tmp_path))
+    monkeypatch.setattr(runner_checks, "isolation_event", killed)
+    _session_adding_a_test(capsys, proj, tmp_path, "iso-4", "import calc\n\n\ndef test_zero():\n    assert True\n", 0)
+    checks = [e.payload for e in memory.ledger.read() if e.kind is K.CHECK and e.session_id == "iso-4"]
+    assert [(c.get("on"), c["passed"], c.get("isolation")) for c in checks] == [(None, True, "due")]
+    assert "iso-4" in modified_sessions(memory.world(), memory.cfg)
