@@ -38,7 +38,12 @@ COPY plugins/dsh ./plugins/dsh
 COPY scripts ./scripts
 COPY docker/dsh ./docker/dsh
 COPY workload ./workload
-RUN uv sync --frozen --no-dev --python 3.12 && chmod +x docker/dsh/*.sh
+# Root-only: the stream files hold the hidden checks, and scripts/ the
+# scoring. dsh, the plugin and the runner are root; the agent's shell runs as
+# `agent` and needs nothing here (confine.sh is started by root before the
+# drop). dsh's own file tools read as root, so the plugin denies this path to
+# them (protectedPaths).
+RUN uv sync --frozen --no-dev --python 3.12 && chmod +x docker/dsh/*.sh && chmod 700 /opt/rka-memory
 
 ENV PATH=/opt/agent-python/bin:$PATH \
     DSH_HOME=/dsh-home \

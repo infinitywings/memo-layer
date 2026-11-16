@@ -580,6 +580,32 @@ def test_protected_path_attempts_count_tool_calls_that_name_the_run_directory():
     assert "Sessions whose tools named a protected path (contaminated for arm comparisons): s1." in text
 
 
+def test_a_stream_is_fenced_off_from_every_other_run_but_its_way_down(tmp_path):
+    from rka_memory.workload.runner import fence_of, fenced_off
+
+    runs = tmp_path / "runs"
+    (runs / "workload" / "20270101T000000Z" / "workspaces" / "outcome-trial").mkdir(parents=True)
+    (runs / "live" / "20270101T000000Z").mkdir(parents=True)
+    batch = runs / "live" / "20270102T000000Z"
+    for d in ("unseen-gated", "unseen-ungated", "workspaces/unseen-gated", "workspaces/unseen-ungated"):
+        (batch / d).mkdir(parents=True)
+    (batch / "summary.json").write_text("{}")
+
+    way, beside = fenced_off(runs, batch / "workspaces" / "unseen-ungated")
+    assert way == [runs, runs / "live", batch, batch / "workspaces"]
+    assert beside == [
+        runs / "workload",
+        runs / "live" / "20270101T000000Z",
+        batch / "summary.json",
+        batch / "unseen-gated",
+        batch / "unseen-ungated",
+        batch / "workspaces" / "unseen-gated",
+    ]
+    assert fenced_off(runs, tmp_path / "elsewhere") == ([], [])
+    assert fence_of(runs / "live", confined=True) == runs.resolve()
+    assert fence_of(runs / "live", confined=False) == (runs / "live").resolve()
+
+
 def test_model_saw_reads_the_text_as_the_model_does_not_as_escaped_json():
     from rka_memory.workload.checks import CHECKS, Observed
     from rka_memory.world import World

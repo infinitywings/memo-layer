@@ -81,6 +81,41 @@ test('native file tools cannot reach a protected directory, by any path to it; s
   })
 })
 
+test('grep, glob and read cannot start above a protected directory; content and grep patterns that name one open nothing', async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'rkm-above-')))
+  const ledger = join(root, 'run', 'ledger')
+  mkdirSync(ledger, { recursive: true })
+  const workspace = join(root, 'work')
+  mkdirSync(workspace)
+  const rkm = fakeRkaMemory(t)
+  const host = fakeHost({ command: rkm.command, protectedPaths: [ledger] })
+  const agent = fakeAgent('s1', workspace)
+  const allow = async () => ({ kind: 'allow' })
+  const decide = (name: string, args: Record<string, unknown>) => host.emit('tools/pre-execute', { callId: `c-${name}`, name, arguments: args, agent }, allow)
+
+  for (const [name, args] of [
+    ['grep', { pattern: 'house rule', path: root }],
+    ['grep', { pattern: 'house rule', path: '..' }],
+    ['grep', { pattern: 'x', path: '/' }],
+    ['glob', { pattern: '**/canary.txt', path: join(root, 'run') }],
+    ['glob', { pattern: `${root}/**/*.jsonl` }],
+    ['read', { file_path: join(root, 'run') }],
+  ] as const) {
+    const decision = await decide(name, args)
+    assert.equal(decision.kind, 'deny', `${name} ${JSON.stringify(args)}`)
+    assert.match(decision.reason, new RegExp(`holds ${ledger.replaceAll('/', '\\/')}`))
+  }
+  for (const [name, args] of [
+    ['grep', { pattern: '/', path: workspace }],
+    ['grep', { pattern: 'x' }],
+    ['glob', { pattern: '**/*.py' }],
+    ['edit', { file_path: join(workspace, 'calc.py'), old_string: 'a', new_string: `return a / b  # notes in ${root}` }],
+    ['write', { file_path: join(workspace, 'notes.md'), content: `cd / && ls ${root}` }],
+  ] as const) {
+    assert.deepEqual(await decide(name, args), { kind: 'allow' }, `${name} ${JSON.stringify(args)}`)
+  }
+})
+
 test('session start puts the packet in the system prompt and registers the session skills', async (t) => {
   const rkm = fakeRkaMemory(t)
   rkm.reply({ SessionStart: { stdout: PACKET_A }, skills: { stdout: [PROC_SKILL] } })

@@ -7,7 +7,10 @@ id>/session.v4.jsonl.zstd, whose directory name is the ledger's session id)
 and reports whether it names /opt/rka-memory, a live stream file under
 workload/live/, or a script under scripts/, next to the user's outcome check
 for that session. A transcript records what the agent asked for and what its
-tools returned, so a name there means the agent listed, searched or read it.
+tools returned, so in runs before the fence (docs/WORKLOAD.md, Confinement)
+a name there means the agent listed, searched or read it. Since the fence a
+name can also be an attempt that was refused; the run's report lists those
+sessions as contaminated for arm comparisons.
 
 Usage: .venv/bin/python scripts/harness_read_audit.py workload-runs/<run>/<arm> ...
 Exit 1 if any session named a live stream file or a script.

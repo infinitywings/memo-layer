@@ -304,17 +304,40 @@ function within(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
 }
 
-/** The first protected root a tool call reaches, with the argument that names it, or undefined. */
-export function protectedTarget(args: unknown, cwd: string, roots: readonly string[]): { named: string; root: string } | undefined {
+/**
+ * The arguments that say where a tool starts reading: `path` and `file_path`,
+ * and for glob its pattern. grep and glob descend from there, so starting
+ * above a protected root reaches into it. Other strings, such as a file's new
+ * content or a grep pattern, open nothing by naming a directory.
+ */
+function startsIn(name: string, args: unknown): string[] {
+  if (!isRecord(args)) return []
+  const keys = name === 'glob' ? ['path', 'file_path', 'pattern'] : ['path', 'file_path']
+  return keys.flatMap(key => (typeof args[key] === 'string' ? [args[key] as string] : []))
+}
+
+/**
+ * The first protected root a tool call reaches, with the argument that names
+ * it, or undefined. `above` is set when the argument names a directory that
+ * holds the root, where a search would start and descend into it.
+ */
+export function protectedTarget(
+  args: unknown, cwd: string, roots: readonly string[], name = '',
+): { named: string; root: string; above?: true } | undefined {
   if (roots.length === 0) return undefined
+  // `..` after a symlink differs physically and lexically; a tool may use
+  // either, so the call is denied if either reading reaches a root.
+  const readings = (named: string) => [realPathOf(isAbsolute(named) ? named : `${cwd}${sep}${named}`), realPathOf(resolve(cwd, named))]
   for (const text of stringsIn(args)) {
     for (const named of pathCandidates(text)) {
-      // `..` after a symlink differs physically and lexically; a tool may use
-      // either, so the call is denied if either reading reaches a root.
-      const physical = realPathOf(isAbsolute(named) ? named : `${cwd}${sep}${named}`)
-      const lexical = realPathOf(resolve(cwd, named))
-      const root = roots.find(r => within(physical, r) || within(lexical, r))
+      const root = roots.find(r => readings(named).some(path => within(path, r)))
       if (root !== undefined) return { named, root }
+    }
+  }
+  for (const text of startsIn(name, args)) {
+    for (const named of pathCandidates(text)) {
+      const root = roots.find(r => readings(named).some(path => within(r, path)))
+      if (root !== undefined) return { named, root, above: true }
     }
   }
   return undefined
@@ -653,9 +676,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next): Promise<PreToolDecision> => {
     const agent = exec.agent
     if (!UNPOLICED_TOOLS.has(exec.name)) {
-      const hit = protectedTarget(exec.arguments, agent === undefined ? process.cwd() : cwdOf(agent), protectedRoots)
+      const hit = protectedTarget(exec.arguments, agent === undefined ? process.cwd() : cwdOf(agent), protectedRoots, exec.name)
       if (hit !== undefined) {
-        const reason = `rka-memory: ${hit.named} is inside ${hit.root}, which the agent's tools may not read or change`
+        const reason = `rka-memory: ${hit.named} ${hit.above ? 'holds' : 'is inside'} ${hit.root}, which the agent's tools may not read or change`
         if (agent !== undefined) {
           // Logged as a failed call, so the ledger shows the attempt.
           void guard('PostToolUseFailure', () => hook(agent, 'PostToolUseFailure', {

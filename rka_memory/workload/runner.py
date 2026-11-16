@@ -132,6 +132,7 @@ class RunPaths:
             "{run_name}": self.root.name,
             "{canary_content}": self.canary_content,
             "{canary_name}": self.canary_name,
+            "{harness}": str(REPO),
         }
 
 
@@ -149,11 +150,37 @@ def confinement() -> tuple[int, int] | None:
 
 
 def agent_can_read(path: Path, uid: int, gid: int) -> bool:
-    """Whether a process running as the agent user can read `path`."""
-    proc = subprocess.run(
-        ["cat", str(path)], user=uid, group=gid, extra_groups=[], capture_output=True, check=False
-    )
+    """Whether a process running as the agent user can read `path`, or list
+    it if it is a directory."""
+    cmd = ["ls", str(path)] if path.is_dir() else ["cat", str(path)]
+    proc = subprocess.run(cmd, user=uid, group=gid, extra_groups=[], capture_output=True, check=False)
     return proc.returncode == 0
+
+
+def fence_of(out: Path, confined: bool) -> Path:
+    """The directory whose contents a stream's agent may not see, apart from
+    its own way down to its workspace. Confined, in the image, it is the runs
+    volume above `out`, which holds every batch, live and scripted; on a
+    developer machine, where nothing is confined, only `out`."""
+    out = out.resolve()
+    return out.parent if confined else out
+
+
+def fenced_off(top: Path, workspace: Path) -> tuple[list[Path], list[Path]]:
+    """The directories from `top` down to `workspace`'s parent, and every entry
+    beside that way: other streams' run directories and workspaces, other
+    batches, this stream's own run directory. Nothing when `workspace` is not
+    under `top`."""
+    try:
+        parts = workspace.relative_to(top).parts
+    except ValueError:
+        return [], []
+    way, beside, here = [], [], top
+    for part in parts:
+        way.append(here)
+        beside += sorted(entry for entry in here.iterdir() if entry.name != part)
+        here = here / part
+    return way, beside
 
 
 def chown_tree(path: Path, uid: int, gid: int) -> None:
@@ -312,10 +339,13 @@ def _plant(memory: Memory, session_id: str, wanted: tuple[dict[str, Any], ...]) 
 
 
 class StreamRun:
-    def __init__(self, stream: Stream, root: Path, dsh: str, workspace: Path | None = None) -> None:
+    def __init__(self, stream: Stream, root: Path, dsh: str, workspace: Path | None = None, fence: Path | None = None) -> None:
         self.stream = stream
         self.paths = RunPaths.under(root.resolve(), (workspace or root / "project").resolve())
         self.confine = confinement()
+        self.fence = fence.resolve() if fence is not None else None
+        self.way: list[Path] = []
+        self.beside: list[Path] = []
         self.dsh = dsh
         self.results: list[CheckResult] = []
         self.before: files.Snapshot = {}
@@ -350,6 +380,30 @@ class StreamRun:
         for d in (self.paths.root, self.paths.ledger_dir):
             os.chmod(d, 0o700)
 
+    def _fence(self) -> None:
+        """Keep the agent's shell out of every other run: the directories on its
+        way down to the workspace can be passed through but not listed, and
+        everything beside them becomes root-only, so a later arm cannot read an
+        earlier arm's project. The plugin denies the same paths to dsh's own
+        file tools (`protectedPaths`)."""
+        if self.fence is not None:
+            self.way, self.beside = fenced_off(self.fence, self.paths.project)
+        if self.confine is None:
+            return
+        for d in self.way:
+            os.chmod(d, 0o711)
+        for path in self.beside:
+            os.chown(path, 0, 0, follow_symlinks=False)
+            if not path.is_symlink():
+                os.chmod(path, 0o700 if path.is_dir() else 0o600)
+
+    def protected(self) -> list[str]:
+        """What the agent's tools may not touch: this run directory, the harness
+        (stream files with their hidden checks, scoring scripts) and the runs
+        around this one. dsh's read, glob and grep run inside dsh as root, so
+        file modes do not stop them; the plugin denies these paths to them."""
+        return list(dict.fromkeys(str(x) for x in (self.paths.root, REPO, *self.beside)))
+
     def _plant_canaries(self) -> None:
         """Secrets only the ledger side knows. A stream's `model_never_saw`
         checks on them show whether the agent could read protected paths."""
@@ -377,7 +431,7 @@ class StreamRun:
             base["checks"] = {"isolation": {**ISOLATION, "budget_seconds": 240}}
         p.config.write_text(yaml.safe_dump(config_mod.merge(base, self.stream.config), sort_keys=False))
         config_mod.load(path=p.config)
-        plugin_config = {"command": [str(rka_bin())], "timeoutMs": PLUGIN_TIMEOUT_MS, "protectedPaths": [str(p.root)]}
+        plugin_config = {"command": [str(rka_bin())], "timeoutMs": PLUGIN_TIMEOUT_MS, "protectedPaths": self.protected()}
         p.rka_overlay.write_text(
             yaml.safe_dump([{"insert": [{"id": "rka-memory", "name": str(PLUGIN), "config": plugin_config}]}], sort_keys=False)
         )
@@ -560,7 +614,7 @@ class StreamRun:
             expect = replace(expect, value=files.substitute(expect.value, p.placeholders()))
             ok, detail = evaluate(obs, expect)
             self.check(s.label, expect.describe(), ok, detail)
-        row = report.session_row(s.label, (self.stream.start + s.at).isoformat(timespec="minutes"), sid, before, obs.world, protected=(str(p.root),))
+        row = report.session_row(s.label, (self.stream.start + s.at).isoformat(timespec="minutes"), sid, before, obs.world, protected=self.protected())
         row["observed"] = observed
         self.rows.append(row)
 
@@ -595,6 +649,7 @@ class StreamRun:
         files.create_project(self.stream.fixture, p.project)
         self._plant_canaries()
         self._own()
+        self._fence()
         label = "-"
         if self.confine is not None:
             leaked = agent_can_read(p.ledger_dir / "canary.txt", *self.confine)
@@ -603,6 +658,12 @@ class StreamRun:
             # arm comparison would mean nothing. Stop before spending a token.
             self.check(label, "the agent user cannot read the ledger", not leaked, str(p.ledger_dir))
             if leaked:
+                return self._finish()
+            # The stream file holds the hidden checks, and another arm's project
+            # holds what that arm learned.
+            open_ = [str(x) for x in (self.stream.source, *self.beside) if agent_can_read(x, *self.confine)]
+            self.check(label, "the agent user cannot read the harness or other runs", not open_, open_)
+            if open_:
                 return self._finish()
         try:
             mock = MockModel(p) if self.stream.model == "scripted" else LiveModel()
@@ -662,9 +723,10 @@ def run_all(
     root.mkdir(parents=True, exist_ok=False)
     binary = find_dsh(dsh)
     summary = {}
+    fence = fence_of(out, confinement() is not None)
     for st in streams:
         print(f"== {st.name}: {st.source}", flush=True)
-        results = StreamRun(st, root / st.name, binary, workspace=root / "workspaces" / st.name).run()
+        results = StreamRun(st, root / st.name, binary, workspace=root / "workspaces" / st.name, fence=fence).run()
         failed = sum(not r.ok for r in results)
         summary[st.name] = {"checks": len(results), "failed": failed}
         print(f"== {st.name}: {len(results) - failed}/{len(results)} checks passed; report in {root / st.name / 'report.md'}\n", flush=True)

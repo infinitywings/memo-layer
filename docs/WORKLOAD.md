@@ -102,7 +102,7 @@ The scripted model makes these tool calls in order, one per request, then answer
 | `call: {tool, args}` | Any other tool with raw arguments. |
 | `say: <text>` | The final text. Only allowed as the last step. Defaults to `Done.`. |
 
-A relative path is resolved against the project. Strings may use `{project}`, `{ledger_dir}`, `{ledger}` and `{run}`, which the runner replaces with absolute paths, `{run_name}` (the stream's directory name under the run), and `{canary_content}` and `{canary_name}` (see Run directory).
+A relative path is resolved against the project. Strings may use `{project}`, `{ledger_dir}`, `{ledger}` and `{run}`, which the runner replaces with absolute paths, `{run_name}` (the stream's directory name under the run), `{canary_content}` and `{canary_name}` (see Run directory), and `{harness}`, the repository the runner runs from.
 
 ### miner
 
@@ -178,7 +178,7 @@ Each item is one check, with `record` naming the record by its content when the 
 | `{record_contains: <text>}` | Some record's content contains the text, ignoring case. The result lists each match with its rung. As an observation in a live stream, it measures the miner's recall, since a live record's wording is not known in advance. |
 | `{metrics: {<dotted path>: <value or {op: value}>}}` | `rka-memory metrics` reports these values. Operators are `==`, `!=`, `>=`, `>`, `<=` and `<`. |
 
-Before the first session, when the agent's tools are confined, the runner checks as the agent user that it cannot read the ledger, and stops the stream if it can. The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, every record delivered in the session traces to grounding evidence linked before the delivery (`rka_memory/graph.py`), the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.
+Before the first session, when the agent's tools are confined, the runner checks as the agent user that it cannot read the ledger, the stream file (which holds any hidden check) or any other run, and stops the stream if it can. The runner also checks every session without being asked: dsh exited 0, the plugin printed no warnings, exactly one new session was recorded and mined, every record delivered in the session traces to grounding evidence linked before the delivery (`rka_memory/graph.py`), the scripted model resolved every rule, and the hooks logged no errors. Every typed verdict must be recorded as a `user_confirm` or `user_reject` for its record.
 
 ## Live streams
 
@@ -249,7 +249,7 @@ Each stream gets a run directory and, apart from it, a workspace, with its own s
 
 `summary.json` in the run directory has the check counts per stream.
 
-**Confinement.** In the `rka-memory-dsh` image the runner is root and the `agent` user exists, so each run directory is root-only (mode 700), the workspace belongs to `agent`, dsh runs with `docker/dsh/confine.yml` (the agent's tool processes drop to `agent`), and the plugin's `protectedPaths` is the run directory. From the project, `..` shows nothing readable. On a developer machine nothing is confined; the canaries are planted anyway, and `manifest.json` records `confined`.
+**Confinement.** In the `rka-memory-dsh` image the runner is root and the `agent` user exists, so each run directory is root-only (mode 700), the workspace belongs to `agent`, dsh runs with `docker/dsh/confine.yml` (the agent's tool processes drop to `agent`), and the plugin's `protectedPaths` holds the run directory, the repository and every other run. The repository is root-only in the image, since its stream files hold the hidden checks. Every batch, live or scripted, sits on the `runs` volume, so before each stream the runner makes the directories on the way down to its workspace traverse-only and everything beside them root-only: a later arm cannot read an earlier arm's project or ledger, and from the project, `..` lists nothing. Sessions whose tools named any of these paths are marked in the report as contaminated for arm comparisons. On a developer machine nothing is confined; the canaries are planted anyway, and `manifest.json` records `confined`.
 
 ## Scripted model
 
