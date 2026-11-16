@@ -40,7 +40,10 @@ def modified_sessions(world: World, cfg: Config) -> frozenset[str]:
     8.1, as the PI refined it): the runner's modification check found
     existing test content or test configuration changed. A session with no
     modification check logged (a ledger from before the check existed) is
-    judged by the strict rule: any agent write to a test path counts."""
+    judged by the strict rule: any agent write to a test path counts. A
+    write to test configuration counts in any session, even if the file was
+    put back before the end: results produced while it differed prove
+    nothing."""
     cache = world.__dict__.setdefault("_modified", {})
     if world.revision not in cache:
         checked = {ev.session_id for ev in world.checks if ev.payload.get("check") == "modification"}
@@ -49,11 +52,11 @@ def modified_sessions(world: World, cfg: Config) -> frozenset[str]:
             if ev.payload.get("check") == "modification" and not ev.payload.get("passed")
         }
         for ev in world.events.values():
-            if (
-                ev.kind is Kind.FILE_WRITE
-                and ev.session_id not in checked
-                and _matches(str(ev.payload.get("path") or ""), cfg.check_globs)
-            ):
+            if ev.kind is not Kind.FILE_WRITE:
+                continue
+            path = str(ev.payload.get("path") or "")
+            config = _matches(path, cfg.check_config_globs) and not _matches(path, cfg.check_test_globs)
+            if config or (ev.session_id not in checked and _matches(path, cfg.check_globs)):
                 out.add(ev.session_id)
         cache.clear()
         cache[world.revision] = frozenset(out)

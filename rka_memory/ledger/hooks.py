@@ -225,7 +225,7 @@ def on_pre_tool_use(memory: Memory, payload: Mapping[str, Any]) -> Output:
     path = adapter.written_path(use.tool, use.tool_input, payload.get("cwd"))
     if path is not None and use.tool_use_id:
         stash = _pending(memory, use.session_id) / f"{_safe(use.tool_use_id)}.json"
-        _write_json(stash, {"path": path, "pre_hash": signals.file_hash(path)})
+        _write_json(stash, {"path": path, "pre_hash": signals.file_hash(path), "pre": runner_checks.entry(Path(path), memory.cfg)})
     return None
 
 
@@ -265,6 +265,12 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
         decision = adapter.decision_event(payload, memory.session_state(use.session_id), memory.cfg, state_hash)
         if decision is not None:
             events.append(decision)
+    if path and not failed and isinstance(pre, dict) and "pre" in pre:
+        # Each write that changes an existing test is on record as it
+        # happens, so reverting it before the session ends hides nothing.
+        check = runner_checks.write_check(str(path), pre["pre"], memory.cfg, use.session_id, memory.session_state(use.session_id))
+        if check is not None:
+            events.append(check)
     memory.append(*events)
     if tracked:
         _write_json(tracked_path, tracked)
