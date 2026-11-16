@@ -304,78 +304,39 @@ function within(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
 }
 
-/** Characters that may open a wildcard, an extglob or an escape in a glob matcher. */
-const GLOB_SPECIAL = /[*?[{(!+@\\]/
-
-/** `p` split at its first brace group with a top-level comma, or undefined. */
-function firstBraceSplit(p: string): string[] | undefined {
-  for (let open = 0; open < p.length; open++) {
-    // scanned from the start, so `\\{` is an escaped backslash before a brace
-    if (p[open] === '\\') {
-      open++
-      continue
-    }
-    if (p[open] !== '{') continue
-    let depth = 0
-    const commas: number[] = []
-    for (let i = open; i < p.length; i++) {
-      const c = p[i]
-      if (c === '\\') {
-        i++
-      } else if (c === '{') {
-        depth++
-      } else if (c === ',' && depth === 1) {
-        commas.push(i)
-      } else if (c === '}' && --depth === 0) {
-        if (commas.length === 0) break
-        const bounds = [open, ...commas, i]
-        return bounds.slice(1).map((end, k) => p.slice(0, open) + p.slice(bounds[k]! + 1, end) + p.slice(i + 1))
-      }
-    }
-  }
-  return undefined
-}
+/** The wildcards a plain glob pattern may use. */
+const GLOB_WILD = /[*?[]/
 
 /**
- * A glob pattern's brace alternatives, as glob tools expand them: `a{b,c}d`
- * is `abd` and `acd`, nested groups included. Past `limit` alternatives the
- * pattern is taken to start at the filesystem root, which holds every
- * protected directory.
+ * Glob syntax whose expansion this check does not model: braces, escapes,
+ * groups and alternation, extglob included, and `!`, which some engines read
+ * as negation (everything under the search root but the named path). Engines
+ * differ on it, and each hand-written model of it had a bypass, so a pattern
+ * using it is refused.
  */
-export function braceAlternatives(pattern: string, limit = 256): string[] {
-  const out: string[] = []
-  const pending = [pattern]
-  while (pending.length > 0) {
-    const p = pending.pop()!
-    const split = firstBraceSplit(p)
-    if (split === undefined) out.push(p)
-    else pending.push(...split)
-    if (pending.length + out.length > limit) return [sep]
-  }
-  return out
-}
+const GLOB_UNMODELLED = /[{}()|\\!]/
 
 /**
- * The directory a glob pattern starts matching from: the pattern before its
- * first wildcard, extglob or escape, cut back to the last separator, so
- * `/opt/rka*` starts at `/opt` and `**` at `.`. A pattern without one names
- * its own path. A `..` after the first wildcard climbs out of wherever the
- * wildcard matched, so such a pattern starts at the root.
+ * The directory a plain glob pattern starts matching from: the pattern before
+ * its first wildcard, cut back to the last separator, so `/opt/rka*` starts at
+ * `/opt` and `**` at `.`. A pattern without one names its own path. A `..`
+ * after the first wildcard climbs out of wherever the wildcard matched, so
+ * such a pattern starts at the root.
  */
 function globBase(pattern: string): string {
-  const wild = pattern.search(GLOB_SPECIAL)
+  const wild = pattern.search(GLOB_WILD)
   if (wild < 0) return pattern
-  if (pattern.slice(wild).split(/[\\/]/).includes('..')) return sep
+  if (pattern.slice(wild).split(sep).includes('..')) return sep
   const cut = pattern.slice(0, wild).lastIndexOf(sep)
   return cut < 0 ? '.' : cut === 0 ? sep : pattern.slice(0, cut)
 }
 
 /**
- * Where a tool starts reading: `path` and `file_path`; for glob also the base
- * of each brace alternative of its pattern, under each spelling of `path`;
- * and for grep and glob given no `path`, the working directory. grep and glob
- * descend from there. Other strings, such as a file's new content or a grep
- * pattern, open nothing by naming a directory.
+ * Where a tool starts reading: `path` and `file_path`; for glob also its
+ * pattern's base under each spelling of `path`; and for grep and glob given
+ * no `path`, the working directory. grep and glob descend from there. Other
+ * strings, such as a file's new content or a grep pattern, open nothing by
+ * naming a directory.
  */
 function startsIn(name: string, args: unknown): string[] {
   if (!isRecord(args)) return []
@@ -383,9 +344,9 @@ function startsIn(name: string, args: unknown): string[] {
   if (name === 'grep') return given.length > 0 ? given : ['.']
   if (name === 'glob') {
     const from = given.length > 0 ? given.flatMap(spellings) : ['.']
-    const bases = braceAlternatives(typeof args.pattern === 'string' ? args.pattern : '').map(globBase)
+    const base = globBase(typeof args.pattern === 'string' ? args.pattern : '')
     // Joined as text, not with join(), so `..` stays for realPathOf to apply physically.
-    return [...given, ...bases.flatMap(b => (isAbsolute(b) ? [b] : from.map(f => `${f}${f.endsWith(sep) ? '' : sep}${b}`)))]
+    return [...given, ...(isAbsolute(base) ? [base] : from.map(f => `${f}${f.endsWith(sep) ? '' : sep}${base}`))]
   }
   return given
 }
@@ -393,12 +354,16 @@ function startsIn(name: string, args: unknown): string[] {
 /**
  * The first protected root a tool call reaches, with the argument that names
  * it, or undefined. `above` is set when the argument names a directory that
- * holds the root, where a search would start and descend into it.
+ * holds the root, where a search would start and descend into it;
+ * `unmodelled` when a glob uses syntax this check refuses (GLOB_UNMODELLED).
  */
 export function protectedTarget(
   args: unknown, cwd: string, roots: readonly string[], name = '',
-): { named: string; root: string; above?: true } | undefined {
+): { named: string; root: string; above?: true; unmodelled?: true } | undefined {
   if (roots.length === 0) return undefined
+  if (name === 'glob' && isRecord(args) && typeof args.pattern === 'string' && GLOB_UNMODELLED.test(args.pattern)) {
+    return { named: args.pattern, root: '', unmodelled: true }
+  }
   // `..` after a symlink differs physically and lexically; a tool may use
   // either, so the call is denied if either reading reaches a root.
   const readings = (named: string) => [realPathOf(isAbsolute(named) ? named : `${cwd}${sep}${named}`), realPathOf(resolve(cwd, named))]
@@ -756,7 +721,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
     if (!UNPOLICED_TOOLS.has(exec.name)) {
       const hit = protectedTarget(exec.arguments, agent === undefined ? process.cwd() : cwdOf(agent), protectedRoots, exec.name)
       if (hit !== undefined) {
-        const reason = `rka-memory: ${hit.named} ${hit.above ? 'holds' : 'is inside'} ${hit.root}, which the agent's tools may not read or change`
+        const reason = hit.unmodelled
+          ? `rka-memory: the glob pattern ${hit.named} uses braces, groups, '!' or escapes, which the agent's tools may not use here; use plain wildcards (*, **, ?, [...])`
+          : `rka-memory: ${hit.named} ${hit.above ? 'holds' : 'is inside'} ${hit.root}, which the agent's tools may not read or change`
         if (agent !== undefined) {
           // Logged as a failed call, so the ledger shows the attempt.
           void guard('PostToolUseFailure', () => hook(agent, 'PostToolUseFailure', {

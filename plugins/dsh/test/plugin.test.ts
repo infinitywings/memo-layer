@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { homedir } from 'node:os'
-import { braceAlternatives, Config, pathCandidates, protectedTarget, realPathOf, writtenPaths } from '../src/index.ts'
+import { Config, pathCandidates, protectedTarget, realPathOf, writtenPaths } from '../src/index.ts'
 import { captureStderr, fakeAgent, fakeHost, fakeRkaMemory, until, userMessage } from './fakes.ts'
 
 const CWD = '/work/app'
@@ -81,14 +81,14 @@ test('native file tools cannot reach a protected directory, by any path to it; s
   })
 })
 
-test('brace alternatives expand as a glob tool expands them, and too many start at the root', () => {
-  assert.deepEqual(braceAlternatives('a{b,c}d').sort(), ['abd', 'acd'])
-  assert.deepEqual(braceAlternatives('{x,y{1,2}}/z').sort(), ['x/z', 'y1/z', 'y2/z'])
-  assert.deepEqual(braceAlternatives('{only}/z'), ['{only}/z'])
-  assert.deepEqual(braceAlternatives('\\{a,b}'), ['\\{a,b}'])
-  // an escaped backslash, then a real brace group
-  assert.deepEqual(braceAlternatives('\\\\{a,b}').sort(), ['\\\\a', '\\\\b'])
-  assert.deepEqual(braceAlternatives('{a,b}'.repeat(9)), ['/'])
+test('a glob using braces, groups, alternation or escapes is refused, whatever it would match', () => {
+  const roots = ['/runs/x']
+  for (const pattern of ['{src,tests}/**/*.py', '**/*.{py,txt}', '/opt/rka(-memory|x)/**', '/opt/rka@(-memory)/**', '*/\\.\\./x/*', 'a{.,.}/b', '!x', '!**/node_modules', '[!a]*']) {
+    assert.deepEqual(protectedTarget({ pattern }, '/work', roots, 'glob'), { named: pattern, root: '', unmodelled: true }, pattern)
+  }
+  // only glob patterns are read as globs; a grep pattern may use any of it
+  assert.equal(protectedTarget({ pattern: '(a|b){2}' }, '/work', roots, 'grep'), undefined)
+  assert.equal(protectedTarget({ pattern: '**/*.py' }, '/work', roots, 'glob'), undefined)
 })
 
 test('grep, glob and read cannot start above a protected directory; content and grep patterns that name one open nothing', async (t) => {
@@ -135,7 +135,6 @@ test('grep, glob and read cannot start above a protected directory; content and 
     assert.equal((await decide(name, args)).kind, 'deny', `${name} ${JSON.stringify(args)}`)
   }
   for (const [name, args] of [
-    ['glob', { pattern: '{src,tests}/**/*.py' }],
     ['glob', { pattern: 'node_modules/@types/**' }],
     ['glob', { pattern: '../work/**/*.py' }],
   ] as const) {
