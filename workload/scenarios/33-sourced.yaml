@@ -1,0 +1,73 @@
+name: sourced
+description: >-
+  The sourced arm and the silent miner, as experiment E1 uses them (RKA
+  jrn_01M7NKFQ9SRYJP3XM9JXFZCKSV). The miner proposes nothing, so the two
+  records the runner plants after s1 are the whole memory: a true
+  requirement citing what the user's outcome check printed, and a wrong fact
+  citing the agent's own tool output. Both stay at L1. In s2 the sourced arm
+  delivers both under its neutral header, each ending with its source: the
+  check's words quoted, and the memory system's inference. The scripted
+  agent registers the new function only when its packet tells it to, and the
+  user's check then passes.
+start: 2027-02-01T12:00:00+00:00
+project: calc-uv
+fresh_project: true
+silent_miner: true
+config:
+  packet: {arms: [sourced]}
+  checks:
+    outcome:
+      command:
+        - "{python}"
+        - "-c"
+        - |
+          import sys
+          import calc
+          if "mean" in getattr(calc, "OPERATIONS", {}):
+              print("ops CLI check passed: offers mean")
+              sys.exit(0)
+          print("ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS")
+          sys.exit(1)
+sessions:
+  - at: +0d
+    prompt: Add a mean(values) function to calc.py, with tests.
+    agent: &work
+      - edit: {path: calc.py, old: "def subtract", new: "def mean(values):\n    return sum(values) / len(values)\n\n\ndef subtract"}
+      - told:
+          text: registered in calc.OPERATIONS
+          then:
+            - edit: {path: calc.py, old: "    return a - b\n", new: "    return a - b\n\n\nOPERATIONS = {\"mean\": mean}\n"}
+          else: []
+      - bash: pytest -q
+    plant:
+      - content: Register each new calc.py function in the calc.OPERATIONS dict
+        kind: constraint
+        evidence: [{kind: tool_result, actor: env, tool: outcome check}]
+        broaden: [task_class, model_id]
+        about: ["file:calc.py"]
+        falsifier: the ops CLI offers a function calc.OPERATIONS does not register
+      - content: calc.py tests live in test_extra.py
+        kind: fact
+        evidence: [{kind: tool_result, actor: tool}]
+        broaden: [task_class, model_id]
+        about: ["file:calc.py"]
+    expect:
+      - {arm: sourced}
+      - {outcome_check: false}
+      - {record: Register each new calc.py function in the calc.OPERATIONS dict, rung: L1}
+      - {record: calc.py tests live in test_extra.py, rung: L1}
+      - {events: {kind: record_proposed, count: 2}}
+
+  - at: +1d
+    prompt: Add a mean(values) function to calc.py that averages a list, with tests.
+    agent: *work
+    expect:
+      - {arm: sourced}
+      - {record: Register each new calc.py function in the calc.OPERATIONS dict, delivered: true}
+      - {record: calc.py tests live in test_extra.py, delivered: true}
+      - {model_saw: "## Notes from earlier sessions (rka-memory)"}
+      - {model_saw: "Register each new calc.py function in the calc.OPERATIONS dict (Source: the user's own acceptance check, which you are not shown, printed: \"ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS\")"}
+      - {model_saw: "calc.py tests live in test_extra.py (Source: the memory system's inference from tool output; not the user's words, not confirmed by a user check.)"}
+      - {model_never_saw: "Validated memory"}
+      - {outcome_check: true}
+      - {events: {kind: record_proposed, count: 2}}

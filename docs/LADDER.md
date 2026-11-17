@@ -7,7 +7,7 @@ This is what the v2 kernel computes (`rka_memory/kernel/labels.py`, from layer 1
 | Rung | Meaning | Reaches the agent? |
 |---|---|---|
 | L0D | Proposed without any counted non-model evidence | Never |
-| L1 | Counted evidence, not yet enough; or prescriptive and not yet affirmed | Only in the `ungated` arm (and, from layer 4, as a randomized trial candidate) |
+| L1 | Counted evidence, not yet enough; or prescriptive and not yet affirmed | Only in the `ungated` and `sourced` arms (and, from layer 4, as a randomized trial candidate) |
 | L2 | Validated | Yes, in the packet |
 | L3 | Skill (procedures only) | Yes, in the packet and as a SKILL.md |
 | L4 | Withdrawn by the user, depending on a withdrawn record, failed as a skill, or retired | Never |

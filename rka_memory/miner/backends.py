@@ -246,11 +246,19 @@ def none(prompt: str) -> Completion:
     return Completion(text="", tokens=0, seconds=0.0)
 
 
+def silent(prompt: str) -> Completion:
+    """A miner that reads every session and proposes nothing, for experiments
+    that fix the memory to what the runner plants. Unlike `none`, the session
+    counts as mined."""
+    return Completion(text='{"candidates": [], "rules": []}', tokens=0, seconds=0.0)
+
+
 BACKENDS: dict[str, Callable[[Config], Backend]] = {
     "claude_cli": claude_cli,
     "codex_cli": codex_cli,
     "openai_compat": openai_compat,
     "none": lambda cfg: none,
+    "silent": lambda cfg: silent,
 }
 
 

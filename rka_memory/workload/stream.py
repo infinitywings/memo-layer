@@ -83,6 +83,10 @@ class Stream:
     # repository: no session sees another's work. The runner's own
     # housekeeping (workspace_reset), so it never reads as the user's undo.
     fresh_project: bool = False
+    # The miner reads every session and proposes nothing, so the records the
+    # runner plants are the whole memory: for experiments on how memory is
+    # delivered, not on what is mined.
+    silent_miner: bool = False
 
 
 def parse_offset(text: str) -> timedelta:
@@ -374,7 +378,7 @@ def find_fixture(source: Path, name: str) -> Path:
 
 def parse(doc: Any, source: Path) -> Stream:
     where = str(source)
-    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config", "model", "per_arm", "fresh_project"})
+    d = _keys(doc, where, {"name", "start", "project", "sessions"}, {"description", "config", "model", "per_arm", "fresh_project", "silent_miner"})
     model = d.get("model", "scripted")
     if model not in MODELS:
         raise StreamError(f"{where}: model must be one of {list(MODELS)}, got {model!r}")
@@ -410,6 +414,9 @@ def parse(doc: Any, source: Path) -> Stream:
     fresh_project = d.get("fresh_project", False)
     if not isinstance(fresh_project, bool):
         raise StreamError(f"{where}: fresh_project is true or false")
+    silent_miner = d.get("silent_miner", False)
+    if not isinstance(silent_miner, bool):
+        raise StreamError(f"{where}: silent_miner is true or false")
     return Stream(
         name=_str(d["name"], where),
         description=str(d.get("description") or ""),
@@ -421,6 +428,7 @@ def parse(doc: Any, source: Path) -> Stream:
         source=source,
         per_arm=per_arm,
         fresh_project=fresh_project,
+        silent_miner=silent_miner,
     )
 
 

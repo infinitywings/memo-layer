@@ -394,6 +394,16 @@ def test_none_backend_mines_nothing_and_unknown_sessions_are_reported(memory):
     assert len(memory.ledger.read()) == before
 
 
+def test_silent_backend_mines_the_session_and_proposes_nothing(memory):
+    lg = Ledger()
+    session_one(memory, lg)
+    result = mine_session(memory, "s1", backend=backends.silent)
+
+    assert result.status == "mined"
+    assert memory.world().records == {}
+    assert memory.world().sessions["s1"].mined is True
+
+
 CLI_RESULT = {
     "type": "result",
     "subtype": "success",

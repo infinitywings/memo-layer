@@ -50,7 +50,7 @@ signals:
   payload_max_chars: 2000
 
 miner:
-  backend: claude_cli         # claude_cli | codex_cli | openai_compat | none
+  backend: claude_cli         # claude_cli | codex_cli | openai_compat | none | silent (mines, proposes nothing)
   model: null                 # null: claude_cli uses haiku, codex_cli Codex's own default; openai_compat needs a model id
   timeout_seconds: 240
   events_max_chars: 200000    # events per miner prompt, in characters; a longer session is mined in several prompts, oldest first

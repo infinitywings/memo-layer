@@ -45,6 +45,10 @@ REPO = Path(rka_memory.__file__).resolve().parent.parent
 PLUGIN = REPO / "plugins" / "dsh" / "src" / "index.ts"
 MOCK = REPO / "scripts" / "mock_llm.py"
 DSH_TIMEOUT = 600
+# The agent gets no web_search or web_fetch. The stream files that hold the
+# user's hidden checks are in a public repository, and live agents have
+# searched the web for their benchmark by name (run 20261116T144401Z).
+NO_WEB_TOOLS = {"id": "tool-web", "disabled": True}
 PLUGIN_TIMEOUT_MS = 600_000
 QUIET_TIMEOUT = 300
 # Rule 2's isolation re-run, inside the image only (docker/dsh/Dockerfile):
@@ -415,7 +419,12 @@ class StreamRun:
 
     def _setup(self, port: int | None) -> None:
         p = self.paths
-        miner = deepseek_miner() if port is None else {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
+        if self.stream.silent_miner:
+            miner = {"backend": "silent"}
+        elif port is None:
+            miner = deepseek_miner()
+        else:
+            miner = {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
         base = {
             "ledger": {"dir": str(p.ledger_dir)},
             "core": {"sync_on_session_end": False},
@@ -433,7 +442,10 @@ class StreamRun:
         config_mod.load(path=p.config)
         plugin_config = {"command": [str(rka_bin())], "timeoutMs": PLUGIN_TIMEOUT_MS, "protectedPaths": self.protected()}
         p.rka_overlay.write_text(
-            yaml.safe_dump([{"insert": [{"id": "rka-memory", "name": str(PLUGIN), "config": plugin_config}]}], sort_keys=False)
+            yaml.safe_dump(
+                [{"insert": [{"id": "rka-memory", "name": str(PLUGIN), "config": plugin_config}]}, NO_WEB_TOOLS],
+                sort_keys=False,
+            )
         )
         route = [
             {

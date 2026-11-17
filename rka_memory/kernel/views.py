@@ -17,6 +17,11 @@ Layout, for reuse of the provider's prefix cache across sessions:
 3. the tail: in the ungated arm, records not yet validated; in the gated
    arm, the trial candidates this session's logged coins treat (5.3).
 
+The sourced arm delivers what the ungated arm delivers, as one list under a
+neutral header, and ends each line with its source: where the events its
+counted support cites came from. The clause names a class of source, never a
+count, so it changes only when the class does.
+
 A budget selects whole dependency groups (user-affirmed first, then those
 about recently touched anchors, then the oldest) and never reorders. A
 withdrawn record is never delivered, even though removing it breaks the
@@ -35,7 +40,7 @@ import yaml
 
 from rka_memory import relations
 from rka_memory.config import Config
-from rka_memory.domain import SCOPE_FIELDS, Polarity, RecordKind, Rung, State, collapse
+from rka_memory.domain import OUTCOME_CHECK, SCOPE_FIELDS, Actor, Kind, Polarity, RecordKind, Rung, State, collapse
 from rka_memory.kernel.evidence import counted, statement
 from rka_memory.kernel.labels import Labels, valid
 from rka_memory.skills.gate import skill_name
@@ -48,6 +53,10 @@ HEADER = (
     "Each record below was grounded by events outside the model (tests, exit codes, user edits) or stated by the user, "
     "and applies to the current project state. Follow them unless the current task contradicts one. "
     "If one is wrong, tell the user, who can type `rkm reject <id> <reason>`."
+)
+SOURCED_HEADER = (
+    "## Notes from earlier sessions (rka-memory)\n"
+    "Each note ends with its source. If one is wrong, tell the user, who can type `rkm reject <id> <reason>`."
 )
 AMENDMENTS = "### Amendments to the records above"
 UNVALIDATED = "### Not yet validated"
@@ -120,6 +129,25 @@ def text_of(rec: RecordState, world: World, cfg: Config) -> str:
     return f'The user said: "{said}"' if stated(rec, world, cfg) else said
 
 
+def source_clause(rec: RecordState, world: World, cfg: Config) -> str:
+    """Where a record came from, read from the events its counted support
+    cites and never from its own text. A stated rule's text already names the
+    user. A user's check is quoted as it printed, so the agent can judge for
+    itself whether it bears on the record."""
+    if stated(rec, world, cfg):
+        return ""
+    support = [g.event for g in counted(rec, world, cfg, Polarity.SUPPORT)]
+    if any(ev.kind in (Kind.USER_CONFIRM, Kind.USER_AMEND) for ev in support):
+        return "(Source: the user confirmed it.)"
+    for ev in support:
+        if ev.actor is Actor.ENV and ev.payload.get("tool") == OUTCOME_CHECK:
+            printed = flatten(str(ev.payload.get("output") or ""))
+            return f'(Source: the user\'s own acceptance check, which you are not shown, printed: "{printed}")'
+    if any(ev.kind is Kind.USER_MSG for ev in support):
+        return "(Source: the memory system's reading of a user message, not the user's own words.)"
+    return "(Source: the memory system's inference from tool output; not the user's words, not confirmed by a user check.)"
+
+
 @dataclass(frozen=True)
 class Line:
     record_id: str
@@ -161,6 +189,11 @@ class View:
     def _text(self) -> str:
         if not self.lines:
             return ""
+        if self.arm == "sourced":
+            parts = [SOURCED_HEADER, *(line.render() for line in self.lines)]
+            if self.omitted:
+                parts += ["", f"({len(self.omitted)} more notes omitted for budget.)"]
+            return "\n".join(parts)
         parts = [HEADER, *(line.render() for line in self.core)]
         if self.amendments:
             parts += ["", AMENDMENTS, *(line.render() for line in self.amendments)]
@@ -258,14 +291,17 @@ def packet(
     amendments = {rid: targets for rid, targets in amendments.items() if targets}
     selected = [r for r in chosen if r.id in core_ids or r.id in amendments]
     unvalidated: list[RecordState] = []
-    if arm == "ungated":
+    if arm in ("ungated", "sourced"):
         unvalidated = [
             r for r in world.records.values()
             if labels.rung(r.id) is Rung.L1 and r.id not in hidden and r.scope.covers(state)
         ]
 
     def line(r: RecordState) -> Line:
-        return Line(r.id, text_of(r, world, cfg), amendments.get(r.id, ()))
+        text = text_of(r, world, cfg)
+        if arm == "sourced":
+            text = " ".join(part for part in (text, source_clause(r, world, cfg)) if part)
+        return Line(r.id, text, amendments.get(r.id, ()))
 
     def since(r: RecordState) -> tuple[int, int]:
         lab = labels.by_id[r.id]
@@ -282,7 +318,7 @@ def packet(
     groups += [[r] for r in sorted(unvalidated, key=lambda r: world.position[r.proposed.id])]
     kept: set[str] = set()
     omitted: list[str] = []
-    used = estimate_tokens(HEADER)
+    used = estimate_tokens(SOURCED_HEADER if arm == "sourced" else HEADER)
     for group in groups:
         cost = sum(estimate_tokens(line(r).render()) for r in group)
         if used + cost > budget:

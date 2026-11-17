@@ -121,7 +121,7 @@ A counter link counts under rules 1 to 3, in two classes, as in v1: if `n` was i
 ### 5.2 Labels
 
 - **L0D**: proposed, no counted support.
-- **L1**: counted support below threshold, or prescriptive evidence not yet sufficient. Delivered only in the `ungated` arm and as a randomized trial candidate (Section 5.3).
+- **L1**: counted support below threshold, or prescriptive evidence not yet sufficient. Delivered only in the `ungated` and `sourced` arms and as a randomized trial candidate (Section 5.3).
 - **L2**: a user affirmation; or, for descriptive nodes, counted independent support of weight at least `k` from at least two sessions (three if all weak); or, for prescriptive nodes, a positive interventional contrast (Section 5.3); and no counted counter after the last affirmation.
 - **L3**: an L2 procedure whose acceptance check passed and whose interventional contrast on the session outcome is positive.
 - **L4**: retracted, superseded in revision mode, or retired.

@@ -188,6 +188,50 @@ def test_arms_choose_what_is_delivered():
     ]
 
 
+def test_the_sourced_arm_delivers_the_ungated_records_each_ending_with_its_source():
+    lg = Ledger()
+    validated(lg, "r_a", "s1", "s2", content="A holds")
+    lg.start("s3", **UV)
+    msg = lg.user_msg("s3", "From now on: End every reply with a Summary line.")
+    lg.propose("s3", "r_rule", kind=RecordKind.PREFERENCE, content="End every reply with a Summary line")
+    lg.link("r_rule", msg, statement=STATEMENT)
+    lg.propose("s3", "r_conf", content="B holds")
+    lg.link("r_conf", lg.tool_result("s3"))
+    lg.confirm("s3", "r_conf")
+    lg.propose("s3", "r_read", content="The user wants short replies")
+    lg.link("r_read", msg)
+    printed = lg.outcome_output("s3", 1, "ops check failed: the ops CLI offers only functions in calc.OPERATIONS")
+    lg.propose("s3", "r_check", content="Register new functions in calc.OPERATIONS")
+    lg.link("r_check", printed)
+    lg.end("s3")
+    sourced = view(lg, arm="sourced")
+    assert sourced.record_ids == view(lg, arm="ungated").record_ids
+    assert sourced.render().splitlines()[:2] == [
+        "## Notes from earlier sessions (rka-memory)",
+        "Each note ends with its source. If one is wrong, tell the user, who can type `rkm reject <id> <reason>`.",
+    ]
+    assert lines_of(sourced) == [
+        "- [r_a] A holds (Source: the memory system's inference from tool output; not the user's words,"
+        " not confirmed by a user check.)",
+        '- [r_rule] The user said: "End every reply with a Summary line"',
+        "- [r_conf] B holds (Source: the user confirmed it.)",
+        "- [r_read] The user wants short replies (Source: the memory system's reading of a user message,"
+        " not the user's own words.)",
+        "- [r_check] Register new functions in calc.OPERATIONS (Source: the user's own acceptance check, which you"
+        ' are not shown, printed: "ops check failed: the ops CLI offers only functions in calc.OPERATIONS")',
+    ]
+
+
+def test_a_sourced_line_keeps_its_bytes_as_support_grows():
+    lg = Ledger()
+    validated(lg, "r_a", "s1", "s2", content="A holds")
+    first = view(lg, arm="sourced").render()
+    lg.start("s3", **UV)
+    lg.link("r_a", lg.test("s3", True))
+    lg.end("s3")
+    assert view(lg, arm="sourced").render() == first
+
+
 def test_a_record_scoped_to_another_project_is_not_delivered():
     lg = Ledger()
     validated(lg, "r_a", "s1", "s2", content="A holds", scope=Scope(project=FieldConstraint(frozenset({"/p/app"}))))

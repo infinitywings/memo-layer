@@ -24,6 +24,7 @@ from rka_memory.workload.stream import (
     StreamError,
     Verdict,
     Write,
+    by_arm,
     load,
     load_all,
     parse_offset,
@@ -351,7 +352,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation", "outcome-trial"]
+    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation", "outcome-trial", "sourced"]
 
 
 LIVE = """
@@ -467,6 +468,18 @@ def test_report_row_says_what_a_session_received_and_changed():
     assert "| L2 | fact | r_a | Run the tests | any state |" in lines
     assert "| none | 1 | 400.0 | 400 |" in lines
     assert "Harness checks: 5 of 5 passed." in lines
+
+
+def test_the_e1_streams_fix_memory_to_what_s1_plants_and_compare_two_renderings():
+    streams = {s.name: s for p in sorted((REPO / "workload" / "e1").glob("*.yaml")) for s in load_all(p)}
+    assert sorted(streams) == ["e1-unseen-sourced", "e1-unseen-ungated", "e1-unverifiable-sourced", "e1-unverifiable-ungated"]
+    for s in streams.values():
+        assert (s.model, s.fresh_project, s.silent_miner) == ("live", True, True)
+        assert [x.label for x in s.sessions if x.plant] == ["s1"]
+        assert not any("Summary" in x.prompt for x in s.sessions)
+    unseen = streams["e1-unseen-sourced"].sessions[0].plant
+    assert [p["evidence"] for p in unseen] == [[{"kind": "tool_result", "actor": "env", "tool": "outcome check"}]]
+    assert len(streams["e1-unverifiable-ungated"].sessions[0].plant) == 3
 
 
 def test_every_shipped_live_stream_loads_as_live():
@@ -848,6 +861,14 @@ def test_fresh_project_is_a_stream_level_switch(tmp_path):
     assert not load(write_stream(tmp_path / "b", LIVE)).fresh_project
     with pytest.raises(StreamError, match="fresh_project is true or false"):
         load(write_stream(tmp_path / "c", LIVE.replace("model: live\n", "model: live\nfresh_project: yes please\n")))
+
+
+def test_silent_miner_is_a_stream_level_switch_that_survives_the_split_by_arm(tmp_path):
+    stream = load(write_stream(tmp_path / "a", LIVE.replace("model: live\n", "model: live\nsilent_miner: true\n")))
+    assert stream.silent_miner and all(s.silent_miner for s in by_arm(stream))
+    assert not load(write_stream(tmp_path / "b", LIVE)).silent_miner
+    with pytest.raises(StreamError, match="silent_miner is true or false"):
+        load(write_stream(tmp_path / "c", LIVE.replace("model: live\n", "model: live\nsilent_miner: 1\n")))
 
 
 def test_unseen_requirement_stream_starts_every_session_fresh_and_checks_registration():
