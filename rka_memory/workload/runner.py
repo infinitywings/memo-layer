@@ -343,11 +343,23 @@ def _plant(memory: Memory, session_id: str, wanted: tuple[dict[str, Any], ...]) 
 
 
 class StreamRun:
-    def __init__(self, stream: Stream, root: Path, dsh: str, workspace: Path | None = None, fence: Path | None = None) -> None:
+    def __init__(
+        self,
+        stream: Stream,
+        root: Path,
+        dsh: str,
+        workspace: Path | None = None,
+        fence: Path | None = None,
+        sealed: tuple[Path, ...] = (),
+    ) -> None:
         self.stream = stream
         self.paths = RunPaths.under(root.resolve(), (workspace or root / "project").resolve())
         self.confine = confinement()
         self.fence = fence.resolve() if fence is not None else None
+        # Paths outside the runs volume the agent must not reach either, such
+        # as the host directory results are copied to, which holds every
+        # earlier run's reports, projects and ledgers.
+        self.sealed = tuple(x.resolve() for x in sealed)
         self.way: list[Path] = []
         self.beside: list[Path] = []
         self.dsh = dsh
@@ -406,7 +418,7 @@ class StreamRun:
         (stream files with their hidden checks, scoring scripts) and the runs
         around this one. dsh's read, glob and grep run inside dsh as root, so
         file modes do not stop them; the plugin denies these paths to them."""
-        return list(dict.fromkeys(str(x) for x in (self.paths.root, REPO, *self.beside)))
+        return list(dict.fromkeys(str(x) for x in (self.paths.root, REPO, *self.sealed, *self.beside)))
 
     def _plant_canaries(self) -> None:
         """Secrets only the ledger side knows. A stream's `model_never_saw`
@@ -673,7 +685,7 @@ class StreamRun:
                 return self._finish()
             # The stream file holds the hidden checks, and another arm's project
             # holds what that arm learned.
-            open_ = [str(x) for x in (self.stream.source, *self.beside) if agent_can_read(x, *self.confine)]
+            open_ = [str(x) for x in (self.stream.source, *self.sealed, *self.beside) if agent_can_read(x, *self.confine)]
             self.check(label, "the agent user cannot read the harness or other runs", not open_, open_)
             if open_:
                 return self._finish()
@@ -738,7 +750,8 @@ def run_all(
     fence = fence_of(out, confinement() is not None)
     for st in streams:
         print(f"== {st.name}: {st.source}", flush=True)
-        results = StreamRun(st, root / st.name, binary, workspace=root / "workspaces" / st.name, fence=fence).run()
+        sealed = (copy_to,) if copy_to is not None else ()
+        results = StreamRun(st, root / st.name, binary, workspace=root / "workspaces" / st.name, fence=fence, sealed=sealed).run()
         failed = sum(not r.ok for r in results)
         summary[st.name] = {"checks": len(results), "failed": failed}
         print(f"== {st.name}: {len(results) - failed}/{len(results)} checks passed; report in {root / st.name / 'report.md'}\n", flush=True)

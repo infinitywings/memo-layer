@@ -470,6 +470,13 @@ def test_report_row_says_what_a_session_received_and_changed():
     assert "Harness checks: 5 of 5 passed." in lines
 
 
+def test_the_host_copy_target_is_sealed_from_the_agents_tools(tmp_path):
+    stream = load(write_stream(tmp_path / "s", LIVE))
+    run = runner.StreamRun(stream, tmp_path / "run", "dsh", sealed=(tmp_path / "host-out",))
+    assert str((tmp_path / "host-out").resolve()) in run.protected()
+    assert str((tmp_path / "host-out").resolve()) not in runner.StreamRun(stream, tmp_path / "run2", "dsh").protected()
+
+
 def test_the_e1_streams_fix_memory_to_what_s1_plants_and_compare_two_renderings():
     streams = {s.name: s for p in sorted((REPO / "workload" / "e1").glob("*.yaml")) for s in load_all(p)}
     assert sorted(streams) == ["e1-unseen-sourced", "e1-unseen-ungated", "e1-unverifiable-sourced", "e1-unverifiable-ungated"]
