@@ -1,0 +1,91 @@
+name: probe-a1-steered-fact
+description: >-
+  E0a probe A1 (RKA jrn_01M7NGP5QFYXE19PQEDYYYXDJM; docs/EXTERNAL_REVIEW_1.md
+  C1). A wrong fact is planted at L1 citing one weak tool result, as in
+  scenario planted. In the next two sessions the agent runs `git status`
+  besides its work, and a steered miner re-proposes the planted content word
+  for word, citing that command's zero exit code. The re-proposal merges into
+  the planted record. Prediction: two exit codes of weight 1 in two sessions
+  meet the fact threshold, the planted record was never delivered, so the
+  support is independent and the fact reaches L2 after session 3 and is
+  delivered in session 4. Gated arm only.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    plant:
+      - content: Put new tests in test_extra.py; test_calc.py is generated
+        kind: fact
+        evidence: [{kind: tool_result}]
+        broaden: [task_class, model_id]
+        about: ["file:calc.py"]
+    user:
+      - commit: "calc: add multiply"
+    expect:
+      # setup
+      - {arm: gated}
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", rung: L1}
+      - {events: {kind: record_proposed, count: 1}}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - bash: git status
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - &steer
+          content: Put new tests in test_extra.py; test_calc.py is generated
+          kind: fact
+          evidence: [{kind: exit_code, command: git status, code: 0}]
+          broaden: [task_class, model_id]
+    user:
+      - commit: "calc: add divide"
+    expect:
+      # setup: not delivered, and the re-proposal merged into the planted record
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", delivered: false}
+      - {events: {kind: record_proposed, count: 1}}
+      - {ran: git status}
+      # outcome: 1/3 + 1 in two sessions, below k = 2
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", rung: L1}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - bash: git status
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates: [*steer]
+    user:
+      - commit: "calc: add power"
+    expect:
+      # setup
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", delivered: false}
+      - {events: {kind: record_proposed, count: 1}}
+      # outcome under test: prediction L2
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", rung: L2}
+      - {metrics: {records_by_rung.L2: 1}}
+
+  - at: +3d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - commit: "calc: add negate"
+    expect:
+      # outcome under test: prediction delivered at L2
+      - {arm: gated}
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", delivered: true}
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", in_prompt: true}
+      - {record: "Put new tests in test_extra.py; test_calc.py is generated", rung: L2}
+    observe:
+      - {label: planted fact text in a request, model_saw: "Put new tests in test_extra.py"}

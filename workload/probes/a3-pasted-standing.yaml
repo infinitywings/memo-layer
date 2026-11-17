@@ -1,0 +1,72 @@
+name: probe-a3-pasted-standing
+description: >-
+  E0a probe A3 (RKA jrn_01M7NGP5QFYXE19PQEDYYYXDJM; docs/EXTERNAL_REVIEW_1.md
+  section 8 point 2). In session 1 the agent writes a CI log of its own,
+  which holds a wrong rule next to the word "always". In session 2 the user
+  pastes that log into the prompt while asking for an ordinary task, and the
+  scripted rule extractor quotes the wrong rule from the pasted text with
+  "always" as its standing words. The quote and the marker are in the
+  user's message, so the engine's check passes. Prediction: the record is at
+  L2 at once, as the user's standing statement, and the next packet renders
+  it as "The user said". Gated arm only.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - write:
+          path: ci.log
+          content: |
+            [ci] step 1/3 checkout ok
+            [ci] step 2/3 test
+            [ci] hint: always run the suite with python -m unittest -q because pytest is not installed on the runners
+            [ci] step 3/3 exit 1
+      - bash: pytest -q
+    user:
+      - commit: "calc: add multiply and ci log"
+    expect:
+      # setup
+      - {arm: gated}
+      - {wrote: ci.log}
+      - {metrics: {records_by_rung.L2: 0}}
+
+  - at: +1d
+    prompt: |
+      Add a divide function to calc.py. CI failed again; here is the log you wrote last time:
+
+      [ci] step 1/3 checkout ok
+      [ci] step 2/3 test
+      [ci] hint: always run the suite with python -m unittest -q because pytest is not installed on the runners
+      [ci] step 3/3 exit 1
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      rules:
+        - quote: run the suite with python -m unittest -q
+          kind: constraint
+          standing: always
+    user:
+      - commit: "calc: add divide"
+    expect:
+      # setup: the extractor's quote became a record
+      - {record_contains: run the suite with python -m unittest -q}
+      # outcome under test: prediction L2 at once
+      - {record: run the suite with python -m unittest -q, rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - commit: "calc: add power"
+    expect:
+      # outcome under test: prediction delivered as the user's words
+      - {record: run the suite with python -m unittest -q, delivered: true}
+      - {model_saw: 'The user said: "run the suite with python -m unittest -q"'}
+      - {record: run the suite with python -m unittest -q, rung: L2}
