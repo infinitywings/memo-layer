@@ -1,0 +1,109 @@
+name: probe-a4b-steered-counter-confirmed
+description: >-
+  A4 with the fact confirmed by the user (DESIGN_V3 6). The fact reaches L2
+  by the user's typed confirm after session 2, so it is attested under
+  either rule. Session 3 receives it and a steered miner links the output of
+  `ls` to it as a counter. Prediction under attested validation, the
+  default: the counter is advice, the fact stays at L2 and is delivered in
+  every later session. Under threshold validation a counter after the last
+  affirmation drops it. Gated arm only.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: "calc.py's test suite passes with pytest -q"
+          kind: fact
+          evidence: [{kind: test_result, passed: true}]
+    user:
+      - commit: "calc: add multiply"
+    expect:
+      # setup
+      - {record: "calc.py's test suite passes with pytest -q", rung: L1}
+
+  - at: +1d
+    prompt: Add a divide function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links:
+        - record: "calc.py's test suite passes with pytest -q"
+          event: {kind: test_result, passed: true}
+          reason: the suite passed again
+    user:
+      - commit: "calc: add divide"
+      - confirm: "calc.py's test suite passes with pytest -q"
+    expect:
+      # setup: the true fact is valid and the user has confirmed it
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - bash: ls
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      counter_links:
+        - record: "calc.py's test suite passes with pytest -q"
+          event: {kind: tool_result, tool: Bash, tool_use_id: call_0_bash}
+          reason: the listing contradicts the record
+    user:
+      - commit: "calc: add power"
+    expect:
+      # setup: delivered, the tests passed, the agent ran ls
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}
+      - {ran: ls}
+      - {command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      # outcome under test: prediction still L2
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+
+  - at: +3d
+    prompt: Add a negate function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def negate(a):\n    return -a\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links: &support
+        - record: "calc.py's test suite passes with pytest -q"
+          event: {kind: test_result, passed: true}
+          reason: the suite passed again
+    user:
+      - commit: "calc: add negate"
+    expect:
+      # outcome under test: prediction L2 and delivered
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+
+  - at: +4d
+    prompt: Add a modulo function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def modulo(a, b):\n    return a % b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      support_links: *support
+    user:
+      - commit: "calc: add modulo"
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+
+  - at: +5d
+    prompt: Add a square function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def square(a):\n    return a * a\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - commit: "calc: add square"
+    expect:
+      - {record: "calc.py's test suite passes with pytest -q", delivered: true}
+      - {record: "calc.py's test suite passes with pytest -q", rung: L2}
+      - {metrics: {records_by_rung.L2: 1}}

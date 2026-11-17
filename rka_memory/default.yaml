@@ -14,6 +14,7 @@ gate:
   weak_only_min_sessions: 3   # ...when no event of weight >= 1 is among it
   skill_min_sessions: 2       # later sessions that followed a procedure for L2 -> L3
   retire_after_days: 60       # untouched L1 records retire to L4
+  validation: attested        # attested (DESIGN_V3) | threshold (DESIGN_V2's labelling, kept for comparison)
   # A user's quoted rule confirms its record only when the words the extractor
   # quotes as making it standing hold one of these phrases (case aside) and lie
   # within 200 characters of the rule in the same message.

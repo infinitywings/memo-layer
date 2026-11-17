@@ -109,6 +109,22 @@ def _outcome(ok: bool) -> frozenset[Polarity]:
 OUTCOME_CHECK = "outcome check"
 
 
+class Integrity(StrEnum):
+    """Who controls an event's content (DESIGN_V3 2.1)."""
+
+    USER = "U"  # the user's own typed content
+    CHECK = "X"  # what the user's outcome check printed, run by the runner
+    AGENT = "A"  # anything the agent's actions shape
+
+
+def integrity(ev: Event) -> Integrity:
+    if ev.actor is Actor.USER:
+        return Integrity.USER
+    if ev.actor is Actor.ENV and ev.payload.get("tool") == OUTCOME_CHECK:
+        return Integrity.CHECK
+    return Integrity.AGENT
+
+
 def passing_outcome_check(ev: Event) -> bool:
     """What the user's outcome check printed when it passed (DESIGN_V2 5.3)."""
     return ev.actor is Actor.ENV and ev.payload.get("tool") == OUTCOME_CHECK and ev.payload.get("exit_code") == 0

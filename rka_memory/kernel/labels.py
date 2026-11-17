@@ -31,6 +31,14 @@ Stratum 2 labels every other record:
   user affirmation is exempt from rules 4 and 5;
 - counted counters after the last affirmation block L2; a counter whose
   influence held a withdrawn record is set aside.
+
+Under attested validation (DESIGN_V3, the default) stratum 2 changes in
+three places: L2 needs the user's affirmation, the record's exact words
+printed by the user's check in two sessions, or a positive trial, never
+threshold support; a counter blocks L2 only when it is the user's own words
+or verdict, and every other counter link is kept as advice; and a record of
+any kind enters a trial, which needs a configured outcome check. Pending
+restrictions do not withhold.
 """
 
 from __future__ import annotations
@@ -39,8 +47,30 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 from rka_memory.config import Config
-from rka_memory.domain import Actor, Event, Kind, Polarity, RecordKind, Rung, State, derived_id, parse_ts
-from rka_memory.kernel.evidence import Grounding, affirmation, applicable, counted, inside, meets_l2, modified_sessions
+from rka_memory.domain import (
+    Actor,
+    Event,
+    Integrity,
+    Kind,
+    Polarity,
+    RecordKind,
+    Rung,
+    State,
+    collapse,
+    derived_id,
+    integrity,
+    parse_ts,
+)
+from rka_memory.kernel.evidence import (
+    Grounding,
+    affirmation,
+    applicable,
+    counted,
+    inside,
+    is_targeted,
+    meets_l2,
+    modified_sessions,
+)
 from rka_memory.kernel import trials
 from rka_memory.kernel.influence import Influence, Reach
 from rka_memory.skills.gate import OUTCOME_KINDS, _used_skill, final_outcome, follows, normalize_command, outcome_ok
@@ -73,6 +103,9 @@ class Label:
     # For a prescriptive record whose support met the threshold: its
     # randomized trial, "open", "positive" or "closed" (DESIGN_V2 5.3).
     trial: str | None = None
+    # Under attested validation: counter-evidence a model linked, kept for
+    # the user to review; it does not move the record (DESIGN_V3 2.3).
+    advice: tuple[str, ...] = ()
 
     @property
     def valid(self) -> bool:
@@ -251,8 +284,30 @@ def label(world: World, cfg: Config, now: datetime) -> Labels:
     ordered = list(world.events.values())
     for rec in sorted(world.records.values(), key=lambda r: world.position[r.proposed.id]):
         out.by_id[rec.id] = _label_one(rec, world, cfg, now, influence, reach, withdrawn, roots, held, out, ordered)
-    _withhold_pending_restrictions(world, out, held)
+    if cfg.gate.validation == "threshold":
+        _withhold_pending_restrictions(world, out, held)
     return out
+
+
+def _users_own(g: Grounding, rec: RecordState) -> bool:
+    """Counter-evidence that is the user's: their quoted words, or their
+    verdict naming the record."""
+    return integrity(g.event) is Integrity.USER and (g.quote is not None or is_targeted(g.event, rec.id))
+
+
+def _check_quoted(usable: list[Grounding], rec: RecordState, world: World) -> int | None:
+    """The position at which the record's exact words, printed by the user's
+    check, reach a second session (DESIGN_V3 3.1)."""
+    words = collapse(rec.spec.content)
+    seen: list[str] = []
+    for g in sorted(usable, key=lambda g: world.position[g.event.id]):
+        if g.quote is None or integrity(g.event) is not Integrity.CHECK or collapse(g.quote) != words:
+            continue
+        if g.session_id not in seen:
+            seen.append(g.session_id)
+            if len(seen) == 2:
+                return world.position[g.event.id]
+    return None
 
 
 def _withhold_pending_restrictions(world: World, labels: Labels, held: dict[str, frozenset[str]]) -> None:
@@ -325,10 +380,14 @@ def _label_one(
     affirmations = _affirmations(rec, world, cfg)
     last_aff = max((world.position[g.event.id] for g in affirmations), default=-1)
 
+    attested = cfg.gate.validation == "attested"
     learned_under = tuple(sorted(w for w in withdrawn if w in influence.session(rec.proposed.session_id)))
-    counters, earlier = [], []
+    counters, earlier, advice = [], [], []
     for g in counted(rec, world, cfg, Polarity.COUNTER):
         if not inside(rec.scope, g):
+            continue
+        if attested and not _users_own(g, rec):
+            advice.append(g.event.id)
             continue
         if influence.of(g.event, rec) & withdrawn:
             if world.position[g.event.id] > last_aff:
@@ -352,11 +411,16 @@ def _label_one(
         usable.append(g)
 
     common = dict(support=tuple(g.event.id for g in usable), set_aside=tuple(set_aside), counters=tuple(counters),
-                  affirmed=bool(affirmations), learned_under=learned_under)
-    threshold = _since([g for g in usable if not affirmation(g)], world, cfg) if rec.spec.kind in DESCRIPTIVE else None
+                  affirmed=bool(affirmations), learned_under=learned_under, advice=tuple(advice))
+    if attested:
+        threshold = _check_quoted(usable, rec, world)
+    elif rec.spec.kind in DESCRIPTIVE:
+        threshold = _since([g for g in usable if not affirmation(g)], world, cfg)
+    else:
+        threshold = None
     l2, since, why = False, None, ""
     if counters:
-        why = "counter-evidence after the last affirmation"
+        why = "the user's own words against it after the last affirmation" if attested else "counter-evidence after the last affirmation"
     elif affirmations:
         l2 = True
         kinds = {g.event.kind for g in affirmations}
@@ -373,8 +437,13 @@ def _label_one(
         if fall < 0 and threshold is not None:
             since = min(since, threshold)
     elif threshold is not None:
-        l2, since, why = True, threshold, "independent grounding in enough distinct sessions"
-    elif rec.spec.kind in DESCRIPTIVE:
+        l2, since = True, threshold
+        why = "the user's check printed its words in two sessions" if attested else "independent grounding in enough distinct sessions"
+    elif attested and not meets_l2(support, cfg):
+        why = "hypothesis: model-made support only"
+    elif attested and not cfg.outcome.command:
+        why = "hypothesis: no outcome check is configured to test it"
+    elif not attested and rec.spec.kind in DESCRIPTIVE:
         why = "independent grounding below threshold"
     elif meets_l2(support, cfg):
         # Its own evidence would validate a fact, so it may be tested: a

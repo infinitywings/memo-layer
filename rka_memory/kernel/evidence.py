@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from rka_memory.config import Config
 from rka_memory.domain import (
@@ -22,11 +22,13 @@ from rka_memory.domain import (
     REFUTING_KINDS,
     Actor,
     Event,
+    Integrity,
     Kind,
     Polarity,
     Scope,
     State,
     collapse,
+    integrity,
     quoted,
     standing,
 )
@@ -93,6 +95,10 @@ class Grounding:
     # The user stated, in this event and in so many words, that what the
     # record says is a standing rule: it confirms the record like a verdict.
     affirms: bool = False
+    # The words the link quotes from a user message or the user's check
+    # output, checked against the logged event and, under attested
+    # validation, not taint.
+    quote: str | None = None
 
     @property
     def session_id(self) -> str:
@@ -108,20 +114,79 @@ def inside(scope: Scope, g: Grounding) -> bool:
     return g.targeted or scope.covers(g.state)
 
 
-def statement(made_by: Event | None, ev: Event, cfg: Config) -> tuple[str, bool] | None:
-    """The user's words a link quotes from the user message it cites, checked
-    here against the logged message: (quote, standing), or None when the link
-    quotes nothing or misquotes. Standing means the link also quotes words
-    next to the rule that hold one of the configured standing phrases, such as
-    "from now on"."""
-    if made_by is None or ev.kind is not Kind.USER_MSG or ev.actor is not Actor.USER:
+def statement(made_by: Event | None, ev: Event, cfg: Config, world: World | None = None) -> tuple[str, bool] | None:
+    """The words a link quotes from the user message, or (under attested
+    validation) the output of the user's check, that it cites, checked here
+    against the logged event: (quote, standing), or None when the link quotes
+    nothing, misquotes, or quotes taint. Standing means the link also quotes
+    words next to a user's rule that hold one of the configured standing
+    phrases, such as "from now on"; a check's output is never standing."""
+    if made_by is None:
+        return None
+    attested = cfg.gate.validation == "attested"
+    if ev.kind is Kind.USER_MSG and ev.actor is Actor.USER:
+        text = str(ev.payload.get("text") or "")
+    elif attested and integrity(ev) is Integrity.CHECK:
+        text = str(ev.payload.get("output") or "")
+    else:
         return None
     said = made_by.payload.get("statement")
-    text = str(ev.payload.get("text") or "")
     if not isinstance(said, dict) or not isinstance(said.get("quote"), str) or not quoted(text, said["quote"]):
         return None
+    if attested and world is not None and taint(world, said["quote"], ev, cfg.ledger_dir / "blobs"):
+        return None
     marker = said.get("marker")
-    return said["quote"], isinstance(marker, str) and standing(text, said["quote"], marker, cfg.gate.standing_phrases)
+    is_rule = ev.kind is Kind.USER_MSG and isinstance(marker, str)
+    return said["quote"], is_rule and standing(text, said["quote"], marker, cfg.gate.standing_phrases)
+
+
+def _strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, (list, tuple)):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+# What the agent's actions put in the log. The memory system's own events
+# (proposals, links, deliveries) quote records by design and are not here.
+AGENT_CONTENT = frozenset({Kind.TOOL_CALL, Kind.TOOL_RESULT, Kind.FILE_WRITE, Kind.EXIT_CODE, Kind.TEST_RESULT})
+
+
+def _written(ev: Event, blobs: Path | None) -> str:
+    """What a file write left in the file, from the content store the log's
+    hash names. Content-addressed, so a label stays a function of the log and
+    the store it points to."""
+    digest = ev.payload.get("post_hash")
+    if ev.kind is not Kind.FILE_WRITE or blobs is None or not isinstance(digest, str):
+        return ""
+    try:
+        return (blobs / digest).read_text(errors="replace")
+    except (OSError, ValueError):
+        return ""
+
+
+def taint(world: World, quote: str, before: Event, blobs: Path | None = None) -> bool:
+    """The quoted words occur in what the agent's actions put in the log, or
+    in a file it wrote, before `before` (DESIGN_V3 3.2): they reached the user
+    or the check from the agent, as a pasted log the agent wrote does. What
+    the agent replied in chat is not logged, so it is not covered."""
+    cache = world.__dict__.setdefault("_taint", {})
+    if cache.get("revision") != (world.revision, blobs):
+        cache.clear()
+        cache["revision"] = (world.revision, blobs)
+        cache["texts"] = [
+            (world.position[ev.id], collapse(" ".join([*_strings(ev.payload), _written(ev, blobs)])).lower())
+            for ev in world.events.values()
+            if ev.kind in AGENT_CONTENT and integrity(ev) is Integrity.AGENT
+        ]
+    key = (collapse(quote).lower(), before.id)
+    if key not in cache:
+        at = world.position[before.id]
+        cache[key] = bool(key[0]) and any(pos < at and key[0] in text for pos, text in cache["texts"])
+    return cache[key]
 
 
 def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> list[Grounding]:
@@ -148,7 +213,7 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
         if ev.kind in OUTCOMES and ev.session_id in modified_sessions(world, cfg):
             # The session changed its own tests: its results are not strong.
             weight = min(weight, cfg.weight(Kind.TOOL_RESULT))
-        said = statement(made_by, ev, cfg)
+        said = statement(made_by, ev, cfg, world)
         by_model = made_by is not None and made_by.actor is Actor.MODEL
         if by_model and said is None and ev.session_id in trial:
             # The trial judges its own sessions by their outcomes: the miner's
@@ -171,7 +236,7 @@ def counted(rec: RecordState, world: World, cfg: Config, polarity: Polarity) -> 
             targeted = True
         if polarity is Polarity.SUPPORT and weight <= 0:
             continue
-        out.append(Grounding(ev, weight, world.state_of(ev), targeted, affirms))
+        out.append(Grounding(ev, weight, world.state_of(ev), targeted, affirms, said[0] if said else None))
     unique: dict[str, Grounding] = {}
     for g in out:
         held = unique.get(g.event.id)

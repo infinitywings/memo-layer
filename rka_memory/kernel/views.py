@@ -20,7 +20,9 @@ Layout, for reuse of the provider's prefix cache across sessions:
 The sourced arm delivers what the ungated arm delivers, as one list under a
 neutral header, and ends each line with its source: where the events its
 counted support cites came from. The clause names a class of source, never a
-count, so it changes only when the class does.
+count, so it changes only when the class does. Under attested validation
+(DESIGN_V3) the gated arm renders the same way: its validated records and
+the trial candidates its coins treat, one list, each with its source.
 
 A budget selects whole dependency groups (user-affirmed first, then those
 about recently touched anchors, then the oldest) and never reorders. A
@@ -40,7 +42,19 @@ import yaml
 
 from rka_memory import relations
 from rka_memory.config import Config
-from rka_memory.domain import OUTCOME_CHECK, SCOPE_FIELDS, Actor, Kind, Polarity, RecordKind, Rung, State, collapse
+from rka_memory.domain import (
+    OUTCOME_CHECK,
+    SCOPE_FIELDS,
+    Actor,
+    Integrity,
+    Kind,
+    Polarity,
+    RecordKind,
+    Rung,
+    State,
+    collapse,
+    integrity,
+)
 from rka_memory.kernel.evidence import counted, statement
 from rka_memory.kernel.labels import Labels, valid
 from rka_memory.skills.gate import skill_name
@@ -100,19 +114,32 @@ def recent_anchors(world: World, project: str | None, before_session: str) -> fr
     return frozenset().union(*(s.anchors for s in ended[-RECENT_SESSIONS:]))
 
 
+def _quoted_from(rec: RecordState, world: World, cfg: Config, source: Integrity) -> bool:
+    counted_ids = {g.event.id for g in counted(rec, world, cfg, Polarity.SUPPORT)}
+    for link in rec.links:
+        if link.polarity is not Polarity.SUPPORT or link.event_id not in counted_ids:
+            continue
+        ev = world.events[link.event_id]
+        if integrity(ev) is not source:
+            continue
+        said = statement(world.events.get(link.via), ev, cfg, world)
+        if said is not None and collapse(said[0]) == collapse(rec.spec.content):
+            return True
+    return False
+
+
 def stated(rec: RecordState, world: World, cfg: Config) -> bool:
     """The record's text is the user's own words: a counted support link
     quotes a user message, the quote checked against the logged message, and
     the quote is the record's text. Any weaker test would let a view put
     model-written text in the user's mouth."""
-    counted_ids = {g.event.id for g in counted(rec, world, cfg, Polarity.SUPPORT)}
-    for link in rec.links:
-        if link.polarity is not Polarity.SUPPORT or link.event_id not in counted_ids:
-            continue
-        said = statement(world.events.get(link.via), world.events[link.event_id], cfg)
-        if said is not None and collapse(said[0]) == collapse(rec.spec.content):
-            return True
-    return False
+    return _quoted_from(rec, world, cfg, Integrity.USER)
+
+
+def check_printed(rec: RecordState, world: World, cfg: Config) -> bool:
+    """The record's text is what the user's outcome check printed, checked
+    the same way (attested validation only)."""
+    return _quoted_from(rec, world, cfg, Integrity.CHECK)
 
 
 def text_of(rec: RecordState, world: World, cfg: Config) -> str:
@@ -126,19 +153,26 @@ def text_of(rec: RecordState, world: World, cfg: Config) -> str:
         if rec.spec.reason:
             parts.append(f"Because: {flatten(rec.spec.reason).rstrip('.')}.")
         return " ".join(parts)
-    return f'The user said: "{said}"' if stated(rec, world, cfg) else said
+    if stated(rec, world, cfg):
+        return f'The user said: "{said}"'
+    if check_printed(rec, world, cfg):
+        return f'The user\'s own acceptance check, which you are not shown, printed: "{said}"'
+    return said
 
 
-def source_clause(rec: RecordState, world: World, cfg: Config) -> str:
+def source_clause(rec: RecordState, world: World, cfg: Config, tested: bool = False) -> str:
     """Where a record came from, read from the events its counted support
     cites and never from its own text. A stated rule's text already names the
     user. A user's check is quoted as it printed, so the agent can judge for
-    itself whether it bears on the record."""
-    if stated(rec, world, cfg):
+    itself whether it bears on the record. `tested`: a randomized trial found
+    the sessions that received it did better."""
+    if stated(rec, world, cfg) or check_printed(rec, world, cfg):
         return ""
     support = [g.event for g in counted(rec, world, cfg, Polarity.SUPPORT)]
     if any(ev.kind in (Kind.USER_CONFIRM, Kind.USER_AMEND) for ev in support):
         return "(Source: the user confirmed it.)"
+    if tested:
+        return "(Source: the memory system's inference; in a randomized test, sessions that received it did better.)"
     for ev in support:
         if ev.actor is Actor.ENV and ev.payload.get("tool") == OUTCOME_CHECK:
             printed = flatten(str(ev.payload.get("output") or ""))
@@ -166,6 +200,8 @@ class Line:
 class View:
     arm: str
     channel: str
+    # One list under the neutral header, each line with its source.
+    sourced: bool = False
     core: tuple[Line, ...] = ()
     amendments: tuple[Line, ...] = ()
     tail: tuple[Line, ...] = ()
@@ -189,7 +225,7 @@ class View:
     def _text(self) -> str:
         if not self.lines:
             return ""
-        if self.arm == "sourced":
+        if self.sourced:
             parts = [SOURCED_HEADER, *(line.render() for line in self.lines)]
             if self.omitted:
                 parts += ["", f"({len(self.omitted)} more notes omitted for budget.)"]
@@ -279,7 +315,8 @@ def packet(
     already delivered in the session; `anchors` rank groups for the budget;
     `treated` are the trial candidates this session's logged coins deliver."""
     budget = cfg.budget_tokens if budget_tokens is None else budget_tokens
-    empty = View(arm, channel, ledger_revision=world.revision, budget_tokens=budget)
+    with_sources = arm == "sourced" or (arm == "gated" and cfg.gate.validation == "attested")
+    empty = View(arm, channel, sourced=with_sources, ledger_revision=world.revision, budget_tokens=budget)
     if arm == "none":
         return empty
     hidden = exclude | superseded(world, labels, cfg, state)
@@ -299,8 +336,9 @@ def packet(
 
     def line(r: RecordState) -> Line:
         text = text_of(r, world, cfg)
-        if arm == "sourced":
-            text = " ".join(part for part in (text, source_clause(r, world, cfg)) if part)
+        if with_sources:
+            tested = labels.by_id[r.id].trial == "positive" if r.id in labels.by_id else False
+            text = " ".join(part for part in (text, source_clause(r, world, cfg, tested)) if part)
         return Line(r.id, text, amendments.get(r.id, ()))
 
     def since(r: RecordState) -> tuple[int, int]:
@@ -318,7 +356,7 @@ def packet(
     groups += [[r] for r in sorted(unvalidated, key=lambda r: world.position[r.proposed.id])]
     kept: set[str] = set()
     omitted: list[str] = []
-    used = estimate_tokens(SOURCED_HEADER if arm == "sourced" else HEADER)
+    used = estimate_tokens(SOURCED_HEADER if with_sources else HEADER)
     for group in groups:
         cost = sum(estimate_tokens(line(r).render()) for r in group)
         if used + cost > budget:
@@ -331,7 +369,7 @@ def packet(
     for rid in treated:
         if rid in exclude or rid not in world.records:
             continue
-        line_ = Line(rid, text_of(world.records[rid], world, cfg))
+        line_ = line(world.records[rid])
         cost = estimate_tokens(line_.render())
         if used + cost > budget:
             omitted.append(rid)
@@ -341,6 +379,7 @@ def packet(
     return View(
         arm,
         channel,
+        sourced=with_sources,
         core=tuple(line(r) for r in in_order if r.id in core_ids),
         amendments=tuple(line(r) for r in in_order if r.id in amendments),
         tail=tuple(line(r) for r in unvalidated if r.id in kept),

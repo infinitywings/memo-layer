@@ -6,7 +6,9 @@ import sys
 import pytest
 import yaml
 
+from conftest import V2
 from ledger_builder import Ledger
+from rka_memory import config as config_mod
 from rka_memory.domain import Actor, FieldConstraint, Kind, Scope
 from rka_memory.ledger import hooks
 from rka_memory.world import project
@@ -37,7 +39,7 @@ def user_config(tmp_path):
     """The config file hooks read through Memory.open(); see the memory fixture."""
 
     def write(**raw):
-        (tmp_path / "none.yaml").write_text(yaml.safe_dump(raw))
+        (tmp_path / "none.yaml").write_text(yaml.safe_dump(config_mod.merge(V2, raw)))
 
     return write
 

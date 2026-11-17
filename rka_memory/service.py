@@ -228,7 +228,7 @@ class Memory:
                 "session_id": ev.session_id if ev else None,
                 "status": status,
             }
-            said = statement(world.events.get(link.via), ev, self.cfg) if ev is not None else None
+            said = statement(world.events.get(link.via), ev, self.cfg, world) if ev is not None else None
             if said is not None:
                 row["statement"] = {"quote": said[0], "standing": said[1]}
             links.append(row)

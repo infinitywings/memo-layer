@@ -23,6 +23,13 @@ T0 = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)
 
 
 def cfg(**overrides: Any):
+    """The default config under v2's threshold validation, which the tests
+    written for DESIGN_V2 exercise. `attested()` is the v3 default."""
+    return config_mod.load(path=config_mod.DEFAULT_PATH, overrides=config_mod.merge({"gate": {"validation": "threshold"}}, overrides))
+
+
+def attested(**overrides: Any):
+    """The default config: attested validation (DESIGN_V3)."""
     return config_mod.load(path=config_mod.DEFAULT_PATH, overrides=overrides)
 
 

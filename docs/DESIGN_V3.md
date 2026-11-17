@@ -79,10 +79,12 @@ and replay.
 
 ### 3.2 Taint
 
-A quote is taint when its words occur, collapsed, in an A event of the same
-project logged before the message or output it quotes: a tool result, a file
-the agent wrote, or anything the model wrote. Such words reached the user
-from the agent. A pasted log the agent produced therefore cannot become "The
+A quote is taint when its words occur, collapsed and in any case, in what
+the agent's actions put in the log before the message or output it quotes:
+a tool call (the model's own words, such as a file it wrote), a tool result,
+a file write, an exit code or a test result. The memory system's own events
+(proposals, links, deliveries) quote records by design and do not count.
+Such words reached the user or the check from the agent. A pasted log the agent produced therefore cannot become "The
 user said", while a rule the user types afresh still does.
 
 ### 3.3 Records from the user's check

@@ -109,7 +109,7 @@ def _evidence_edges(rec: RecordState, world: World, cfg: Config) -> list[Edge]:
             attrs["weight"] = round(g.weight, 3)
             attrs["confirms"] = g.affirms
         ev = world.events.get(link.event_id)
-        said = statement(world.events.get(link.via), ev, cfg) if ev is not None else None
+        said = statement(world.events.get(link.via), ev, cfg, world) if ev is not None else None
         if said is not None:
             attrs["statement"] = {"quote": said[0], "standing": said[1]}
         edges.append(Edge(EdgeType.EVIDENCE, link.event_id, rec.id, attrs))

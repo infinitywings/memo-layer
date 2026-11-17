@@ -27,6 +27,9 @@ class GateConfig:
     skill_min_sessions: int = 2
     retire_after_days: float = 60
     standing_phrases: tuple[str, ...] = ()
+    # attested (DESIGN_V3): only the user's words, the user's check, a typed
+    # verdict or a trial validate. threshold: v2's labelling, kept to compare.
+    validation: str = "attested"
 
 
 @dataclass(frozen=True)
@@ -196,6 +199,15 @@ def _outcome(raw: dict[str, Any]) -> OutcomeConfig:
     )
 
 
+VALIDATIONS = frozenset({"attested", "threshold"})
+
+
+def _validation(value: Any) -> str:
+    if value not in VALIDATIONS:
+        raise ValueError(f"gate.validation must be one of {sorted(VALIDATIONS)}, got {value!r}")
+    return str(value)
+
+
 def from_dict(raw: dict[str, Any]) -> Config:
     gate_raw = raw.get("gate", {})
     scope_fields = tuple(raw["scope"].get("fields", SCOPE_FIELDS))
@@ -217,6 +229,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
             skill_min_sessions=int(gate_raw.get("skill_min_sessions", 2)),
             retire_after_days=float(gate_raw.get("retire_after_days", 60)),
             standing_phrases=tuple(str(p) for p in gate_raw.get("standing_phrases") or ()),
+            validation=_validation(gate_raw.get("validation", "attested")),
         ),
         weights={Kind(k): _number(v) for k, v in raw.get("weights", {}).items()},
         budget_tokens=int(raw["packet"]["budget_tokens"]),
