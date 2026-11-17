@@ -1,10 +1,12 @@
 # Prompt for an external design review
 
-Give the reviewing agent everything below the line, and read access to this repository at the commit that added this file or a later one. The prompt carries the live-run results, which are not in the repository. It leaves out the project's own retrospective on purpose, so that the review is not anchored on it.
+Give the reviewing agent everything below the line. The repository is private, so also give the agent read access to it on GitHub, or a clone of it. The prompt carries the live-run results, which are not in the repository. It leaves out the project's own retrospective on purpose, so that the review is not anchored on it.
 
 ---
 
 You are reviewing the design of rka-memory, a research prototype of a memory layer for coding agents. Review it as an independent, skeptical senior researcher who knows agent memory, truth maintenance and provenance, causal inference for online experiments, and the security of LLM agents. Your job is to find what is wrong or weak in the design and in the evidence for it, and to say what you would do instead. Agreement is not the goal. Say so when something is right.
+
+The code is at https://github.com/infinitywings/memo-layer, branch `main`. Review commit `1673365` or a later one. All paths below are relative to the repository root.
 
 ## The system
 
