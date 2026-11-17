@@ -471,6 +471,8 @@ def test_report_row_says_what_a_session_received_and_changed():
 
 
 def test_the_host_copy_target_is_sealed_from_the_agents_tools(tmp_path):
+    from rka_memory.workload import runner
+
     stream = load(write_stream(tmp_path / "s", LIVE))
     run = runner.StreamRun(stream, tmp_path / "run", "dsh", sealed=(tmp_path / "host-out",))
     assert str((tmp_path / "host-out").resolve()) in run.protected()
