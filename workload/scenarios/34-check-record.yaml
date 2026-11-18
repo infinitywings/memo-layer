@@ -2,7 +2,7 @@ name: check-record
 description: >-
   Records from the user's own check (DESIGN_V3 3.3), under attested
   validation. The miner proposes nothing. The user's outcome check fails
-  in s1 and s2 with a message written in the check itself, and the runner,
+  in s1 and s2 with a message the user declared for the check, and the runner,
   not the miner, proposes that message as a constraint: at L1 after its
   first failure, at L2 after the second. In s3 the gated arm delivers it as
   what the user's check printed, the scripted agent registers the new
@@ -27,6 +27,9 @@ config:
           print("ops CLI check failed: the ops CLI offers only the functions"
                 " registered in calc.OPERATIONS")
           sys.exit(1)
+      # What the user wrote into the check for the agent to learn from.
+      messages:
+        - "ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS"
 sessions:
   - at: +0d
     prompt: Add a mean(values) function to calc.py, with tests.

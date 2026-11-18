@@ -24,7 +24,6 @@ from typing import Any, Callable, Mapping
 from rka_memory import commands
 from rka_memory.commands import CommandError
 from rka_memory.domain import (
-    QUOTE_CHARS,
     Actor,
     Event,
     FieldConstraint,
@@ -40,7 +39,6 @@ from rka_memory.domain import (
     integrity,
     parse_ts,
 )
-from rka_memory.kernel.evidence import in_check_source
 from rka_memory.ledger import checks as runner_checks
 from rka_memory.ledger import signals
 from rka_memory.ledger import state as state_mod
@@ -238,14 +236,10 @@ def _outcome_check(memory: Memory, session_id: str) -> list[Event]:
 
 
 def _check_words(output: str, cfg: Any) -> str | None:
-    """What a failing check printed that the user wrote into the check: the
-    whole output if it fits a quote, else its first line that does."""
-    whole = collapse(output)
-    lines = [collapse(line) for line in output.splitlines()]
-    for words in (whole, *lines):
-        if QUOTE_CHARS[0] <= len(words) <= QUOTE_CHARS[1] and in_check_source(words, cfg):
-            return words
-    return None
+    """The first message the user declared for the check that it printed,
+    as the user wrote it (DESIGN_V3 3.3)."""
+    printed = collapse(output)
+    return next((collapse(m) for m in cfg.outcome.messages if collapse(m) in printed), None)
 
 
 def _check_record(memory: Memory, session_id: str, outcome: list[Event]) -> list[Event]:

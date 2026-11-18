@@ -13,9 +13,10 @@ STANDING = {"quote": RULE, "marker": "always"}
 CHECKED = "ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS"
 WITH_CHECK = {"checks": {"outcome": {"command": ["true"]}}}
 # The user's check, its message split over two string literals as in the E1 stream.
-USERS_CHECK = {"checks": {"outcome": {"command": [
-    "python", "-c", 'print("ops CLI check failed: the ops CLI offers only the functions"\n      " registered in calc.OPERATIONS")',
-]}}}
+USERS_CHECK = {"checks": {"outcome": {
+    "command": ["python", "-c", f'print("{CHECKED}")\nprint("ops CLI check passed: offers every function")'],
+    "messages": [CHECKED],
+}}}
 
 
 def labels(lg: Ledger, c=None):
@@ -133,13 +134,27 @@ def test_the_users_check_validates_its_own_words_once_they_recur_in_a_second_ses
     assert (lab.rung.value, lab.reason) == ("L2", "the user's check printed its words in two sessions")
 
 
-def test_words_the_check_printed_but_the_user_never_wrote_into_it_attest_nothing():
+def test_words_the_check_printed_but_the_user_never_declared_attest_nothing():
     """The check imports the agent's code, which can print anything, even
-    words built at run time that no file the agent wrote holds."""
+    words built at run time, or a stretch of the check's own source."""
     lg = Ledger()
     check_quoted(lg, ("s1", "s2"))
     assert rung(lg, "r_ops", attested(**WITH_CHECK)) == "L1"
     assert rung(lg, "r_ops", attested()) == "L1"
+    in_source_only = {"checks": {"outcome": {"command": USERS_CHECK["checks"]["outcome"]["command"]}}}
+    assert rung(lg, "r_ops", attested(**in_source_only)) == "L1"
+
+
+def test_only_a_whole_declared_message_attests():
+    lg = Ledger()
+    part = "the ops CLI offers only the functions registered in calc.OPERATIONS"
+    for sid in ("s1", "s2"):
+        lg.start(sid, **UV)
+        if sid == "s1":
+            lg.propose(sid, "r_part", kind=RecordKind.CONSTRAINT, content=part)
+        lg.link("r_part", lg.outcome_output(sid, 1, CHECKED), statement={"quote": part})
+        lg.end(sid)
+    assert rung(lg, "r_part", attested(**USERS_CHECK)) == "L1"
 
 
 def steered_constraint(lg: Ledger) -> None:
@@ -223,7 +238,8 @@ def with_users_check(memory, validation: str = "attested"):
     from rka_memory.config import OutcomeConfig
 
     command = tuple(USERS_CHECK["checks"]["outcome"]["command"])
-    memory.cfg = replace(memory.cfg, gate=replace(memory.cfg.gate, validation=validation), outcome=OutcomeConfig(command=command))
+    outcome = OutcomeConfig(command=command, messages=tuple(USERS_CHECK["checks"]["outcome"]["messages"]))
+    memory.cfg = replace(memory.cfg, gate=replace(memory.cfg.gate, validation=validation), outcome=outcome)
     return memory
 
 
@@ -248,3 +264,10 @@ def test_the_runner_proposes_nothing_the_user_did_not_write_into_the_check(memor
     assert runner_records(memory, lg, "s2", CHECKED, code=0) == []
     with_users_check(memory, validation="threshold")
     assert runner_records(memory, lg, "s3", CHECKED) == []
+
+
+def test_a_declared_message_must_fit_a_quote():
+    import pytest
+
+    with pytest.raises(ValueError, match="checks.outcome.messages"):
+        attested(checks={"outcome": {"command": ["true"], "messages": ["too short"]}})

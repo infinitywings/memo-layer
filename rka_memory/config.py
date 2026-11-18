@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from rka_memory.domain import SCOPE_FIELDS, Kind
+from rka_memory.domain import QUOTE_CHARS, SCOPE_FIELDS, Kind
 
 DEFAULT_PATH = Path(__file__).resolve().parent / "default.yaml"
 
@@ -74,6 +74,10 @@ class OutcomeConfig:
 
     command: tuple[str, ...] | None = None
     budget_seconds: float = 60.0
+    # The messages the user wrote into the check for the agent to learn from
+    # (DESIGN_V3 3.1): only these, whole, may attest a record. The check runs
+    # the agent's code, so nothing else it prints is the user's.
+    messages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -193,9 +197,16 @@ def _outcome(raw: dict[str, Any]) -> OutcomeConfig:
     command = raw.get("command")
     if command is not None and (not isinstance(command, list) or not command or not all(isinstance(a, str) for a in command)):
         raise ValueError("checks.outcome.command must be a non-empty list of strings")
+    messages = raw.get("messages") or []
+    if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
+        raise ValueError("checks.outcome.messages must be a list of strings")
+    for m in messages:
+        if not QUOTE_CHARS[0] <= len(" ".join(m.split())) <= QUOTE_CHARS[1]:
+            raise ValueError(f"checks.outcome.messages: each must be {QUOTE_CHARS[0]} to {QUOTE_CHARS[1]} characters, got {m!r}")
     return OutcomeConfig(
         command=tuple(command) if command else None,
         budget_seconds=_number(raw.get("budget_seconds", OutcomeConfig.budget_seconds)),
+        messages=tuple(messages),
     )
 
 

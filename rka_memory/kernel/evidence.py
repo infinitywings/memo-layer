@@ -134,9 +134,9 @@ def statement(made_by: Event | None, ev: Event, cfg: Config, world: World | None
     said = made_by.payload.get("statement")
     if not isinstance(said, dict) or not isinstance(said.get("quote"), str) or not quoted(text, said["quote"]):
         return None
-    if not user and not in_check_source(said["quote"], cfg):
-        # The check runs the agent's code, which can print anything; only
-        # words the user wrote into the check itself are the user's.
+    if not user and declared_message(said["quote"], cfg) is None:
+        # The check runs the agent's code, which can print anything; only a
+        # message the user declared for the check is the user's.
         return None
     if user and attested and world is not None and taint(world, said["quote"], ev, cfg.ledger_dir / "blobs"):
         return None
@@ -145,19 +145,13 @@ def statement(made_by: Event | None, ev: Event, cfg: Config, world: World | None
     return said["quote"], is_rule and standing(text, said["quote"], marker, cfg.gate.standing_phrases)
 
 
-def _plain(text: str) -> str:
-    """Quote marks and backslashes dropped, whitespace collapsed: a message
-    written as several string literals in the check's source compares with
-    the one line it printed."""
-    return collapse(text.replace('"', "").replace("'", "").replace("\\", ""))
-
-
-def in_check_source(quote: str, cfg: Config) -> bool:
-    """The quoted words occur in the user's configured outcome check
-    (DESIGN_V3 3.1). Fail-closed: a check given as a script path, or a
-    message assembled at run time, attests nothing."""
-    source = " ".join(cfg.outcome.command or ())
-    return bool(source) and _plain(quote) in _plain(source)
+def declared_message(words: str, cfg: Config) -> str | None:
+    """The message, among those the user declared for their outcome check
+    (`checks.outcome.messages`), that `words` are, whole and whitespace
+    aside; None when they are none of them (DESIGN_V3 3.1). Fail-closed: a
+    check with no declared messages attests nothing."""
+    said = collapse(words)
+    return next((collapse(m) for m in cfg.outcome.messages if collapse(m) == said), None)
 
 
 def _strings(value: object) -> list[str]:

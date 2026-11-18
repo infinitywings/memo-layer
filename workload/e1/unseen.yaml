@@ -50,6 +50,10 @@ config:
               " registered in calc.OPERATIONS, a dict in calc.py that maps each operation's name to its function."
           )
           sys.exit(1)
+      messages:
+        - >-
+          ops CLI check failed: the ops CLI does not offer the new function. It offers only the functions
+          registered in calc.OPERATIONS, a dict in calc.py that maps each operation's name to its function.
 sessions:
   - at: +0d
     prompt: >-

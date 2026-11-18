@@ -63,12 +63,13 @@ and replay.
   - a standing statement of the record's exact words in a user message
     (as in v2), not taint;
   - the record's exact words quoted from the output of the user's outcome
-    check, the same quote in at least two sessions, and the same words
-    written in the check's own configured command (quote marks and line
-    breaks between string literals aside). The check runs the agent's code,
-    which can print anything, even words assembled at run time that no file
-    holds, so printed words alone attest nothing; a check given as a script
-    path never attests (found by a security review of the first build);
+    check, the same quote in at least two sessions, and the words are,
+    whole, one of the messages the user declared for the check
+    (`checks.outcome.messages`). The check runs the agent's code, which can
+    print anything, even words assembled at run time or a stretch of the
+    check's own source, so printed words alone attest nothing, and a check
+    with no declared messages never attests (two security reviews of the
+    first builds);
   - a positive trial (Section 3.4).
 - **Below L2.** A record leaves L2 only by a U act (reject, correct, update,
   close, defeat, undo of its writing session), by the withdrawn set, or by
@@ -98,11 +99,10 @@ user said", while a rule the user types afresh still does.
 
 ### 3.3 Records from the user's check
 
-When the user's outcome check fails and prints output, the runner, not the
-miner, proposes a constraint whose text is what it printed: the whole
-output collapsed to one line, or else its first line, that fits a quote and
-is written in the check's command (3.1). Output the check assembles at run
-time proposes nothing. The record cites the output event through a
+When the user's outcome check fails and its output holds one of the
+messages the user declared for it, the runner, not the miner, proposes a
+constraint whose text is that message (3.1). Any other output proposes
+nothing. The record cites the output event through a
 runner-made link with the quote. It needs the
 same output in a second session to reach L2 (3.1), so a one-off failure
 message never becomes memory. Identical outputs land on one record.
