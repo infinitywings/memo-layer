@@ -6,6 +6,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import os
+import stat
 import re
 import tempfile
 from pathlib import Path
@@ -35,14 +36,7 @@ def file_hash(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def snapshot(path: str | Path, cfg: Config) -> str:
-    """Hash a written file and keep its content as a blob for later diffs."""
-    p = Path(path)
-    if not p.is_file():
-        return ABSENT
-    if p.stat().st_size > BLOB_MAX_BYTES:
-        return file_hash(p)
-    data = p.read_bytes()
+def _keep(data: bytes, cfg: Config) -> str:
     sha = hashlib.sha256(data).hexdigest()
     target = blob_dir(cfg) / sha
     if not target.exists():
@@ -52,6 +46,62 @@ def snapshot(path: str | Path, cfg: Config) -> str:
             fh.write(data)
         os.replace(tmp, target)
     return sha
+
+
+def snapshot(path: str | Path, cfg: Config) -> str:
+    """Hash a written file and keep its content as a blob for later diffs."""
+    p = Path(path)
+    if not p.is_file():
+        return ABSENT
+    if p.stat().st_size > BLOB_MAX_BYTES:
+        return file_hash(p)
+    return _keep(p.read_bytes(), cfg)
+
+
+def stored(sha: str, cfg: Config) -> bool:
+    """The content store holds what `sha` names."""
+    return sha != ABSENT and (blob_dir(cfg) / sha).is_file()
+
+
+def store_text(text: str, cfg: Config) -> str | None:
+    """Keep `text` in the content store: its hash, or None when it is too
+    large to keep."""
+    data = text.encode("utf-8", errors="replace")
+    return None if len(data) > BLOB_MAX_BYTES else _keep(data, cfg)
+
+
+# Directories a shell command's own churn fills, not the agent's words.
+SNAPSHOT_SKIP = frozenset({".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".venv", "venv", "node_modules"})
+SNAPSHOT_MAX_FILES = 200
+WALK_MAX_ENTRIES = 20_000
+# File systems with coarse timestamps: a file changed by the command can
+# carry an mtime slightly before it started.
+MTIME_SLACK_NS = 2_000_000_000
+
+
+def changed_since(root: Path, since_ns: int) -> tuple[list[Path], bool]:
+    """Regular files under `root` changed since `since_ns`, and whether the
+    walk saw everything (False past the caps, which callers must treat as
+    unknown content). A change is read from the later of mtime and ctime:
+    `touch` can set mtime back, but setting it moves ctime to now."""
+    out: list[Path] = []
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SNAPSHOT_SKIP)
+        for name in sorted(filenames):
+            seen += 1
+            if seen > WALK_MAX_ENTRIES:
+                return out, False
+            path = Path(dirpath) / name
+            try:
+                st = path.lstat()
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode) and max(st.st_mtime_ns, st.st_ctime_ns) >= since_ns - MTIME_SLACK_NS:
+                out.append(path)
+                if len(out) > SNAPSHOT_MAX_FILES:
+                    return out, False
+    return out, True
 
 
 def _lines(data: bytes) -> list[str]:

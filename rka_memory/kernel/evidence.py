@@ -166,40 +166,63 @@ def _strings(value: object) -> list[str]:
 
 # What the agent's actions put in the log. The memory system's own events
 # (proposals, links, deliveries) quote records by design and are not here.
-AGENT_CONTENT = frozenset({Kind.TOOL_CALL, Kind.TOOL_RESULT, Kind.FILE_WRITE, Kind.EXIT_CODE, Kind.TEST_RESULT})
+AGENT_CONTENT = frozenset({
+    Kind.TOOL_CALL, Kind.TOOL_RESULT, Kind.FILE_WRITE, Kind.EXIT_CODE, Kind.TEST_RESULT, Kind.ASSISTANT_MSG, Kind.FILE_SNAPSHOT,
+})
+# Payload fields naming text kept whole in the content store: a written
+# file, a file a shell command changed, a clipped tool input, output or reply.
+STORED_TEXT = ("post_hash", "hash", "full_hash")
 
 
-def _written(ev: Event, blobs: Path | None) -> str:
-    """What a file write left in the file, from the content store the log's
-    hash names. Content-addressed, so a label stays a function of the log and
-    the store it points to."""
-    digest = ev.payload.get("post_hash")
-    if ev.kind is not Kind.FILE_WRITE or blobs is None or not isinstance(digest, str):
+def _stored(ev: Event, blobs: Path | None) -> str:
+    """Every text the event keeps in the content store, by the hashes the log
+    names. Content-addressed, so a label stays a function of the log and the
+    store it points to."""
+    if blobs is None:
         return ""
-    try:
-        return (blobs / digest).read_text(errors="replace")
-    except (OSError, ValueError):
-        return ""
+    out = []
+    for field_ in STORED_TEXT:
+        digest = ev.payload.get(field_)
+        if isinstance(digest, str) and digest:
+            try:
+                out.append((blobs / digest).read_text(errors="replace"))
+            except (OSError, ValueError):
+                pass
+    return " ".join(out)
+
+
+def _project(world: World, ev: Event) -> str | None:
+    session = world.sessions.get(ev.session_id)
+    return session.state.project if session is not None else None
 
 
 def taint(world: World, quote: str, before: Event, blobs: Path | None = None) -> bool:
-    """The quoted words occur in what the agent's actions put in the log, or
-    in a file it wrote, before `before` (DESIGN_V3 3.2): they reached the user
-    or the check from the agent, as a pasted log the agent wrote does. What
-    the agent replied in chat is not logged, so it is not covered."""
+    """The quoted words reached the user from the agent (DESIGN_V3 3.2): they
+    occur, before `before` and in the same project, in what the agent's
+    actions put in the log or the content store, including its replies and
+    the files its commands changed. Fail-closed: an earlier agent event whose
+    content could not be kept makes every later quote taint."""
     cache = world.__dict__.setdefault("_taint", {})
     if cache.get("revision") != (world.revision, blobs):
         cache.clear()
         cache["revision"] = (world.revision, blobs)
         cache["texts"] = [
-            (world.position[ev.id], collapse(" ".join([*_strings(ev.payload), _written(ev, blobs)])).lower())
+            (
+                world.position[ev.id],
+                _project(world, ev),
+                bool(ev.payload.get("unstored")),
+                collapse(" ".join([*_strings(ev.payload), _stored(ev, blobs)])).lower(),
+            )
             for ev in world.events.values()
             if ev.kind in AGENT_CONTENT and integrity(ev) is Integrity.AGENT
         ]
     key = (collapse(quote).lower(), before.id)
     if key not in cache:
-        at = world.position[before.id]
-        cache[key] = bool(key[0]) and any(pos < at and key[0] in text for pos, text in cache["texts"])
+        at, here = world.position[before.id], _project(world, before)
+        cache[key] = bool(key[0]) and any(
+            pos < at and (project is None or here is None or project == here) and (unknown or key[0] in text)
+            for pos, project, unknown, text in cache["texts"]
+        )
     return cache[key]
 
 

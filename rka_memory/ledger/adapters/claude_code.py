@@ -13,7 +13,7 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, RecordKind, RecordSpec, Scope, State, canonical_json, derived_id
@@ -291,9 +291,92 @@ def late_write_event(session_id: str, path: str, pre_hash: str, post_hash: str, 
     )
 
 
+def snapshot_event(
+    payload: Mapping[str, Any], path: str | None, sha: str | None, kept: bool, state_hash: str = ""
+) -> Event:
+    """A file the agent's shell command left changed, kept for taint; with no
+    path, the command changed more than could be kept."""
+    use = ToolUse.parse(payload, failed=payload.get("hook_event_name") == "PostToolUseFailure")
+    body: dict[str, Any] = {"tool": use.tool, "tool_use_id": use.tool_use_id, "path": path, "hash": sha}
+    if not kept:
+        body["unstored"] = True
+    return Event.new(
+        Kind.FILE_SNAPSHOT,
+        Actor.TOOL,
+        use.session_id,
+        body,
+        state_hash=state_hash,
+        id=derived_id("ev", "snapshot", use.session_id, use.tool_use_id, path or "*", sha or ""),
+    )
+
+
+def reply_event(session: str, key: str, text: str, cfg: Config, store: Callable[[str], str | None], state_hash: str = "") -> Event:
+    """What the agent said to the user, kept for taint (DESIGN_V3 3.2)."""
+    kept = _clip(text, cfg)
+    return Event.new(
+        Kind.ASSISTANT_MSG,
+        Actor.MODEL,
+        session,
+        {"text": kept, **_full(kept, text, store)},
+        state_hash=state_hash,
+        id=derived_id("ev", "reply", session, key),
+    )
+
+
+def transcript_replies(records: Iterable[Mapping[str, Any]]) -> list[tuple[str, str]]:
+    """(message id, text) of every assistant message in a Claude Code
+    transcript that says something, in order; blocks of one message joined."""
+    texts: dict[str, list[str]] = {}
+    for i, record in enumerate(records):
+        if record.get("type") != "assistant":
+            continue
+        message = _mapping(record.get("message"))
+        key = str(message.get("id") or record.get("uuid") or i)
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": content}] if isinstance(content, str) else []
+        said = [str(_mapping(b).get("text") or "") for b in blocks if _mapping(b).get("type") == "text"]
+        texts.setdefault(key, []).extend(t for t in said if t)
+    return [(key, "".join(parts)) for key, parts in texts.items() if "".join(parts).strip()]
+
+
 def _raw_output(use: ToolUse) -> str:
     resp = _mapping(use.response)
     return "\n".join(str(resp.get(k) or "") for k in ("stdout", "stderr")) if resp else str(use.response or "")
+
+
+def _full(kept: str, whole: str, store: Callable[[str], str | None] | None) -> dict[str, Any]:
+    """Where the whole of a clipped text is kept (DESIGN_V3 3.2): its hash in
+    the content store, or `unstored` when it could not be kept."""
+    if store is None or whole == kept:
+        return {}
+    sha = store(whole)
+    return {"full_hash": sha} if sha else {"unstored": True}
+
+
+def _whole_input(tool_input: Mapping[str, Any]) -> str:
+    """Every string the model put in a tool call, such as a written file's
+    content or an edit's new text, in order."""
+    def strings(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, Mapping):
+            return [s for v in value.values() for s in strings(v)]
+        if isinstance(value, (list, tuple)):
+            return [s for v in value for s in strings(v)]
+        return []
+
+    return "\n".join(strings(dict(tool_input)))
+
+
+def _whole_response(use: ToolUse) -> str:
+    if use.error is not None:
+        return use.error
+    resp = _mapping(use.response)
+    if isinstance(use.response, str):
+        return use.response
+    if "stdout" in resp or "stderr" in resp:
+        return "\n".join(p for p in (str(resp.get("stdout") or ""), str(resp.get("stderr") or "")) if p)
+    return "" if use.response is None else canonical_json(use.response)
 
 
 def tool_events(
@@ -304,29 +387,30 @@ def tool_events(
     state_hash: str = "",
     pre_hash: str = "unknown",
     post_hash: str | None = None,
+    store: Callable[[str], str | None] | None = None,
 ) -> list[Event]:
     """Events for one PostToolUse (`failed=False`) or PostToolUseFailure payload.
 
     `post_hash` is the written file's hash after the tool ran, supplied by the
-    caller for file-writing tools.
+    caller for file-writing tools. With `store`, the whole input and output
+    go to the content store when the payload keeps less of them, so taint
+    can read every word the agent wrote or saw.
     """
     use = ToolUse.parse(payload, failed=failed)
     ref = {"tool": use.tool, "tool_use_id": use.tool_use_id}
+    kept_input = input_summary(use.tool, use.tool_input, cfg)
+    kept_output = _clip(use.error, cfg) if failed else _response_summary(use.response, cfg)
     events = [
         use.event(
             Kind.TOOL_CALL,
             Actor.MODEL,
-            {**ref, "input": input_summary(use.tool, use.tool_input, cfg)},
+            {**ref, "input": kept_input, **_full(kept_input, _whole_input(use.tool_input), store)},
             state_hash,
         ),
         use.event(
             Kind.TOOL_RESULT,
             Actor.TOOL,
-            {
-                **ref,
-                "ok": not failed,
-                "summary": _clip(use.error, cfg) if failed else _response_summary(use.response, cfg),
-            },
+            {**ref, "ok": not failed, "summary": kept_output, **_full(kept_output, _whole_response(use), store)},
             state_hash,
         ),
     ]

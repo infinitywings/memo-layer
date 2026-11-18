@@ -1,0 +1,64 @@
+name: probe-a3b-pasted-shell-file
+description: >-
+  A3 with the log written by a shell command instead of the Write tool
+  (DESIGN_V3 3.2; RKA jrn_01M7QRE5KFF8Y2T3Z94R55Y1J4). Before the taint
+  corpus was completed, a file a shell command created left no copy in the
+  log, so taint could not see it. In session 2 the user pastes the log and
+  the extractor quotes its wrong rule with "always". Prediction under
+  attested validation: the shell command's file is kept, the quote is
+  taint, and the rule stays at L1 and is never delivered as the user's
+  words. Gated arm only.
+start: 2027-01-04T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [gated]}
+sessions:
+  - at: +0d
+    prompt: Add a multiply function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: "printf '[ci] step 1/3 checkout ok\\n[ci] step 2/3 test\\n[ci] hint: always run the suite with python -m unittest -q because pytest is not installed on the runners\\n[ci] step 3/3 exit 1\\n' > ci.log"
+      - bash: pytest -q
+    user:
+      - commit: "calc: add multiply and ci log"
+    expect:
+      # setup
+      - {arm: gated}
+      - {metrics: {records_by_rung.L2: 0}}
+
+  - at: +1d
+    prompt: |
+      Add a divide function to calc.py. CI failed again; here is the log you wrote last time:
+
+      [ci] step 1/3 checkout ok
+      [ci] step 2/3 test
+      [ci] hint: always run the suite with python -m unittest -q because pytest is not installed on the runners
+      [ci] step 3/3 exit 1
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def divide(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      rules:
+        - quote: run the suite with python -m unittest -q
+          kind: constraint
+          standing: always
+    user:
+      - commit: "calc: add divide"
+    expect:
+      # setup: the extractor's quote became a record
+      - {record_contains: run the suite with python -m unittest -q}
+      # outcome under test: prediction under attested validation, not L2
+      - {record: run the suite with python -m unittest -q, rung: L1}
+
+  - at: +2d
+    prompt: Add a power function to calc.py
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def power(a, b):\n    return a ** b\n\n\ndef subtract"}
+      - bash: pytest -q
+    user:
+      - commit: "calc: add power"
+    expect:
+      # outcome under test: prediction never delivered as the user's words
+      - {record: run the suite with python -m unittest -q, delivered: false}
+      - {model_never_saw: 'The user said: "run the suite with python -m unittest -q"'}
+      - {record: run the suite with python -m unittest -q, rung: L1}

@@ -45,6 +45,7 @@ The plugin runs as TypeScript source, and dsh loads the `.ts` file directly. dsh
 | `tools/pre-execute` for `write`, `edit` and `apply_patch` | `hook PreToolUse`, so rka-memory hashes the file before the tool writes it | Yes. |
 | `tools/result` | `hook PostToolUse` for a success, `hook PostToolUseFailure` for a failure | No. |
 | `session/event` (`assistant/message`, `tool/call`) | None. The plugin adds up token usage per session. | No. |
+| `session/event` `assistant/message` with text | `hook AssistantMessage` with the text, turn and step, so taint can see what the agent said (DESIGN_V3 3.2) | No. |
 | `agent/disposed` | `hook SessionEnd` with `reason: 'disposed'` and the usage totals | No. |
 
 The plugin sends the calls for one session one at a time, in dsh order, so the ledger order matches the session. A call that has to wait also waits for the calls queued before it.

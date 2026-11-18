@@ -259,7 +259,7 @@ Each stream gets a run directory and, apart from it, a workspace, with its own s
 
 ## Validation in the scenarios
 
-Since DESIGN_V3 the default validation is attested. The scenarios that test DESIGN_V2's threshold rules (support counting, the counter classes, pending restrictions, the first trial rule, and the amendments and dependencies built on threshold-validated facts) set `gate: {validation: threshold}` and keep testing that mode, which stays for comparison. The others run under attested: among them `outcome-trial`, `sourced`, `check-record` (records from the user's own check) and the rest that rest on the user's words, verdicts or trials. The E0a probes in `workload/probes/` record what a steered miner achieves under the default.
+Since DESIGN_V3 the default validation is attested. The scenarios that test DESIGN_V2's threshold rules (support counting, the counter classes, pending restrictions, the first trial rule, and the amendments and dependencies built on threshold-validated facts) set `gate: {validation: threshold}` and keep testing that mode, which stays for comparison. The others run under attested: among them `outcome-trial`, `sourced`, `check-record` (records from the user's own check) and the rest that rest on the user's words, verdicts or trials. The E0a probes in `workload/probes/` record what a steered miner achieves under the default; `a3b-pasted-shell-file` and `a3c-pasted-reply` check that a rule pasted from a file a shell command wrote, or from the agent's own reply, stays below L2.
 
 ## Scripted model
 

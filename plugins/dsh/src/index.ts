@@ -389,7 +389,7 @@ export function protectedTarget(
 /** External contributors pick any finite order. 9000 follows the tool sections and precedes structured output (9900) and the persona suffix (10200). */
 const SECTION_ORDER = 9000
 
-type HookEvent = 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'SessionEnd'
+type HookEvent = 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'SessionEnd' | 'AssistantMessage'
 
 /** What a hook call told the plugin to do. */
 type HookReply =
@@ -415,6 +415,8 @@ interface SessionState {
   prompted: boolean
   usage: Usage
   skills: Array<() => void>
+  /** The agent this session belongs to, once a hook has run for it: what the assistant-message listener needs to log a reply. */
+  agent?: Agent
 }
 
 type BashValue =
@@ -625,7 +627,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
 
   function hook(agent: Agent, event: HookEvent, fields: Record<string, unknown>): Promise<HookReply> {
     const body = payload(agent, event, fields)
-    return enqueue(sessionOf(agent.id), () => callHook(event, body))
+    const state = sessionOf(agent.id)
+    state.agent = agent
+    return enqueue(state, () => callHook(event, body))
   }
 
   async function reloadSkills(agent: Agent, state: SessionState): Promise<void> {
@@ -769,6 +773,13 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       const { inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0 } = event.data.usage ?? {}
       usage.beforeLatestMessage = usage.total
       usage.total += inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
+      // What the agent said goes to rka-memory, so words the user later
+      // pastes back are not taken for the user's own (DESIGN_V3 3.2).
+      const agent = sessions.get(session.id)?.agent
+      const text = textOf(event.data.message?.content ?? [])
+      if (agent !== undefined && text.trim() !== '') {
+        void guard('AssistantMessage', () => hook(agent, 'AssistantMessage', { text, turn: event.data.turn, step: event.data.step }))
+      }
     } else if (event.type === 'tool/call' && usage.beforeFirstWrite === undefined && FILE_WRITING_TOOLS.has(event.data.name)) {
       usage.beforeFirstWrite = usage.beforeLatestMessage
     }

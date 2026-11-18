@@ -7,6 +7,7 @@ A hook must never break Claude Code, so `main` swallows every exception into
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -16,7 +17,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -303,6 +306,11 @@ def on_user_prompt_submit(memory: Memory, payload: Mapping[str, Any]) -> Output:
 
 def on_pre_tool_use(memory: Memory, payload: Mapping[str, Any]) -> Output:
     use = adapter.ToolUse.parse(payload, failed=False)
+    if use.tool == "Bash" and use.tool_use_id:
+        # When the command starts: the files it leaves changed are snapshot
+        # after it, for taint (DESIGN_V3 3.2).
+        _write_json(_pending(memory, use.session_id) / f"{_safe(use.tool_use_id)}.json", {"started_ns": time.time_ns()})
+        return None
     path = adapter.written_path(use.tool, use.tool_input, payload.get("cwd"))
     if path is not None and use.tool_use_id:
         stash = _pending(memory, use.session_id) / f"{_safe(use.tool_use_id)}.json"
@@ -333,7 +341,11 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
         state_hash=state_hash,
         pre_hash=pre.get("pre_hash", "unknown") if isinstance(pre, dict) else "unknown",
         post_hash=post_hash,
+        store=lambda text: signals.store_text(text, memory.cfg),
     )
+    events = [_mark_unkept(e, memory) for e in events]
+    if use.tool == "Bash" and isinstance(pre, dict) and isinstance(pre.get("started_ns"), int):
+        events += _shell_snapshots(memory, payload, use.session_id, pre["started_ns"], state_hash)
     tracked_path = _tracked_file(memory, use.session_id)
     tracked = _read_json(tracked_path)
     tracked = tracked if isinstance(tracked, dict) else {}
@@ -363,6 +375,53 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
 
 
 _NO_ENTRY = object()
+
+
+def _mark_unkept(ev: Event, memory: Memory) -> Event:
+    """A written file too large for the content store: taint cannot read it,
+    so it says so and counts as unknown content (DESIGN_V3 3.2)."""
+    sha = ev.payload.get("post_hash")
+    if ev.kind is not Kind.FILE_WRITE or not isinstance(sha, str) or sha == signals.ABSENT or signals.stored(sha, memory.cfg):
+        return ev
+    return replace(ev, payload={**ev.payload, "unstored": True})
+
+
+def _shell_snapshots(memory: Memory, payload: Mapping[str, Any], session_id: str, started_ns: int, state_hash: str) -> list[Event]:
+    """Every file in the project a shell command left changed, kept for
+    taint; past the walk's caps, one event saying the rest is unknown."""
+    project = memory.session_state(session_id).project
+    if not project:
+        return []
+    changed, complete = signals.changed_since(Path(project), started_ns)
+    out = []
+    for path in changed:
+        sha = signals.snapshot(path, memory.cfg)
+        out.append(adapter.snapshot_event(payload, str(path), sha, signals.stored(sha, memory.cfg), state_hash))
+    if not complete:
+        out.append(adapter.snapshot_event(payload, None, None, False, state_hash))
+    return out
+
+
+def on_assistant_message(memory: Memory, payload: Mapping[str, Any]) -> Output:
+    """dsh: one assistant message's text, logged for taint."""
+    sid = adapter.session_id(payload)
+    text = str(payload.get("text") or "")
+    if text.strip():
+        key = f"{payload.get('turn')}.{payload.get('step')}.{hashlib.sha256(text.encode()).hexdigest()[:16]}"
+        memory.append(adapter.reply_event(sid, key, text, memory.cfg, lambda t: signals.store_text(t, memory.cfg)))
+    return None
+
+
+def on_stop(memory: Memory, payload: Mapping[str, Any]) -> Output:
+    """Claude Code: the replies of the turn that just ended, read from the
+    transcript and logged once each, for taint."""
+    sid = adapter.session_id(payload)
+    known = memory.world().events
+    store = lambda t: signals.store_text(t, memory.cfg)  # noqa: E731
+    new = [adapter.reply_event(sid, key, text, memory.cfg, store)
+           for key, text in adapter.transcript_replies(adapter.read_transcript(payload.get("transcript_path")))]
+    memory.append(*(e for e in new if e.id not in known))
+    return None
 
 
 def _snapshot_key(path: str, project: str) -> str | None:
@@ -472,6 +531,8 @@ HANDLERS: dict[str, Callable[[Memory, Mapping[str, Any]], Output]] = {
     "PostToolUse": lambda memory, payload: _on_tool(memory, payload, failed=False),
     "PostToolUseFailure": lambda memory, payload: _on_tool(memory, payload, failed=True),
     "SessionEnd": on_session_end,
+    "AssistantMessage": on_assistant_message,
+    "Stop": on_stop,
 }
 
 

@@ -59,6 +59,12 @@ class Kind(StrEnum):
     CHECK = "check"
     # The runner's coin for one trial candidate in one session (DESIGN_V2 5.3).
     TRIAL = "trial"
+    # What the agent said to the user, and the files a shell command left
+    # changed: kept so taint can see every word the agent put in front of the
+    # user (DESIGN_V3 3.2). Neither grounds anything, and the miner never
+    # sees them.
+    ASSISTANT_MSG = "assistant_msg"
+    FILE_SNAPSHOT = "file_snapshot"
 
 
 # Which actor may author each kind. The adapter sets the actor, never the
@@ -80,6 +86,8 @@ KIND_ACTORS: dict[Kind, frozenset[Actor]] = {
     Kind.PACKET_DELIVERED: frozenset({Actor.RUNNER}),
     # The runner proposes what the user's failing check printed (DESIGN_V3 3.3).
     Kind.RECORD_PROPOSED: frozenset({Actor.MODEL, Actor.RUNNER}),
+    Kind.ASSISTANT_MSG: frozenset({Actor.MODEL}),
+    Kind.FILE_SNAPSHOT: frozenset({Actor.TOOL}),
     Kind.EVIDENCE_LINKED: frozenset({Actor.MODEL, Actor.RUNNER}),
     Kind.RUNG_CHANGE: frozenset({Actor.RUNNER}),
     Kind.SCOPE_NARROWED: frozenset({Actor.RUNNER}),

@@ -85,17 +85,34 @@ and replay.
 
 ### 3.2 Taint
 
-A quote is taint when its words occur, collapsed and in any case, in what
-the agent's actions put in the log before the message or output it quotes:
-a tool call (the model's own words, such as a file it wrote), a tool result,
-a file write, an exit code or a test result. The memory system's own events
-(proposals, links, deliveries) quote records by design and do not count.
-Such words reached the user from the agent. Taint applies to user
-messages; the check path is closed by its own rule above. Taint fails open
-where the log is incomplete: payloads are cut at 2,000 characters, files
-written by shell commands leave no snapshot, and the agent's chat replies
-are not logged. Pasted text from those can still pass. A pasted log the agent produced therefore cannot become "The
-user said", while a rule the user types afresh still does.
+A quote from a user message is taint when its words occur, collapsed and in
+any case, in what the agent put in front of the user before that message,
+in the same project. The corpus is the log plus the content store it names:
+
+- every tool call, tool result, file write, exit code and test result, with
+  the whole text of any input or output longer than the 2,000 characters a
+  payload keeps;
+- every file a shell command left changed in the project (`file_snapshot`),
+  read from the later of mtime and ctime, so `touch` cannot hide a change,
+  and skipping `.git`, caches, virtualenvs and `node_modules`;
+- everything the agent said to the user (`assistant_msg`): the dsh plugin
+  sends each assistant message through an `AssistantMessage` hook, and in
+  Claude Code a `Stop` hook reads the turn's replies from the transcript.
+
+Taint fails closed: content that could not be kept (a text or file over
+1 MB, more than 200 changed files, a project walk over 20,000 entries) is
+logged as unstored, and every later quote in that project is then taint.
+The memory system's own events (proposals, links, deliveries) quote records
+by design and do not count, and the new kinds never ground a record or
+reach the miner. A pasted log, file or reply the agent produced therefore
+cannot become "The user said", while a rule the user types afresh still
+does. Still outside the corpus: files a shell command writes outside the
+project or inside the skipped directories, and anything the agent shows the
+user through a channel the hooks do not see. Failing closed there was
+weighed and rejected (security review, 2026-11-18): every test run changes
+the caches, and an in-tree virtualenv exceeds any walk cap, so every user
+statement after the first test run would be taint. Text pasted from those
+places stays a known gap.
 
 ### 3.3 Records from the user's check
 

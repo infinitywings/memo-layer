@@ -19,6 +19,8 @@ HOOK_EVENTS: dict[str, str | None] = {
     "PostToolUse": "*",
     "PostToolUseFailure": "*",
     "SessionEnd": None,
+    # The agent's replies, logged so taint can see them (DESIGN_V3 3.2).
+    "Stop": None,
 }
 
 BACKUP_SUFFIX = ".bak-rka-memory"

@@ -28,7 +28,7 @@ def test_install_is_idempotent_and_uninstall_restores_other_hooks(tmp_path):
                 {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo guard"}]},
                 {"matcher": "Write|Edit|MultiEdit|NotebookEdit", "hooks": [ours("PreToolUse")]},
             ],
-            "Stop": [{"hooks": [{"type": "command", "command": "say done"}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "say done"}]}, {"hooks": [ours("Stop")]}],
             "SessionStart": [{"hooks": [ours("SessionStart")]}],
             "UserPromptSubmit": [{"hooks": [ours("UserPromptSubmit")]}],
             "PostToolUse": [{"matcher": "*", "hooks": [ours("PostToolUse")]}],

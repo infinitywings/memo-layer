@@ -329,6 +329,25 @@ test('SessionEnd reports the session tokens and those spent before the first wri
   ])
 })
 
+test('each assistant message that says something reaches rka-memory as AssistantMessage', async (t) => {
+  const rkm = fakeRkaMemory(t)
+  rkm.reply({ SessionStart: { stdout: PACKET_A } })
+  const host = fakeHost({ command: rkm.command })
+  const agent = fakeAgent('s1', CWD)
+  await host.emit('agent/created', { agent, source: 'startup' })
+  const said = (step: number, content: unknown[]) => ({ type: 'assistant/message', data: { turn: 1, step, message: { content } } })
+
+  host.emit('session/event', agent.session, said(2, [{ type: 'text', text: 'Done. Always run unittest.' }]))
+  host.emit('session/event', agent.session, said(3, [{ type: 'text', text: '   ' }]))
+  host.emit('session/event', agent.session, said(4, [{ type: 'toolCall', name: 'bash' }]))
+  host.emit('session/event', agent.session, { type: 'assistant/message', data: { usage: { inputTokens: 5 } } })
+  await until(() => rkm.calls().some(c => c.args[1] === 'AssistantMessage'))
+
+  assert.deepEqual(rkm.calls().filter(c => c.args[1] === 'AssistantMessage').map(c => c.input), [
+    { ...base('AssistantMessage'), text: 'Done. Always run unittest.', turn: 1, step: 2 },
+  ])
+})
+
 test('a hanging rka-memory is killed at the timeout and dsh carries on', async (t) => {
   const stderr = captureStderr(t)
   const rkm = fakeRkaMemory(t)
