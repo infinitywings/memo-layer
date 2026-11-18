@@ -184,3 +184,10 @@ def test_a_rule_the_user_types_afresh_still_holds(store):
     lg.end("s1")
     pasted_rule(lg, "s2", f"From now on, always {RULE}.")
     assert rung(lg, store) == "L2"
+
+
+def test_unknown_content_from_a_session_of_unknown_project_taints_everywhere(store):
+    lg = Ledger()
+    lg._ev(Kind.FILE_SNAPSHOT, Actor.TOOL, "orphan", {"tool": "Bash", "tool_use_id": "t1", "path": None, "hash": None, "unstored": True})
+    pasted_rule(lg, "s2", f"From now on, always {RULE}.")
+    assert rung(lg, store) == "L1"

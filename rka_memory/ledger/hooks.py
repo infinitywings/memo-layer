@@ -399,7 +399,7 @@ def _shell_snapshots(memory: Memory, payload: Mapping[str, Any], session_id: str
     taint; past the walk's caps, one event saying the rest is unknown."""
     project = memory.session_state(session_id).project
     if not project:
-        return []
+        return [adapter.snapshot_event(payload, None, None, False, state_hash)]
     changed, complete = signals.changed_since(Path(project), started_ns)
     out = []
     for path in changed:

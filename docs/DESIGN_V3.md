@@ -105,8 +105,10 @@ in the same project. The corpus is the log plus the content store it names:
 Taint fails closed: content that could not be kept (a text or file over
 1 MB, more than 200 changed files, a project walk over 20,000 entries, a
 command with no known start) is logged as unstored, and every later quote
-in that named project is then taint. A typed confirm still validates
-there, so the cost is a confirm, not a lost rule.
+in that project is then taint, or every later quote at all if its project
+were unknown (the hooks never leave it so: a session's project falls back
+to its directory). A typed confirm still validates there, so the cost is a
+confirm, not a lost rule.
 The memory system's own events (proposals, links, deliveries) quote records
 by design and do not count, and the new kinds never ground a record or
 reach the miner. A pasted log, file or reply the agent produced therefore
