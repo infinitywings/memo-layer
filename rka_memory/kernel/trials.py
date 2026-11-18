@@ -13,11 +13,24 @@ edit of what it wrote, no repeated request) and the user's outcome check,
 if one ran, passed. The PI registered q = 0.5 and m = 3 before any run, and
 alpha = 0.05 in place of the margin delta = 1/3 after the trial-ceiling
 study.
+
+Under attested validation (DESIGN_V3 5, step 3) a trial is sequential and
+never closes. Its wealth is a mixture e-process on the coins: each session
+multiplies it by 1 + u * 2 min(q, 1 - q) * Z, Z = (Y - 1/2)(A - q) / (q(1 - q)),
+averaged over u in {0.05, ..., 0.95}. Under no effect its mean never grows,
+whatever the base rate and even if it drifts, so promoting at wealth 20
+promotes a useless record at most 5% of the time, over any number of
+sessions (Ville's inequality). While the posterior chance that the treated
+arm does better is at most 0.1 the record is on hold: still randomized, at a
+lower q, so a harmful record is delivered less and can still recover.
+Records that are linked or alike share one coin per session (`clusters`).
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 from dataclasses import dataclass
 from math import comb
 
@@ -47,18 +60,133 @@ def fisher(treated: tuple[int, int], withheld: tuple[int, int]) -> float:
 
 @dataclass(frozen=True)
 class Trial:
-    status: str  # "open", "positive" or "closed"
+    status: str  # "open", "positive" or "closed"; sequential trials also "hold"
     treated: tuple[int, int]  # sessions, of which with a good outcome
     withheld: tuple[int, int]
     completed_at: int | None = None  # ledger position of the session end that completed it
     p: float | None = None
+    wealth: float | None = None  # sequential trials: the e-process after the last session counted
 
     def reason(self) -> str:
         (tn, tk), (wn, wk) = self.treated, self.withheld
+        if self.wealth is not None:
+            if self.status == "positive":
+                return f"positive sequential contrast: treated {tk}/{tn}, withheld {wk}/{wn}, wealth {self.wealth:.1f}"
+            hold = ", on hold" if self.status == "hold" else ""
+            return f"in trial{hold}: treated {tk}/{tn}, withheld {wk}/{wn}, wealth {self.wealth:.2f}"
         if self.status == "open":
             return f"in trial: treated {tn}, withheld {wn} sessions"
         verdict = "positive interventional contrast" if self.status == "positive" else "trial closed without a positive contrast"
         return f"{verdict}: treated {tk}/{tn}, withheld {wk}/{wn}, p = {self.p:.3f}"
+
+
+U_GRID = tuple(k / 20 for k in range(1, 20))
+
+
+def _logbeta(a: float, b: float) -> float:
+    return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+
+
+def p_better(treated: tuple[int, int], withheld: tuple[int, int]) -> float:
+    """P(p_treated > p_withheld) under independent Beta(1, 1) priors, exact
+    (Miller's sum, finite for an integer first parameter). `treated` and
+    `withheld` are (sessions, good outcomes)."""
+    (tn, tk), (wn, wk) = treated, withheld
+    ab, bb, aa, ba = 1 + tk, 1 + tn - tk, 1 + wk, 1 + wn - wk
+    base = _logbeta(aa, ba)
+    v = sum(math.exp(_logbeta(aa + i, ba + bb) - math.log(bb + i) - _logbeta(1 + i, bb) - base) for i in range(ab))
+    return min(max(v, 0.0), 1.0)
+
+
+def wealth_factors(arm: str, q: float, good: bool) -> list[float]:
+    """One session's factor in the wealth, for each u in U_GRID."""
+    a, y = (1 if arm == "treated" else 0), (1 if good else 0)
+    z = (y - 0.5) * (a - q) / (q * (1 - q))
+    return [1 + u * 2 * min(q, 1 - q) * z for u in U_GRID]
+
+
+def evaluate_sequential(rec: RecordState, world: World, cfg: Config, suspect: frozenset[str] = frozenset()) -> Trial:
+    """The record's sequential trial (DESIGN_V3 step 3), scored session by
+    session in the order they ended. Suspect sessions count against
+    promotion, as in `evaluate`."""
+    coins: dict[str, tuple[str, float]] = {}
+    for ev in world.trials:
+        if ev.payload.get("record_id") == rec.id and ev.session_id not in coins:
+            q = float(ev.payload.get("q") or cfg.trials.q)
+            coins[ev.session_id] = (str(ev.payload.get("arm")), q)
+    ended = sorted(
+        (world.position[s.ended.id], s)
+        for sid in coins
+        if (s := world.sessions.get(sid)) is not None and s.ended is not None
+    )
+    logs = [0.0] * len(U_GRID)
+    counts = {"treated": [0, 0], "withheld": [0, 0]}
+    wealth = 1.0
+    for pos, sess in ended:
+        arm, q = coins[sess.id]
+        if arm not in counts or not 0 < q < 1:
+            continue
+        against = sess.id in suspect or _outcome_check(sess) == "due"
+        good = (arm == "withheld") if against else outcome(world, sess)
+        counts[arm][0] += 1
+        counts[arm][1] += good
+        logs = [w + math.log(f) for w, f in zip(logs, wealth_factors(arm, q, good))]
+        wealth = sum(math.exp(w) for w in logs) / len(logs)
+        floor = cfg.trials.min_per_arm
+        if counts["treated"][0] >= floor and counts["withheld"][0] >= floor and wealth >= cfg.trials.e_threshold:
+            return Trial("positive", tuple(counts["treated"]), tuple(counts["withheld"]), pos, wealth=wealth)
+    treated, withheld = tuple(counts["treated"]), tuple(counts["withheld"])
+    status = "hold" if p_better(treated, withheld) <= cfg.trials.hold_below else "open"
+    return Trial(status, treated, withheld, wealth=wealth)
+
+
+_WORD = re.compile(r"[a-z0-9]+")
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]+")
+
+
+def tokens(text: str) -> frozenset[str]:
+    """Words, and for CJK text character bigrams (a lone character stands
+    for itself), so records in Chinese compare as records in English do."""
+    low = text.lower()
+    out = set(_WORD.findall(low))
+    for run in _CJK.findall(low):
+        out.update(run[i : i + 2] for i in range(max(len(run) - 1, 1)))
+    return frozenset(out)
+
+
+def similarity(a: str, b: str) -> float:
+    ta, tb = tokens(a), tokens(b)
+    return len(ta & tb) / len(ta | tb) if ta and tb else 0.0
+
+
+def clusters(world: World, record_ids: list[str], cfg: Config) -> dict[str, str]:
+    """For records on trial: the key of the cluster each belongs to, its
+    earliest record. Records linked by an edge, or whose contents are alike,
+    share a cluster, so one carrying the same advice as another cannot reach
+    the other's withheld sessions."""
+    parent = {rid: rid for rid in record_ids}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def join(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            first = min((ra, rb), key=lambda r: world.position[world.records[r].proposed.id])
+            parent[ra if first == rb else rb] = first
+
+    for i, a in enumerate(record_ids):
+        spec = world.records[a].spec
+        edges = {*spec.refines, *spec.dependencies, *spec.implements, *([spec.supersedes] if spec.supersedes else [])}
+        for b in record_ids[i + 1 :]:
+            other = world.records[b].spec
+            linked = b in edges or a in {*other.refines, *other.dependencies, *other.implements, other.supersedes}
+            if linked or similarity(spec.content, other.content) >= cfg.trials.cluster_similarity:
+                join(a, b)
+    return {rid: find(rid) for rid in record_ids}
 
 
 def _corrected(world: World, session: Session) -> bool:
@@ -132,5 +260,5 @@ def candidates(world: World, labels, cfg: Config) -> list[str]:
     """Records in an open trial, in log order."""
     return [
         r.id for r in sorted(world.records.values(), key=lambda r: world.position[r.proposed.id])
-        if labels.by_id[r.id].trial == "open"
+        if labels.by_id[r.id].trial in ("open", "hold")
     ]

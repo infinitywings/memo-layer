@@ -137,8 +137,34 @@ A hypothesis of any kind enters a trial when its model-made support would
 have met v2's threshold, and only when the user has configured an outcome
 check: without one there is no outcome to test against, and the hypothesis
 is not delivered at all (E0a A2 delivered a wrong constraint three times to
-a trial that could never decide). The decision rule and the unit of
-randomization change in a later step (Section 5, step 3).
+a trial that could never decide).
+
+**The decision is sequential and never closes** (step 3, RKA
+jrn_01M7R3MVT74RMM4P8CFH8VR7QQ). Over the record's trial sessions in the
+order they ended, each multiplies its wealth by
+`1 + u * 2 min(q, 1 - q) * Z`, `Z = (Y - 1/2)(A - q) / (q(1 - q))`, with `A` the
+logged arm, `q` the logged chance of delivery and `Y` the session's outcome
+(sessions that changed their tests, had a withdrawn record in context, or
+owe an outcome are scored against promotion); the wealth is the mean over
+`u` in {0.05, ..., 0.95}. With no effect its mean never grows, whatever the
+base rate and even if it drifts, so promoting at wealth 20 promotes a
+useless record at most 5% of the time over any number of sessions (Ville).
+A promotion also needs two sessions in each arm. While the Beta(1, 1)
+posterior chance that the treated arm does better is at most 0.1 the record
+is on hold: still randomized, at `q = 0.1`, so a harmful record is delivered
+less and can recover. By simulation of the kernel's rule
+(`scripts/step3_check.py`): null promotion 2.4% to 3.0% within 100
+sessions; power 96.6% within 20 sessions at 0.9 against 0.1, and 94.1%
+within 40 at 0.8 against 0.2; a harmful record (0.2 against 0.8) is
+delivered in 7.4 of 40 sessions.
+
+**The unit of randomization is a cluster.** Records on trial that are linked
+by an edge (`refines`, `supersedes`, `depends_on`, `implements`) or alike
+(token Jaccard of at least 0.5, CJK text split into character bigrams) share
+one coin per session, keyed by the cluster's earliest record and drawn at
+the smallest `q` among its members, so one record carrying the same advice
+as another cannot reach the other's withheld sessions. File anchors joined
+nearly every record of a one-file project (E0d); content and edges do not.
 
 ### 3.5 Views
 
@@ -163,9 +189,10 @@ Each step ends in a check, and the next one starts only after it passes.
    deliver nothing; the 40 saved live runs relabelled under both modes.
 2. **Records from the user's check** (3.3). Check: a scripted scenario, and
    the E1 unseen stream relabelled.
-3. **Sequential trials**: the e-process rule SEH from E0d, which never
-   closes for good and lowers `q` while evidence runs against a record, and
-   a unit of randomization narrower than a file anchor.
+3. **Sequential trials** (built, 3.4): the e-process rule SEH from E0d at
+   a wealth threshold of 20, which never closes for good and lowers `q`
+   while evidence runs against a record, and clusters by content and edges
+   as the unit of randomization.
 4. **Live comparison (E2)**: gated v3 against stated, ungated and none on
    streams with a true requirement the repository does not show and a false
    claim it cannot refute, on more than one fixture.

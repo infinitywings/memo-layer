@@ -132,15 +132,25 @@ class Memory:
             for ev in world.trials if ev.session_id == session_id
         }
         new, treated = [], []
-        for rid in trials.candidates(world, labels, self.cfg):
-            if applicable(world.records[rid], state, world) is not True:
-                continue
+        cfg = self.cfg
+        open_ = [rid for rid in trials.candidates(world, labels, cfg) if applicable(world.records[rid], state, world) is True]
+        if cfg.gate.validation == "attested":
+            # Alike or linked records share a coin; a cluster on hold is
+            # delivered at the lower q (DESIGN_V3 step 3).
+            keys = trials.clusters(world, open_, cfg)
+            own = {rid: cfg.trials.q_hold if labels.by_id[rid].trial == "hold" else cfg.trials.q for rid in open_}
+            q_of = {rid: min(own[o] for o in open_ if keys[o] == keys[rid]) for rid in open_}
+        else:
+            keys, q_of = {rid: rid for rid in open_}, {rid: cfg.trials.q for rid in open_}
+        for rid in open_:
             arm = logged.get(rid)
             if arm is None:
-                draw = trials.coin(session_id, rid)
-                arm = "treated" if draw < self.cfg.trials.q else "withheld"
-                new.append(Event.new(Kind.TRIAL, Actor.RUNNER, session_id,
-                                     {"record_id": rid, "arm": arm, "q": self.cfg.trials.q, "coin": draw}))
+                draw = trials.coin(session_id, keys[rid])
+                arm = "treated" if draw < q_of[rid] else "withheld"
+                payload = {"record_id": rid, "arm": arm, "q": q_of[rid], "coin": draw}
+                if keys[rid] != rid:
+                    payload["cluster"] = keys[rid]
+                new.append(Event.new(Kind.TRIAL, Actor.RUNNER, session_id, payload))
             if arm == "treated":
                 treated.append(rid)
         if new:

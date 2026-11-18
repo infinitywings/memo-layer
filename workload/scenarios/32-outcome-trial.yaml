@@ -16,6 +16,8 @@ start: 2027-02-01T12:00:00+00:00
 project: calc-uv
 fresh_project: true
 config:
+  # Tests DESIGN_V2's threshold validation, kept as a comparison mode (DESIGN_V3 4).
+  gate: {validation: threshold}
   checks:
     outcome:
       command:

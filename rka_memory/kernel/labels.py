@@ -451,7 +451,8 @@ def _label_one(
         suspect = modified_sessions(world, cfg) | {
             sid for sid in {e.session_id for e in world.trials} if influence.session(sid) & withdrawn
         }
-        tr = trials.evaluate(rec, world, cfg, frozenset(suspect))
+        evaluate = trials.evaluate_sequential if attested else trials.evaluate
+        tr = evaluate(rec, world, cfg, frozenset(suspect))
         common["trial"] = tr.status
         why = tr.reason()
         if tr.status == "positive":

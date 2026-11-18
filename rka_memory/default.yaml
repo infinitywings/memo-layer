@@ -63,6 +63,12 @@ trials:                       # randomized trials for prescriptive records (DESI
   q: 0.5                      # chance a candidate is delivered in a session where it applies
   m: 3                        # sessions each arm needs before the trial ends, and is decided once
   alpha: 0.05                 # level of the one-sided Fisher test the treated arm's outcomes must pass
+  # Under attested validation trials are sequential (DESIGN_V3 step 3, RKA jrn_01M7R3MVT74RMM4P8CFH8VR7QQ):
+  e_threshold: 20             # promote when the e-process reaches this; 1/20 bounds null promotion at any horizon
+  min_per_arm: 2              # sessions each arm needs before a promotion
+  hold_below: 0.1             # on hold while P(treated does better) is at most this
+  q_hold: 0.1                 # chance of delivery while on hold
+  cluster_similarity: 0.5     # records on trial this alike (token Jaccard), or linked, share one coin
 
 checks:                       # when a session's test results are weak (DESIGN_V2 5.1 rule 2, 8.1; refined by the PI)
   # Test files, by name. Changing or removing existing tests makes them weak; adding new tests does not.

@@ -41,6 +41,12 @@ class TrialConfig:
     q: float = 0.5
     m: int = 3
     alpha: float = 0.05
+    # Sequential trials under attested validation (DESIGN_V3 step 3).
+    e_threshold: float = 20.0  # promote at this wealth: 1/0.05, at most 5% null promotion at any horizon
+    min_per_arm: int = 2  # sessions each arm needs before a promotion
+    hold_below: float = 0.1  # on hold while P(treated better) is at most this
+    q_hold: float = 0.1  # the chance of delivery on hold
+    cluster_similarity: float = 0.5  # token Jaccard at which two records on trial share a coin
 
 
 @dataclass(frozen=True)
@@ -210,6 +216,22 @@ def _outcome(raw: dict[str, Any]) -> OutcomeConfig:
     )
 
 
+def _trials(raw: dict[str, Any]) -> TrialConfig:
+    t = TrialConfig(
+        q=float(raw.get("q", TrialConfig.q)),
+        m=int(raw.get("m", TrialConfig.m)),
+        alpha=_number(raw.get("alpha", TrialConfig.alpha)),
+        e_threshold=_number(raw.get("e_threshold", TrialConfig.e_threshold)),
+        min_per_arm=int(raw.get("min_per_arm", TrialConfig.min_per_arm)),
+        hold_below=_number(raw.get("hold_below", TrialConfig.hold_below)),
+        q_hold=_number(raw.get("q_hold", TrialConfig.q_hold)),
+        cluster_similarity=_number(raw.get("cluster_similarity", TrialConfig.cluster_similarity)),
+    )
+    if not (0 < t.q < 1 and 0 < t.q_hold < 1 and t.e_threshold > 1):
+        raise ValueError("trials: q and q_hold must lie strictly between 0 and 1, and e_threshold above 1")
+    return t
+
+
 VALIDATIONS = frozenset({"attested", "threshold"})
 
 
@@ -264,11 +286,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
         hooks_background=_choice(raw.get("hooks", {}).get("background", "spawn"), BACKGROUND, "hooks.background"),
         skills_dir=Path(raw["skills"]["dir"]).expanduser(),
         skills_export_files=_flag(raw["skills"].get("export_files", True), "skills.export_files"),
-        trials=TrialConfig(
-            q=float(raw.get("trials", {}).get("q", TrialConfig.q)),
-            m=int(raw.get("trials", {}).get("m", TrialConfig.m)),
-            alpha=_number(raw.get("trials", {}).get("alpha", TrialConfig.alpha)),
-        ),
+        trials=_trials(raw.get("trials", {})),
         check_test_globs=tuple(str(g) for g in raw.get("checks", {}).get("test_globs") or ()),
         check_config_globs=tuple(str(g) for g in raw.get("checks", {}).get("config_globs") or ()),
         isolation=_isolation(raw.get("checks", {}).get("isolation") or {}),
