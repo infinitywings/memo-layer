@@ -21,6 +21,8 @@ description: >-
 start: 2027-07-05T09:00:00+00:00
 project: calc-uv
 config:
+  # As E1 ran (DESIGN_V2 validation): under attested the runner would add a record from the check.
+  gate: {validation: threshold}
   packet: {arms: [ungated, sourced]}
 sessions:
   - at: +0d

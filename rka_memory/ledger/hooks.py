@@ -23,7 +23,24 @@ from typing import Any, Callable, Mapping
 
 from rka_memory import commands
 from rka_memory.commands import CommandError
-from rka_memory.domain import Actor, Event, Kind, State, clock_now, derived_id, parse_ts
+from rka_memory.domain import (
+    QUOTE_CHARS,
+    Actor,
+    Event,
+    FieldConstraint,
+    Integrity,
+    Kind,
+    RecordKind,
+    RecordSpec,
+    Scope,
+    State,
+    clock_now,
+    collapse,
+    derived_id,
+    integrity,
+    parse_ts,
+)
+from rka_memory.kernel.evidence import in_check_source
 from rka_memory.ledger import checks as runner_checks
 from rka_memory.ledger import signals
 from rka_memory.ledger import state as state_mod
@@ -220,6 +237,40 @@ def _outcome_check(memory: Memory, session_id: str) -> list[Event]:
     return runner_checks.outcome_events(Path(state.project), memory.cfg, session_id, state)
 
 
+def _check_words(output: str, cfg: Any) -> str | None:
+    """What a failing check printed that the user wrote into the check: the
+    whole output if it fits a quote, else its first line that does."""
+    whole = collapse(output)
+    lines = [collapse(line) for line in output.splitlines()]
+    for words in (whole, *lines):
+        if QUOTE_CHARS[0] <= len(words) <= QUOTE_CHARS[1] and in_check_source(words, cfg):
+            return words
+    return None
+
+
+def _check_record(memory: Memory, session_id: str, outcome: list[Event]) -> list[Event]:
+    """DESIGN_V3 3.3: when the user's check fails, the runner, not the miner,
+    proposes what it printed as a constraint, and links the output to it with
+    the quote. One record per project and wording, so it reaches L2 when the
+    same words fail a second session. Attested validation only."""
+    cfg = memory.cfg
+    printed = next((e for e in outcome if integrity(e) is Integrity.CHECK), None)
+    if cfg.gate.validation != "attested" or printed is None or printed.payload.get("exit_code") in (0, None):
+        return []
+    project = memory.session_state(session_id).project
+    words = _check_words(str(printed.payload.get("output") or ""), cfg)
+    if not project or words is None:
+        return []
+    rid = derived_id("r", "check", project, words)
+    new = []
+    if rid not in memory.world().records:
+        spec = RecordSpec(rid, RecordKind.CONSTRAINT, words, Scope(project=FieldConstraint(frozenset({project}))))
+        new.append(Event.new(Kind.RECORD_PROPOSED, Actor.RUNNER, session_id, spec.to_json()))
+    link = {"record_id": rid, "event_id": printed.id, "polarity": "support", "reason": "the user's check printed it",
+            "statement": {"quote": words}}
+    return [*new, Event.new(Kind.EVIDENCE_LINKED, Actor.RUNNER, session_id, link)]
+
+
 def _rkm_command(memory: Memory, session_id: str, prompt: str) -> Output:
     try:
         return _block(commands.run(memory, prompt, session_id))
@@ -389,7 +440,8 @@ def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
     memory.append(*_late_writes(memory, sid), *([end] if end else []))
     rerun = [_isolation_check(memory, sid, end)] if end and end.payload.get("isolation") == "due" else []
     memory.append(*rerun)
-    memory.append(*_outcome_check(memory, sid), adapter.session_end_event(payload, usage))
+    outcome = _outcome_check(memory, sid)
+    memory.append(*outcome, *_check_record(memory, sid, outcome), adapter.session_end_event(payload, usage))
     shutil.rmtree(_pending(memory, sid), ignore_errors=True)
     sync = memory.cfg.sync_on_session_end and bool(memory.cfg.core_project_id)
     if memory.cfg.hooks_background == "spawn":

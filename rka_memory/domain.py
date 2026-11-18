@@ -78,7 +78,8 @@ KIND_ACTORS: dict[Kind, frozenset[Actor]] = {
     Kind.USER_REJECT: frozenset({Actor.USER}),
     Kind.SESSION_END: frozenset({Actor.RUNNER}),
     Kind.PACKET_DELIVERED: frozenset({Actor.RUNNER}),
-    Kind.RECORD_PROPOSED: frozenset({Actor.MODEL}),
+    # The runner proposes what the user's failing check printed (DESIGN_V3 3.3).
+    Kind.RECORD_PROPOSED: frozenset({Actor.MODEL, Actor.RUNNER}),
     Kind.EVIDENCE_LINKED: frozenset({Actor.MODEL, Actor.RUNNER}),
     Kind.RUNG_CHANGE: frozenset({Actor.RUNNER}),
     Kind.SCOPE_NARROWED: frozenset({Actor.RUNNER}),

@@ -84,6 +84,9 @@ def main() -> int:
     )
     seed.append(Event.new(Kind.RECORD_PROPOSED, Actor.MODEL, "seed-1", proc.to_json(), ts=t.isoformat()))
     seed.append(Event.new(Kind.USER_CONFIRM, Actor.USER, "cli", {"record_id": "r_proc"}, ts=t.isoformat()))
+    # Under attested validation (the default, DESIGN_V3) test results alone
+    # validate nothing; the user's confirm does.
+    seed.append(Event.new(Kind.USER_CONFIRM, Actor.USER, "cli", {"record_id": "r_e2e"}, ts=t.isoformat()))
     mem.append(*seed)
     mem.gate()
     follow = []

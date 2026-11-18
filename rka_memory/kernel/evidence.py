@@ -124,7 +124,8 @@ def statement(made_by: Event | None, ev: Event, cfg: Config, world: World | None
     if made_by is None:
         return None
     attested = cfg.gate.validation == "attested"
-    if ev.kind is Kind.USER_MSG and ev.actor is Actor.USER:
+    user = ev.kind is Kind.USER_MSG and ev.actor is Actor.USER
+    if user:
         text = str(ev.payload.get("text") or "")
     elif attested and integrity(ev) is Integrity.CHECK:
         text = str(ev.payload.get("output") or "")
@@ -133,11 +134,30 @@ def statement(made_by: Event | None, ev: Event, cfg: Config, world: World | None
     said = made_by.payload.get("statement")
     if not isinstance(said, dict) or not isinstance(said.get("quote"), str) or not quoted(text, said["quote"]):
         return None
-    if attested and world is not None and taint(world, said["quote"], ev, cfg.ledger_dir / "blobs"):
+    if not user and not in_check_source(said["quote"], cfg):
+        # The check runs the agent's code, which can print anything; only
+        # words the user wrote into the check itself are the user's.
+        return None
+    if user and attested and world is not None and taint(world, said["quote"], ev, cfg.ledger_dir / "blobs"):
         return None
     marker = said.get("marker")
     is_rule = ev.kind is Kind.USER_MSG and isinstance(marker, str)
     return said["quote"], is_rule and standing(text, said["quote"], marker, cfg.gate.standing_phrases)
+
+
+def _plain(text: str) -> str:
+    """Quote marks and backslashes dropped, whitespace collapsed: a message
+    written as several string literals in the check's source compares with
+    the one line it printed."""
+    return collapse(text.replace('"', "").replace("'", "").replace("\\", ""))
+
+
+def in_check_source(quote: str, cfg: Config) -> bool:
+    """The quoted words occur in the user's configured outcome check
+    (DESIGN_V3 3.1). Fail-closed: a check given as a script path, or a
+    message assembled at run time, attests nothing."""
+    source = " ".join(cfg.outcome.command or ())
+    return bool(source) and _plain(quote) in _plain(source)
 
 
 def _strings(value: object) -> list[str]:

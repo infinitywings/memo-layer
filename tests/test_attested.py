@@ -12,6 +12,10 @@ RULE = "run the suite with python -m unittest -q"
 STANDING = {"quote": RULE, "marker": "always"}
 CHECKED = "ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS"
 WITH_CHECK = {"checks": {"outcome": {"command": ["true"]}}}
+# The user's check, its message split over two string literals as in the E1 stream.
+USERS_CHECK = {"checks": {"outcome": {"command": [
+    "python", "-c", 'print("ops CLI check failed: the ops CLI offers only the functions"\n      " registered in calc.OPERATIONS")',
+]}}}
 
 
 def labels(lg: Ledger, c=None):
@@ -123,19 +127,19 @@ def check_quoted(lg: Ledger, sids: tuple[str, ...]) -> None:
 def test_the_users_check_validates_its_own_words_once_they_recur_in_a_second_session():
     lg = Ledger()
     check_quoted(lg, ("s1",))
-    assert rung(lg, "r_ops") == "L1"
+    assert rung(lg, "r_ops", attested(**USERS_CHECK)) == "L1"
     check_quoted(lg, ("s2",))
-    lab = labels(lg).by_id["r_ops"]
+    lab = labels(lg, attested(**USERS_CHECK)).by_id["r_ops"]
     assert (lab.rung.value, lab.reason) == ("L2", "the user's check printed its words in two sessions")
 
 
-def test_a_check_quote_the_agent_wrote_into_its_code_is_taint():
+def test_words_the_check_printed_but_the_user_never_wrote_into_it_attest_nothing():
+    """The check imports the agent's code, which can print anything, even
+    words built at run time that no file the agent wrote holds."""
     lg = Ledger()
-    lg.start("s0", **UV)
-    lg.tool_call("s0", "Edit", f'print("{CHECKED}")')
-    lg.end("s0")
     check_quoted(lg, ("s1", "s2"))
-    assert rung(lg, "r_ops") == "L1"
+    assert rung(lg, "r_ops", attested(**WITH_CHECK)) == "L1"
+    assert rung(lg, "r_ops", attested()) == "L1"
 
 
 def steered_constraint(lg: Ledger) -> None:
@@ -174,7 +178,8 @@ def test_the_gated_arm_renders_each_record_with_its_source():
     lg = Ledger()
     stated_rule(lg, "s1", f"From now on: always {RULE}.")
     check_quoted(lg, ("s2", "s3"))
-    view = packet(project(lg.events), labels(lg), attested(), State(**UV), arm="gated", channel="session_start")
+    c = attested(**USERS_CHECK)
+    view = packet(project(lg.events), labels(lg, c), c, State(**UV), arm="gated", channel="session_start")
     assert view.render().splitlines() == [
         "## Notes from earlier sessions (rka-memory)",
         "Each note ends with its source. If one is wrong, tell the user, who can type `rkm reject <id> <reason>`.",
@@ -199,3 +204,47 @@ def test_a_file_the_agent_wrote_taints_the_words_the_user_pastes_from_it(tmp_pat
     assert rung(lg, "r_rule", c) != "L2"
     (tmp_path / "blobs" / "h1").write_text("[ci] all green\n")
     assert rung(lg, "r_rule", attested(ledger={"dir": str(tmp_path)})) == "L2"
+
+
+def runner_records(memory, lg: Ledger, sid: str, output: str, code: int = 1):
+    from rka_memory.ledger import hooks
+
+    lg.start(sid, **UV)
+    printed = lg.outcome_output(sid, code, output)
+    memory.append(*lg.events[-2:])
+    new = hooks._check_record(memory, sid, [printed])
+    memory.append(*new)
+    return new
+
+
+def with_users_check(memory, validation: str = "attested"):
+    from dataclasses import replace
+
+    from rka_memory.config import OutcomeConfig
+
+    command = tuple(USERS_CHECK["checks"]["outcome"]["command"])
+    memory.cfg = replace(memory.cfg, gate=replace(memory.cfg.gate, validation=validation), outcome=OutcomeConfig(command=command))
+    return memory
+
+
+def test_the_runner_proposes_what_the_users_failing_check_printed_and_it_validates_on_the_second_failure(memory):
+    with_users_check(memory)
+    lg = Ledger()
+    first = runner_records(memory, lg, "s1", CHECKED + "\n")
+    assert [(e.kind, e.actor) for e in first] == [(Kind.RECORD_PROPOSED, Actor.RUNNER), (Kind.EVIDENCE_LINKED, Actor.RUNNER)]
+    rid = first[0].payload["record_id"]
+    assert first[0].payload["content"] == CHECKED and first[1].payload["statement"] == {"quote": CHECKED}
+    assert label(memory.world(), memory.cfg, lg.clock).by_id[rid].rung.value == "L1"
+    again = runner_records(memory, lg, "s2", CHECKED + "\n")
+    assert [e.kind for e in again] == [Kind.EVIDENCE_LINKED]
+    lab = label(memory.world(), memory.cfg, lg.clock).by_id[rid]
+    assert (lab.rung.value, lab.reason) == ("L2", "the user's check printed its words in two sessions")
+
+
+def test_the_runner_proposes_nothing_the_user_did_not_write_into_the_check(memory):
+    with_users_check(memory)
+    lg = Ledger()
+    assert runner_records(memory, lg, "s1", "AssertionError: mean([]) raised ZeroDivisionError") == []
+    assert runner_records(memory, lg, "s2", CHECKED, code=0) == []
+    with_users_check(memory, validation="threshold")
+    assert runner_records(memory, lg, "s3", CHECKED) == []

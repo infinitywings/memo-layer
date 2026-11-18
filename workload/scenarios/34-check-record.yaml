@@ -1,0 +1,63 @@
+name: check-record
+description: >-
+  Records from the user's own check (DESIGN_V3 3.3), under attested
+  validation. The miner proposes nothing. The user's outcome check fails
+  in s1 and s2 with a message written in the check itself, and the runner,
+  not the miner, proposes that message as a constraint: at L1 after its
+  first failure, at L2 after the second. In s3 the gated arm delivers it as
+  what the user's check printed, the scripted agent registers the new
+  function because its packet says so, and the check passes.
+start: 2027-02-01T12:00:00+00:00
+project: calc-uv
+fresh_project: true
+silent_miner: true
+config:
+  packet: {arms: [gated]}
+  checks:
+    outcome:
+      command:
+        - "{python}"
+        - "-c"
+        - |
+          import sys
+          import calc
+          if "mean" in getattr(calc, "OPERATIONS", {}):
+              print("ops CLI check passed")
+              sys.exit(0)
+          print("ops CLI check failed: the ops CLI offers only the functions"
+                " registered in calc.OPERATIONS")
+          sys.exit(1)
+sessions:
+  - at: +0d
+    prompt: Add a mean(values) function to calc.py, with tests.
+    agent: &work
+      - edit: {path: calc.py, old: "def subtract", new: "def mean(values):\n    return sum(values) / len(values)\n\n\ndef subtract"}
+      - told:
+          text: registered in calc.OPERATIONS
+          then:
+            - edit: {path: calc.py, old: "    return a - b\n", new: "    return a - b\n\n\nOPERATIONS = {\"mean\": mean}\n"}
+          else: []
+      - bash: pytest -q
+    expect:
+      - {arm: gated}
+      - {outcome_check: false}
+      - {record: "ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS", rung: L1}
+      - {events: {kind: record_proposed, count: 1}}
+
+  - at: +1d
+    prompt: Add a mean(values) function to calc.py that averages a list, with tests.
+    agent: *work
+    expect:
+      - {outcome_check: false}
+      - {record: "ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS", delivered: false}
+      - {record: "ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS", rung: L2}
+      - {events: {kind: record_proposed, count: 1}}
+
+  - at: +2d
+    prompt: Add a mean(values) function to calc.py that averages a list of numbers, with tests.
+    agent: *work
+    expect:
+      - {record: "ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS", delivered: true}
+      - {model_saw: "## Notes from earlier sessions (rka-memory)"}
+      - {model_saw: "The user's own acceptance check, which you are not shown, printed: \"ops CLI check failed: the ops CLI offers only the functions registered in calc.OPERATIONS\""}
+      - {outcome_check: true}

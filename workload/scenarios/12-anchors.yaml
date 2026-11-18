@@ -14,6 +14,8 @@ description: >-
 start: 2027-01-04T12:00:00+00:00
 project: calc-uv
 config:
+  # Tests DESIGN_V2's threshold validation, kept as a comparison mode (DESIGN_V3 4).
+  gate: {validation: threshold}
   packet: {arms: [gated]}
   scope: {fields: [task_class, project, toolchain]}
 sessions:
