@@ -193,9 +193,11 @@ Each step ends in a check, and the next one starts only after it passes.
    a wealth threshold of 20, which never closes for good and lowers `q`
    while evidence runs against a record, and clusters by content and edges
    as the unit of randomization.
-4. **Live comparison (E2)**: gated v3 against stated, ungated and none on
-   streams with a true requirement the repository does not show and a false
-   claim it cannot refute, on more than one fixture.
+4. **Live comparison (E2)**: gated v3 against stated memory and a
+   model-curated notepad on three fixtures, each stream with a true
+   requirement only the user's check reveals, a true and a false claim only
+   agent-visible text shows, and a rule the user states. Design and
+   predictions: docs/E2.md.
 
 ## 6. Predictions for step 1
 
