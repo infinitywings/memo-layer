@@ -527,6 +527,12 @@ class TranscriptUsage:
     tokens_total: int = 0
     tokens_before_first_write: int = 0
     first_write_seen: bool = False
+    # The four parts of the total: prompt tokens served fresh, from the
+    # provider's cache, or written to it, and output (E2 measures cache reuse).
+    tokens_input: int = 0
+    tokens_cache_read: int = 0
+    tokens_cache_write: int = 0
+    tokens_output: int = 0
 
 
 def read_transcript(path: str | None) -> list[dict[str, Any]]:
@@ -574,8 +580,17 @@ def _tokens(usage: Mapping[str, Any]) -> int:
     return sum(usage[f] for f in fields if isinstance(usage.get(f), int))
 
 
+PARTS = {
+    "tokens_input": "input_tokens",
+    "tokens_cache_read": "cache_read_input_tokens",
+    "tokens_cache_write": "cache_creation_input_tokens",
+    "tokens_output": "output_tokens",
+}
+
+
 def transcript_usage(records: Iterable[Mapping[str, Any]]) -> TranscriptUsage:
     total, before, seen = 0, 0, False
+    parts = dict.fromkeys(PARTS, 0)
     for usage, has_write in _assistant_messages(records):
         if has_write:
             seen = True
@@ -583,7 +598,10 @@ def transcript_usage(records: Iterable[Mapping[str, Any]]) -> TranscriptUsage:
         total += tokens
         if not seen:
             before += tokens
-    return TranscriptUsage(total, before, seen)
+        for name, field_name in PARTS.items():
+            value = usage.get(field_name)
+            parts[name] += value if isinstance(value, int) else 0
+    return TranscriptUsage(total, before, seen, **parts)
 
 
 def transcript_model(records: Iterable[Mapping[str, Any]]) -> str | None:
@@ -605,6 +623,7 @@ def reported_usage(payload: Mapping[str, Any]) -> TranscriptUsage | None:
         int(usage["tokens_total"]),
         int(usage.get("tokens_before_first_write") or 0),
         bool(usage.get("first_write_seen")),
+        **{name: int(usage.get(name) or 0) for name in PARTS},
     )
 
 
@@ -618,5 +637,6 @@ def session_end_event(payload: Mapping[str, Any], usage: TranscriptUsage) -> Eve
             "tokens_total": usage.tokens_total,
             "tokens_before_first_write": usage.tokens_before_first_write,
             "first_write_seen": usage.first_write_seen,
+            **{name: getattr(usage, name) for name in PARTS},
         },
     )

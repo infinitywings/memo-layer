@@ -405,6 +405,11 @@ interface Usage {
   /** Total before the latest assistant message. Like a Claude Code transcript, the message that calls the first write is not counted before it. */
   beforeLatestMessage: number
   beforeFirstWrite: number | undefined
+  /** The four parts of the total: prompt tokens served fresh, from the provider's cache, or written to it, and output (E2 measures cache reuse, DESIGN_V2 R8). */
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
 }
 
 interface SessionState {
@@ -550,6 +555,10 @@ function usageReport(usage: Usage): Record<string, unknown> {
     tokens_total: usage.total,
     tokens_before_first_write: usage.beforeFirstWrite ?? usage.total,
     first_write_seen: usage.beforeFirstWrite !== undefined,
+    tokens_input: usage.input,
+    tokens_cache_read: usage.cacheRead,
+    tokens_cache_write: usage.cacheWrite,
+    tokens_output: usage.output,
   }
 }
 
@@ -604,7 +613,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         queue: Promise.resolve(),
         packet: '',
         prompted: false,
-        usage: { total: 0, beforeLatestMessage: 0, beforeFirstWrite: undefined },
+        usage: { total: 0, beforeLatestMessage: 0, beforeFirstWrite: undefined, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
         skills: [],
       }
       sessions.set(id, state)
@@ -780,6 +789,10 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
       const { inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0 } = event.data.usage ?? {}
       usage.beforeLatestMessage = usage.total
       usage.total += inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
+      usage.input += inputTokens
+      usage.cacheRead += cacheReadTokens
+      usage.cacheWrite += cacheWriteTokens
+      usage.output += outputTokens
       // What the agent said goes to rka-memory, so words the user later
       // pastes back are not taken for the user's own (DESIGN_V3 3.2).
       const agent = sessions.get(session.id)?.agent

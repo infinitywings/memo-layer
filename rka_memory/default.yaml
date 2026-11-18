@@ -59,6 +59,10 @@ miner:
   api_key_env: null           # openai_compat: name of the env var holding the key
   extract_rules: true         # also ask for the rules the user stated, as verbatim quotes
 
+notepad:                      # the `notepad` arm's curator, E2's model-curated baseline (docs/E2.md); same keys as miner
+  backend: none               # none keeps no notepad; openai_compat for a live run
+  consolidate_every: 5        # sessions between consolidation passes over the notes
+
 trials:                       # randomized trials for prescriptive records (DESIGN_V2 5.3); pre-registered by the PI
   q: 0.5                      # chance a candidate is delivered in a session where it applies
   m: 3                        # sessions each arm needs before the trial ends, and is decided once

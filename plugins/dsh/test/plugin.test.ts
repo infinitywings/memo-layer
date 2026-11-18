@@ -339,8 +339,8 @@ test('SessionEnd reports the session tokens and those spent before the first wri
   await until(() => host.systemPrompt(writer) === '')
 
   assert.deepEqual(rkm.calls().filter(c => c.args[1] === 'SessionEnd').map(c => c.input).sort((a, b) => String(a!.session_id).localeCompare(String(b!.session_id))), [
-    { ...base('SessionEnd'), reason: 'disposed', usage: { tokens_total: 255, tokens_before_first_write: 155, first_write_seen: true } },
-    { ...base('SessionEnd'), session_id: 's2', reason: 'disposed', usage: { tokens_total: 70, tokens_before_first_write: 70, first_write_seen: false } },
+    { ...base('SessionEnd'), reason: 'disposed', usage: { tokens_total: 255, tokens_before_first_write: 155, first_write_seen: true, tokens_input: 190, tokens_cache_read: 30, tokens_cache_write: 5, tokens_output: 30 } },
+    { ...base('SessionEnd'), session_id: 's2', reason: 'disposed', usage: { tokens_total: 70, tokens_before_first_write: 70, first_write_seen: false, tokens_input: 60, tokens_cache_read: 0, tokens_cache_write: 0, tokens_output: 10 } },
   ])
 })
 

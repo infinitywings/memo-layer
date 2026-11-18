@@ -66,6 +66,9 @@ class Session:
     # (a generated AGENTS.md, a test cache). Unlike drift, it is recorded as
     # the runner's own workspace_reset, so it never reads as a user undo.
     reset: tuple[str, ...] = ()
+    # What the scripted notepad curator returns after this session, in the
+    # `notepad` arm; unset, it keeps the notepad as it is.
+    notepad: str | None = None
 
 
 @dataclass(frozen=True)
@@ -327,7 +330,7 @@ def _observe(raw: Any, where: str) -> Observe:
     return Observe(raw["label"].strip(), expect)
 
 
-SESSION_KEYS = {"reset", "drift", "agent", "miner", "user", "expect", "observe", "plant"}
+SESSION_KEYS = {"reset", "drift", "agent", "miner", "user", "expect", "observe", "plant", "notepad"}
 
 
 def _session(raw: Any, index: int, where: str) -> Session:
@@ -353,6 +356,7 @@ def _session(raw: Any, index: int, where: str) -> Session:
         observe=tuple(_observe(o, f"{where}.observe[{i}]") for i, o in enumerate(_list(d.get("observe"), where))),
         plant=_plant(d.get("plant"), f"{where}.plant"),
         reset=tuple(_str(r, f"{where}.reset[{i}]") for i, r in enumerate(_list(d.get("reset"), where))),
+        notepad=_str(d["notepad"], f"{where}.notepad") if "notepad" in d else None,
     )
 
 

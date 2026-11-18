@@ -29,7 +29,7 @@ import yaml
 
 import rka_memory
 from rka_memory import config as config_mod
-from rka_memory import graph
+from rka_memory import graph, notepad
 from rka_memory.domain import Actor, Event, Kind, clock_file_now
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.miner import miner
@@ -228,8 +228,10 @@ class MockModel:
             raise RuntimeError(f"scripted model did not start: {(paths.logs / 'mock.err').read_text()[-500:]}")
         self.port = int(first)
 
-    def script(self, *, label: str, agent: tuple = (), say: str = "Done.", miner: dict | None = None) -> None:
-        doc = {"label": label, "agent": list(agent), "say": say, "miner": miner or {}}
+    def script(
+        self, *, label: str, agent: tuple = (), say: str = "Done.", miner: dict | None = None, notepad: str | None = None
+    ) -> None:
+        doc = {"label": label, "agent": list(agent), "say": say, "miner": miner or {}, "notepad": notepad}
         tmp = self.paths.script.with_suffix(".tmp")
         tmp.write_text(json.dumps(doc, indent=2))
         os.replace(tmp, self.paths.script)
@@ -429,18 +431,23 @@ class StreamRun:
             (directory / "canary.txt").write_text(self.paths.canary_content + "\n")
             (directory / self.paths.canary_name).write_text(self.paths.canary_content + "\n")
 
+    @property
+    def arms(self) -> tuple[str, ...]:
+        return tuple((self.stream.config.get("packet") or {}).get("arms") or ())
+
     def _setup(self, port: int | None) -> None:
         p = self.paths
-        if self.stream.silent_miner:
-            miner = {"backend": "silent"}
-        elif port is None:
-            miner = deepseek_miner()
-        else:
-            miner = {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
+        model = deepseek_miner() if port is None else {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
+        # A notepad-only run keeps notes instead of records: its miner reads
+        # every session and proposes nothing, and the notepad's curator gets
+        # the model the miner would have had (docs/E2.md Section 3).
+        notepad_only = self.arms == ("notepad",)
+        miner = {"backend": "silent"} if self.stream.silent_miner or notepad_only else model
         base = {
             "ledger": {"dir": str(p.ledger_dir)},
             "core": {"sync_on_session_end": False},
             "miner": miner,
+            "notepad": model if "notepad" in self.arms else {"backend": "none"},
             "hooks": {"background": "inline"},
             # dsh gets skills through the plugin, which follows the packet arm;
             # SKILL.md files in reach would hand them to every session
@@ -592,7 +599,7 @@ class StreamRun:
             files.apply(action, p.project, self.before, self.confine)
         self._own()
         self.before = files.snapshot(p.project)
-        mock.script(label=s.label, agent=files.substitute(s.agent, p.placeholders()), say=s.say, miner=s.miner)
+        mock.script(label=s.label, agent=files.substitute(s.agent, p.placeholders()), say=s.say, miner=s.miner, notepad=s.notepad)
         before = self.world()
         known = set(before.sessions)
         errors = self._hook_errors()
@@ -607,6 +614,11 @@ class StreamRun:
         errors_log = p.ledger_dir / "miner-errors.log"
         why = [line for line in (errors_log.read_text().splitlines() if errors_log.exists() else []) if sid and line.startswith(sid)]
         self.check(s.label, "session mined", sid is not None and world.sessions[sid].mined, why[-1:] or "")
+        if self.arms == ("notepad",):
+            # The image's RKA_MEMORY_DIR names the stack's ledger, not this run's.
+            cfg = replace(config_mod.load(path=p.config), ledger_dir=p.ledger_dir)
+            failed = [r["error"] for r in notepad.log(cfg) if r["session_id"] == sid and not r["ok"]]
+            self.check(s.label, "notepad curated", sid is not None and notepad.curated(cfg, sid), failed[-1:] or "")
         if sid is not None:
             gaps = [t.record_id for t in graph.traces(world, config_mod.load(path=p.config), sid) if not t.evidence]
             self.check(s.label, "every delivered record traces to evidence", not gaps, gaps[:3])

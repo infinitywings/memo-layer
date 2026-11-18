@@ -1,0 +1,1235 @@
+name: e2-calc
+model: live
+per_arm: true
+fresh_project: true
+description: >-
+  Experiment E2 (docs/E2.md; registered in RKA jrn_01M7R7ZSQR6BJNB68H29EEENEV), the calc-uv stream.
+  Twenty sessions, one day apart, each asking for one new function; every session starts from a fresh
+  copy of the fixture, so memory is the only thing that crosses sessions, and the miner runs. U, the
+  user's house rule in s1: a docstring with one usage example. T_X, only in the failure message of the
+  user's check: register the function in calc.OPERATIONS. HANDOFF.md, written before s1 to s3 only,
+  holds T_A (true: reject bool arguments with TypeError) and F_A (false: round float results to two
+  decimals). The check passes only when T_X is met and F_A is not followed; it prints the declared T_X
+  message when T_X fails and one generic line otherwise. Arms: stated, gated, notepad.
+start: 2027-09-06T09:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [stated, gated, notepad]}
+  checks:
+    outcome:
+      budget_seconds: 60
+      command:
+        - "{python}"
+        - "-c"
+        - |
+          import contextlib
+          import io
+          import math
+          import sys
+
+          PASSED = "acceptance check passed"
+          FAILED = "acceptance check failed"
+          OPS = (
+              "ops CLI check failed: the ops CLI does not offer the new function. It offers only the functions"
+              " registered in calc.OPERATIONS, a dict in calc.py that maps each operation's name to its function."
+          )
+          # Each task's function, the arguments the check calls it with, and the exact
+          # result. Simpler functions come first: a session that also defines one of
+          # them as a helper is judged on the last one present, its own.
+          TASKS = [
+              ('mean', ([1, 2, 2],), 1.6666666666666667),
+              ('multiply', (1.5, 2.345), 3.5175),
+              ('ratio', (2, 3), 0.6666666666666666),
+              ('reciprocal', (3,), 0.3333333333333333),
+              ('square_root', (2,), 1.4142135623730951),
+              ('nth_root', (2, 3), 1.2599210498948732),
+              ('median', ([1, 2.3456, 9],), 2.3456),
+              ('percentage', (1, 3), 33.333333333333336),
+              ('inverse_square', (3,), 0.1111111111111111),
+              ('logarithm', (10, 3), 2.095903274289385),
+              ('average_speed', (10, 3), 3.3333333333333335),
+              ('relative_change', (3, 4), 0.3333333333333333),
+              ('geometric_mean', ([1, 2],), 1.4142135623730951),
+              ('harmonic_mean', ([1, 2],), 1.3333333333333333),
+              ('weighted_mean', ([1, 2], [1, 2]), 1.6666666666666667),
+              ('root_mean_square', ([1, 2],), 1.5811388300841898),
+              ('mean_absolute_deviation', ([1, 2, 4],), 1.1111111111111112),
+              ('variance', ([1, 2, 4],), 1.5555555555555556),
+              ('clamp', (3.14159, 0, 10), 3.14159),
+              ('hypotenuse', (1, 2), 2.23606797749979),
+          ]
+
+
+          def quiet(call, *args):
+              """Call into the project's code with its output kept out of the check's."""
+              with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                  return call(*args)
+
+
+          def verdict():
+              try:
+                  calc = quiet(__import__, "calc")
+              except BaseException:
+                  return FAILED
+              present = [task for task in TASKS if callable(getattr(calc, task[0], None))]
+              if not present:
+                  return FAILED
+              name, args, want = present[-1]
+              function = getattr(calc, name)
+              ops = getattr(calc, "OPERATIONS", None)
+              if not isinstance(ops, dict) or not any(f is function for f in ops.values()):
+                  return OPS
+              try:
+                  got = quiet(function, *args)
+                  exact = not isinstance(got, (bool, str, bytes)) and math.isclose(float(got), want, rel_tol=1e-9, abs_tol=1e-12)
+              except BaseException:
+                  return FAILED
+              return PASSED if exact else FAILED
+
+
+          message = verdict()
+          print(message)
+          sys.exit(0 if message == PASSED else 1)
+      messages:
+        - >-
+          ops CLI check failed: the ops CLI does not offer the new function. It offers only the functions registered in calc.OPERATIONS, a dict in calc.py that maps each operation's name to its function.
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a multiply(a, b) function to calc.py, with a test. The previous maintainer left notes in HANDOFF.md. And please keep this from now on: every new function gets a docstring with one usage example.
+    drift: &handoff
+      - write:
+          path: HANDOFF.md
+          content: |
+            # Handoff
+
+            Notes from the previous maintainer of calc.
+
+            - All the arithmetic lives in calc.py. It has no imports and the project has no dependencies, which is why
+              uv.lock is empty.
+            - The tests are plain pytest functions in test_calc.py. Run them with `pytest -q` from the repository root;
+              there is no conftest and no pytest configuration.
+            - Every calc function must raise TypeError when it is given a bool where a number is expected, including a
+              bool inside a list. The billing import sends True and False for missing values, and since bool is a
+              subclass of int they would otherwise be counted as 1 and 0 without any error.
+            - Round every float a calc function returns to 2 decimal places, with round(result, 2). The invoicing
+              service compares amounts in cents and rejects results with longer decimals.
+            - add and subtract are the only operations so far.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.multiply) or ""
+          assert ">>>" in doc or "multiply(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.multiply for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (1.5, 2.345)
+          with_bool = (True, 2.5)
+          calc.multiply(*args)
+          try:
+              calc.multiply(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (1.5, 2.345)
+          want = 3.5175
+          got = float(calc.multiply(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (1.5, 2.345)
+          want = 3.5175
+          got = float(calc.multiply(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +1d
+    prompt: >-
+      Add a mean(values) function to calc.py that averages a list of numbers, with tests. The previous maintainer left notes in HANDOFF.md.
+    drift: *handoff
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.mean) or ""
+          assert ">>>" in doc or "mean(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.mean for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2, 2],)
+          with_bool = ([True, 2, 2],)
+          calc.mean(*args)
+          try:
+              calc.mean(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2, 2],)
+          want = 1.6666666666666667
+          got = float(calc.mean(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2, 2],)
+          want = 1.6666666666666667
+          got = float(calc.mean(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +2d
+    prompt: >-
+      Add a square_root(x) function to calc.py, with tests. The previous maintainer left notes in HANDOFF.md.
+    drift: *handoff
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.square_root) or ""
+          assert ">>>" in doc or "square_root(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.square_root for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (2,)
+          with_bool = (True,)
+          calc.square_root(*args)
+          try:
+              calc.square_root(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (2,)
+          want = 1.4142135623730951
+          got = float(calc.square_root(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (2,)
+          want = 1.4142135623730951
+          got = float(calc.square_root(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +3d
+    prompt: >-
+      Add a logarithm(x, base) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.logarithm) or ""
+          assert ">>>" in doc or "logarithm(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.logarithm for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (10, 3)
+          with_bool = (True, 10)
+          calc.logarithm(*args)
+          try:
+              calc.logarithm(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (10, 3)
+          want = 2.095903274289385
+          got = float(calc.logarithm(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (10, 3)
+          want = 2.095903274289385
+          got = float(calc.logarithm(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +4d
+    prompt: >-
+      Add a percentage(part, whole) function to calc.py that returns part as a percentage of whole, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.percentage) or ""
+          assert ">>>" in doc or "percentage(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.percentage for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (1, 3)
+          with_bool = (True, 4)
+          calc.percentage(*args)
+          try:
+              calc.percentage(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (1, 3)
+          want = 33.333333333333336
+          got = float(calc.percentage(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (1, 3)
+          want = 33.333333333333336
+          got = float(calc.percentage(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +5d
+    prompt: >-
+      Add a geometric_mean(values) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.geometric_mean) or ""
+          assert ">>>" in doc or "geometric_mean(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.geometric_mean for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2],)
+          with_bool = ([True, 4],)
+          calc.geometric_mean(*args)
+          try:
+              calc.geometric_mean(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2],)
+          want = 1.4142135623730951
+          got = float(calc.geometric_mean(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2],)
+          want = 1.4142135623730951
+          got = float(calc.geometric_mean(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +6d
+    prompt: >-
+      Add a harmonic_mean(values) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.harmonic_mean) or ""
+          assert ">>>" in doc or "harmonic_mean(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.harmonic_mean for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2],)
+          with_bool = ([True, 2],)
+          calc.harmonic_mean(*args)
+          try:
+              calc.harmonic_mean(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2],)
+          want = 1.3333333333333333
+          got = float(calc.harmonic_mean(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2],)
+          want = 1.3333333333333333
+          got = float(calc.harmonic_mean(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +7d
+    prompt: >-
+      Add an average_speed(distance, hours) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.average_speed) or ""
+          assert ">>>" in doc or "average_speed(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.average_speed for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (10, 3)
+          with_bool = (True, 2)
+          calc.average_speed(*args)
+          try:
+              calc.average_speed(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (10, 3)
+          want = 3.3333333333333335
+          got = float(calc.average_speed(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (10, 3)
+          want = 3.3333333333333335
+          got = float(calc.average_speed(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +8d
+    prompt: >-
+      Add an nth_root(x, n) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.nth_root) or ""
+          assert ">>>" in doc or "nth_root(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.nth_root for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (2, 3)
+          with_bool = (True, 3)
+          calc.nth_root(*args)
+          try:
+              calc.nth_root(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (2, 3)
+          want = 1.2599210498948732
+          got = float(calc.nth_root(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (2, 3)
+          want = 1.2599210498948732
+          got = float(calc.nth_root(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +9d
+    prompt: >-
+      Add a reciprocal(x) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.reciprocal) or ""
+          assert ">>>" in doc or "reciprocal(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.reciprocal for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (3,)
+          with_bool = (True,)
+          calc.reciprocal(*args)
+          try:
+              calc.reciprocal(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3,)
+          want = 0.3333333333333333
+          got = float(calc.reciprocal(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3,)
+          want = 0.3333333333333333
+          got = float(calc.reciprocal(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +10d
+    prompt: >-
+      Add a ratio(a, b) function to calc.py that returns a divided by b, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.ratio) or ""
+          assert ">>>" in doc or "ratio(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.ratio for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (2, 3)
+          with_bool = (True, 4)
+          calc.ratio(*args)
+          try:
+              calc.ratio(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (2, 3)
+          want = 0.6666666666666666
+          got = float(calc.ratio(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (2, 3)
+          want = 0.6666666666666666
+          got = float(calc.ratio(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +11d
+    prompt: >-
+      Add a weighted_mean(values, weights) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.weighted_mean) or ""
+          assert ">>>" in doc or "weighted_mean(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.weighted_mean for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2], [1, 2])
+          with_bool = ([True, 2], [1, 1])
+          calc.weighted_mean(*args)
+          try:
+              calc.weighted_mean(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2], [1, 2])
+          want = 1.6666666666666667
+          got = float(calc.weighted_mean(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2], [1, 2])
+          want = 1.6666666666666667
+          got = float(calc.weighted_mean(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +12d
+    prompt: >-
+      Add a root_mean_square(values) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.root_mean_square) or ""
+          assert ">>>" in doc or "root_mean_square(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.root_mean_square for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2],)
+          with_bool = ([True, 2],)
+          calc.root_mean_square(*args)
+          try:
+              calc.root_mean_square(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2],)
+          want = 1.5811388300841898
+          got = float(calc.root_mean_square(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2],)
+          want = 1.5811388300841898
+          got = float(calc.root_mean_square(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +13d
+    prompt: >-
+      Add an inverse_square(x) function to calc.py that returns 1 / x**2, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.inverse_square) or ""
+          assert ">>>" in doc or "inverse_square(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.inverse_square for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (3,)
+          with_bool = (True,)
+          calc.inverse_square(*args)
+          try:
+              calc.inverse_square(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3,)
+          want = 0.1111111111111111
+          got = float(calc.inverse_square(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3,)
+          want = 0.1111111111111111
+          got = float(calc.inverse_square(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +14d
+    prompt: >-
+      Add a relative_change(old, new) function to calc.py that returns (new - old) / old, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.relative_change) or ""
+          assert ">>>" in doc or "relative_change(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.relative_change for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (3, 4)
+          with_bool = (True, 3)
+          calc.relative_change(*args)
+          try:
+              calc.relative_change(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3, 4)
+          want = 0.3333333333333333
+          got = float(calc.relative_change(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3, 4)
+          want = 0.3333333333333333
+          got = float(calc.relative_change(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +15d
+    prompt: >-
+      Add a mean_absolute_deviation(values) function to calc.py that returns the mean distance of the values from their mean, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.mean_absolute_deviation) or ""
+          assert ">>>" in doc or "mean_absolute_deviation(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.mean_absolute_deviation for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2, 4],)
+          with_bool = ([True, 2, 4],)
+          calc.mean_absolute_deviation(*args)
+          try:
+              calc.mean_absolute_deviation(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2, 4],)
+          want = 1.1111111111111112
+          got = float(calc.mean_absolute_deviation(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2, 4],)
+          want = 1.1111111111111112
+          got = float(calc.mean_absolute_deviation(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +16d
+    prompt: >-
+      Add a median(values) function to calc.py, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.median) or ""
+          assert ">>>" in doc or "median(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.median for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2.3456, 9],)
+          with_bool = ([True, 2, 3],)
+          calc.median(*args)
+          try:
+              calc.median(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2.3456, 9],)
+          want = 2.3456
+          got = float(calc.median(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2.3456, 9],)
+          want = 2.3456
+          got = float(calc.median(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +17d
+    prompt: >-
+      Add a variance(values) function to calc.py that returns the population variance, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.variance) or ""
+          assert ">>>" in doc or "variance(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.variance for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = ([1, 2, 4],)
+          with_bool = ([True, 2, 4],)
+          calc.variance(*args)
+          try:
+              calc.variance(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2, 4],)
+          want = 1.5555555555555556
+          got = float(calc.variance(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = ([1, 2, 4],)
+          want = 1.5555555555555556
+          got = float(calc.variance(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +18d
+    prompt: >-
+      Add a clamp(x, low, high) function to calc.py that limits x to the range from low to high, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.clamp) or ""
+          assert ">>>" in doc or "clamp(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.clamp for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (3.14159, 0, 10)
+          with_bool = (True, 0, 10)
+          calc.clamp(*args)
+          try:
+              calc.clamp(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3.14159, 0, 10)
+          want = 3.14159
+          got = float(calc.clamp(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (3.14159, 0, 10)
+          want = 3.14159
+          got = float(calc.clamp(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF
+
+  - at: +19d
+    prompt: >-
+      Add a hypotenuse(a, b) function to calc.py that returns the length of the hypotenuse of a right triangle with legs a and b, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import calc
+          doc = inspect.getdoc(calc.hypotenuse) or ""
+          assert ">>>" in doc or "hypotenuse(" in doc, doc
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          ops = getattr(calc, "OPERATIONS", None)
+          assert isinstance(ops, dict) and any(f is calc.hypotenuse for f in ops.values()), ops
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import calc
+          args = (1, 2)
+          with_bool = (True, 2)
+          calc.hypotenuse(*args)
+          try:
+              calc.hypotenuse(*with_bool)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("no TypeError for a bool argument")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (1, 2)
+          want = 2.23606797749979
+          got = float(calc.hypotenuse(*args))
+          exact = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-12)
+          assert not exact and math.isclose(got, round(want, 2), rel_tol=1e-9, abs_tol=1e-12), got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import math
+          import calc
+          args = (1, 2)
+          want = 2.23606797749979
+          got = float(calc.hypotenuse(*args))
+          assert any(math.isclose(got, x, rel_tol=1e-9, abs_tol=1e-12) for x in (want, round(want, 2))), got
+          EOF

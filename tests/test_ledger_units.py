@@ -94,7 +94,7 @@ def test_transcript_tokens_count_each_message_once_and_stop_before_the_first_wri
         {"type": "assistant", "message": {"id": "m2", "model": "claude-x", "usage": usage, "content": [{"type": "tool_use", "name": "Edit"}]}},
         {"type": "assistant", "message": {"id": "m3", "model": "claude-x", "usage": usage, "content": [{"type": "text"}]}},
     ]
-    assert adapter.transcript_usage(records) == adapter.TranscriptUsage(480, 160, True)
+    assert adapter.transcript_usage(records) == adapter.TranscriptUsage(480, 160, True, 300, 150, 0, 30)
     assert adapter.transcript_model(records) == "claude-x"
 
 

@@ -2,7 +2,7 @@
 
 The workload runner rewrites a session script (JSON) before every dsh run, and
 the server reads it on each request, so one process serves a whole stream.
-Requests come in three kinds:
+Requests come in these kinds:
 
 - agent: the request offers tools. The reply walks the script's `agent` steps,
   one step per tool result already in the conversation, then sends `say`.
@@ -13,6 +13,9 @@ Requests come in three kinds:
 - rules: the prompt starts with EXTRACT_PREFIX. The reply lists the script's
   `miner.rules` and `miner.withdrawn` as given; a `restates` or `record`
   content resolves to the id of the recorded rule row with that content.
+- notepad: the prompt starts with one of NOTEPAD_PREFIXES (E2's notepad
+  curator, rka_memory/notepad.py). The reply is the script's `notepad` text,
+  else the notepad the prompt holds, unchanged.
 - plain: anything else, such as session titles, gets short text.
 
 Every request is appended to the log as one JSON line with the script label,
@@ -37,6 +40,10 @@ from typing import Any
 
 MINER_PREFIX = "You are the candidate miner for rka-memory"
 EXTRACT_PREFIX = "You are the rule extractor for rka-memory"
+NOTEPAD_PREFIXES = (
+    "You keep the notepad of a coding agent's memory.",
+    "You consolidate the notepad of a coding agent's memory.",
+)
 USAGE = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
 SKILL_NAME = re.compile(r"\brka-r-[0-9a-z-]+")
 ROW = re.compile(r"^- (\S+) \[(\S+) (\S+?)(?:, unverified)?\] (.*)$")
@@ -245,6 +252,14 @@ def first_user_text(body: dict[str, Any]) -> str:
     return ""
 
 
+def notepad_reply(prompt: str, scripted: str | None) -> str:
+    """The session's scripted notepad, else the notepad the prompt holds."""
+    if scripted is not None:
+        return scripted
+    held = prompt.split("<notepad>\n", 1)[-1].split("\n</notepad>", 1)[0].strip()
+    return "- No notes yet." if held in ("", "(empty)") else held
+
+
 def respond(body: dict[str, Any], script: dict[str, Any]) -> tuple[str, dict[str, Any], list[str]]:
     """(kind, reply, problems) for one request."""
     if body.get("tools"):
@@ -256,6 +271,8 @@ def respond(body: dict[str, Any], script: dict[str, Any]) -> tuple[str, dict[str
     if prompt.startswith(EXTRACT_PREFIX):
         doc, problems = rules_reply(prompt, script.get("miner") or {})
         return "rules", {"content": json.dumps(doc)}, problems
+    if prompt.startswith(NOTEPAD_PREFIXES):
+        return "notepad", {"content": notepad_reply(prompt, script.get("notepad"))}, []
     return "plain", {"content": "rka-memory workload"}, []
 
 

@@ -209,6 +209,8 @@ class View:
     omitted: tuple[str, ...] = ()
     ledger_revision: int = 0
     budget_tokens: int = 0
+    # The `notepad` arm's notes, delivered whole in place of records.
+    notes: str = ""
 
     @property
     def lines(self) -> tuple[Line, ...]:
@@ -223,6 +225,8 @@ class View:
 
     @cached_property
     def _text(self) -> str:
+        if self.notes:
+            return self.notes
         if not self.lines:
             return ""
         if self.sourced:
@@ -255,6 +259,7 @@ class View:
             "trial": [line.to_json() for line in self.trial],
             "omitted": list(self.omitted),
             "ledger_revision": self.ledger_revision,
+            "notes": self.notes,
             "hash": self.hash,
         }
 
@@ -317,7 +322,7 @@ def packet(
     budget = cfg.budget_tokens if budget_tokens is None else budget_tokens
     with_sources = arm == "sourced" or (arm == "gated" and cfg.gate.validation == "attested")
     empty = View(arm, channel, sourced=with_sources, ledger_revision=world.revision, budget_tokens=budget)
-    if arm == "none":
+    if arm in ("none", "notepad"):
         return empty
     hidden = exclude | superseded(world, labels, cfg, state)
     chosen = [r for r in world.records.values() if r.id not in hidden and valid(labels, r, state, world)]
@@ -496,9 +501,9 @@ def skill(
 def session_skills(world: World, labels: Labels, cfg: Config, state: State, arm: str) -> list[dict[str, str]]:
     """L3 skills valid for one session's state, for a harness whose skill
     provider is asked per session and so enforces the full scope itself. A
-    session in the `none` arm gets no memory, so no skills either, and one in
-    the `stated` arm only skills the user affirmed."""
-    if arm == "none":
+    session in the `none` or `notepad` arm gets no records, so no skills
+    either, and one in the `stated` arm only skills the user affirmed."""
+    if arm in ("none", "notepad"):
         return []
     out = []
     for rec in sorted(exportable(world, labels, cfg, state), key=lambda r: r.id):

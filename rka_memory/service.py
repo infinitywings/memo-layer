@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
 from rka_memory import config as config_mod
-from rka_memory import relations
+from rka_memory import notepad, relations
 from rka_memory.config import Config
 from rka_memory.domain import Actor, Event, Kind, Polarity, State, clock_now, derived_id
 from rka_memory.kernel import views
@@ -103,6 +103,8 @@ class Memory:
             anchors=anchors,
             treated=treated,
         )
+        if arm == "notepad" and channel == "session_start":
+            view = replace(view, notes=notepad.render(self.cfg))
         self.append(
             Event.new(
                 Kind.PACKET_DELIVERED,
@@ -116,6 +118,7 @@ class Memory:
                     "ledger_revision": view.ledger_revision,
                     "budget_tokens": view.budget_tokens,
                     "view_hash": view.hash,
+                    "tokens": views.estimate_tokens(view.render()) if view.render() else 0,
                 },
                 state_hash=state.hash(),
             )

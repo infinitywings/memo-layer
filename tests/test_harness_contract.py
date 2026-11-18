@@ -30,14 +30,22 @@ def test_session_end_takes_reported_usage_when_there_is_no_transcript(memory, ca
     monkeypatch.setattr(hooks, "spawn", lambda commands, log_path: None)
     payload = {
         "session_id": "d1", "transcript_path": "", "cwd": "/tmp", "hook_event_name": "SessionEnd",
-        "usage": {"tokens_total": 900, "tokens_before_first_write": 300, "first_write_seen": True},
+        "usage": {
+            "tokens_total": 900, "tokens_before_first_write": 300, "first_write_seen": True,
+            "tokens_input": 200, "tokens_cache_read": 640, "tokens_cache_write": 0, "tokens_output": 60,
+        },
     }
     assert hooks.main("SessionEnd", json.dumps(payload)) == 0
     end = [e for e in memory.ledger.read() if e.kind is Kind.SESSION_END][0]
-    assert {k: end.payload[k] for k in ("tokens_total", "tokens_before_first_write", "first_write_seen")} == {
+    assert dict(end.payload) == {
+        "reason": None,
         "tokens_total": 900,
         "tokens_before_first_write": 300,
         "first_write_seen": True,
+        "tokens_input": 200,
+        "tokens_cache_read": 640,
+        "tokens_cache_write": 0,
+        "tokens_output": 60,
     }
 
 

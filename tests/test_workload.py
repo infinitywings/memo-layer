@@ -14,7 +14,7 @@ import pytest
 from ledger_builder import Ledger, cfg
 from rka_memory.domain import Scope, State
 from rka_memory.miner.miner import build_prompt, view_of
-from rka_memory.workload import files
+from rka_memory.workload import checks, files
 from rka_memory.workload.checks import Expect, Observed, evaluate
 from rka_memory.workload.stream import (
     Append,
@@ -352,7 +352,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation", "outcome-trial", "sourced", "check-record", "sequential-trial"]
+    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation", "outcome-trial", "sourced", "check-record", "sequential-trial", "notepad"]
 
 
 LIVE = """
@@ -669,6 +669,17 @@ def test_command_passes_runs_in_the_project_and_reports_the_exit(tmp_path):
     assert evaluate(obs, Expect("command_passes", "test -f ok"))[0] is True
     ok, detail = evaluate(obs, Expect("command_passes", "echo nope; exit 3"))
     assert (ok, detail) == (False, "exit 3: nope")
+
+
+def test_command_fails_holds_only_when_the_command_finishes_non_zero(tmp_path, monkeypatch):
+    (tmp_path / "ok").write_text("")
+    obs = Observed(world=project([]), session_id=None, requests=[], ledger_lines=[], metrics=dict, project=tmp_path)
+    assert evaluate(obs, Expect("command_fails", "echo nope; exit 3")) == (True, "exit 3: nope")
+    assert evaluate(obs, Expect("command_fails", "test -f ok")) == (False, "exit 0: ")
+    monkeypatch.setattr(checks, "COMMAND_TIMEOUT", 0.2)
+    assert evaluate(obs, Expect("command_fails", "sleep 5")) == (False, "timed out after 0.2s")
+    no_project = Observed(world=project([]), session_id=None, requests=[], ledger_lines=[], metrics=dict)
+    assert evaluate(no_project, Expect("command_fails", "exit 1")) == (False, "no project")
 
 
 def test_a_commit_never_runs_a_hook_the_agent_planted(tmp_path):

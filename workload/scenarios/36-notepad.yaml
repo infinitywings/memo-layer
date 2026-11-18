@@ -1,0 +1,36 @@
+name: notepad
+description: >-
+  E2's model-curated baseline (docs/E2.md Section 3) end to end, with the
+  scripted curator. The notepad arm delivers no records: its miner reads
+  every session and proposes nothing, and after each session the curator
+  rewrites the notes from the session's events, the user's check included.
+  The next session receives the notes whole under the neutral header. In
+  s2 the curator is not scripted, so the scripted model returns the notes
+  it was given and s3 receives them unchanged.
+start: 2027-03-01T12:00:00+00:00
+project: calc-uv
+config:
+  packet: {arms: [notepad]}
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a mean(values) function to calc.py, with tests. From now on, always run the tests with pytest -q.
+    notepad: "- The user wants the tests run with pytest -q.\n- New calc.py functions go in calc.OPERATIONS."
+    expect:
+      - {arm: notepad}
+      - {packet_empty: true}
+      - {model_never_saw: "Notes from earlier sessions"}
+
+  - at: +1d
+    prompt: Add a median(values) function to calc.py, with tests.
+    expect:
+      - {packet_empty: true}
+      - {model_saw: "## Notes from earlier sessions (rka-memory)"}
+      - {model_saw: "- The user wants the tests run with pytest -q."}
+      - {model_saw: "- New calc.py functions go in calc.OPERATIONS."}
+
+  - at: +2d
+    prompt: Add a mode(values) function to calc.py, with tests.
+    expect:
+      - {model_saw: "- New calc.py functions go in calc.OPERATIONS."}
+      - {events: {kind: record_proposed, count: 0}}

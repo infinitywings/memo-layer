@@ -348,18 +348,33 @@ def _record_contains(obs: Observed, text: str) -> Outcome:
 COMMAND_TIMEOUT = 300
 
 
-def _command_passes(obs: Observed, command: str) -> Outcome:
-    """The shell command exits 0 when run in the project after the session,
-    such as the test suite. Its last output lines are the detail."""
+def _run_command(obs: Observed, command: str) -> tuple[int | None, str]:
+    """The shell command's exit code when run in the project after the
+    session, None if it did not finish, and its last output lines."""
     if obs.project is None:
-        return False, "no project"
+        return None, "no project"
     try:
         # The command runs code the agent wrote, so it runs as the agent.
         proc = files.sandboxed(["bash", "-c", command], obs.project, obs.run_as, timeout=COMMAND_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return False, f"timed out after {COMMAND_TIMEOUT}s"
+        return None, f"timed out after {COMMAND_TIMEOUT}s"
     tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
-    return proc.returncode == 0, f"exit {proc.returncode}: {' | '.join(tail)}"
+    return proc.returncode, f"exit {proc.returncode}: {' | '.join(tail)}"
+
+
+def _command_passes(obs: Observed, command: str) -> Outcome:
+    """The shell command exits 0 when run in the project after the session,
+    such as the test suite. Its last output lines are the detail."""
+    code, detail = _run_command(obs, command)
+    return code == 0, detail
+
+
+def _command_fails(obs: Observed, command: str) -> Outcome:
+    """The shell command finishes with a non-zero exit when run in the
+    project after the session: what a `command_passes` observer looks for is
+    absent. A command that does not finish shows nothing, so it does not hold."""
+    code, detail = _run_command(obs, command)
+    return code not in (None, 0), detail
 
 
 def _ran(obs: Observed, text: str) -> Outcome:
@@ -461,6 +476,7 @@ CHECKS: dict[str, Check] = {
     "trial": Check(_is_str, _trial, False),
     "outcome_check": Check(_is_bool, _outcome_check, False),
     "command_passes": Check(_is_str, _command_passes, False),
+    "command_fails": Check(_is_str, _command_fails, False),
     "ran": Check(_is_str, _ran, False),
     "wrote": Check(_is_str, _wrote, False),
     "metrics": Check(_is_metric_conditions, _metrics, False),

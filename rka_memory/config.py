@@ -87,6 +87,21 @@ class OutcomeConfig:
 
 
 @dataclass(frozen=True)
+class NotepadConfig:
+    """The model that keeps the `notepad` arm's notes, E2's model-curated
+    baseline (docs/E2.md Section 3). Same keys as `miner`; `none` keeps no
+    notepad. The notes are consolidated after every `consolidate_every`
+    sessions the curator has kept."""
+
+    backend: str = "none"
+    model: str | None = None
+    base_url: str = ""
+    api_key_env: str | None = None
+    timeout_seconds: int = 240
+    consolidate_every: int = 5
+
+
+@dataclass(frozen=True)
 class Config:
     ledger_dir: Path
     core_url: str
@@ -123,6 +138,7 @@ class Config:
     check_config_globs: tuple[str, ...] = ()
     isolation: IsolationConfig = field(default_factory=IsolationConfig)
     outcome: OutcomeConfig = field(default_factory=OutcomeConfig)
+    notepad: NotepadConfig = field(default_factory=NotepadConfig)
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
@@ -151,8 +167,9 @@ def merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
 # gated: valid records; stated: valid records the user affirmed (a confirm, or
 # a standing statement of the record's words); ungated: every L1-L3 record in
 # scope; sourced: the ungated records under a neutral header, each line ending
-# with where its support came from; none: no memory.
-ARMS = frozenset({"gated", "none", "sourced", "stated", "ungated"})
+# with where its support came from; none: no memory; notepad: no records, the
+# notes a model keeps instead (E2's baseline, docs/E2.md Section 3).
+ARMS = frozenset({"gated", "none", "notepad", "sourced", "stated", "ungated"})
 BACKGROUND = frozenset({"spawn", "inline", "off"})
 
 
@@ -213,6 +230,20 @@ def _outcome(raw: dict[str, Any]) -> OutcomeConfig:
         command=tuple(command) if command else None,
         budget_seconds=_number(raw.get("budget_seconds", OutcomeConfig.budget_seconds)),
         messages=tuple(messages),
+    )
+
+
+def _notepad(raw: dict[str, Any]) -> NotepadConfig:
+    every = int(raw.get("consolidate_every", NotepadConfig.consolidate_every))
+    if every < 1:
+        raise ValueError("notepad.consolidate_every must be at least 1")
+    return NotepadConfig(
+        backend=str(raw.get("backend", NotepadConfig.backend)),
+        model=raw.get("model") or None,
+        base_url=str(raw.get("base_url", "")),
+        api_key_env=raw.get("api_key_env"),
+        timeout_seconds=int(raw.get("timeout_seconds", NotepadConfig.timeout_seconds)),
+        consolidate_every=every,
     )
 
 
@@ -291,5 +322,6 @@ def from_dict(raw: dict[str, Any]) -> Config:
         check_config_globs=tuple(str(g) for g in raw.get("checks", {}).get("config_globs") or ()),
         isolation=_isolation(raw.get("checks", {}).get("isolation") or {}),
         outcome=_outcome(raw.get("checks", {}).get("outcome") or {}),
+        notepad=_notepad(raw.get("notepad") or {}),
         raw=raw,
     )

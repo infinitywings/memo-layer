@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from rka_memory import commands
+from rka_memory import commands, notepad
 from rka_memory.commands import CommandError
 from rka_memory.domain import (
     Actor,
@@ -510,7 +510,17 @@ def on_session_end(memory: Memory, payload: Mapping[str, Any]) -> Output:
         spawn(commands, memory.cfg.ledger_dir / "background.log")
     elif memory.cfg.hooks_background == "inline":
         _mine_inline(memory, sid, sync)
+    _keep_notepad(memory, sid)
     return None
+
+
+def _keep_notepad(memory: Memory, session_id: str) -> None:
+    """In E2's `notepad` arm (docs/E2.md Section 3) the curator rewrites the
+    notes once the user's check has run; a failed call is in its log."""
+    world = memory.world()
+    arms = {d.arm for d in world.deliveries if d.event.session_id == session_id and d.channel == "session_start"}
+    if arms == {"notepad"}:
+        notepad.after_session(memory, session_id)
 
 
 MINER_ERRORS = "miner-errors.log"

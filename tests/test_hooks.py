@@ -185,6 +185,10 @@ def test_week1_session_replays_from_ledger_and_next_session_sees_edit_and_undo(
         "tokens_total": 45,
         "tokens_before_first_write": 15,
         "first_write_seen": True,
+        "tokens_input": 31,
+        "tokens_cache_read": 3,
+        "tokens_cache_write": 2,
+        "tokens_output": 9,
     }
     assert spawned == [[[sys.executable, "-I", "-m", "rka_memory.cli", "mine", "sess-a"]]]
 
@@ -262,7 +266,10 @@ def test_session_end_also_syncs_when_a_core_project_is_configured(memory, proj, 
     assert spawned == [[[*cli, "mine", "s"], [*cli, "sync"]]]
     end = [e for e in memory.ledger.read() if e.kind is Kind.SESSION_END]
     assert [dict(e.payload) for e in end] == [
-        {"reason": "logout", "tokens_total": 0, "tokens_before_first_write": 0, "first_write_seen": False}
+        {
+            "reason": "logout", "tokens_total": 0, "tokens_before_first_write": 0, "first_write_seen": False,
+            "tokens_input": 0, "tokens_cache_read": 0, "tokens_cache_write": 0, "tokens_output": 0,
+        }
     ]
 
 

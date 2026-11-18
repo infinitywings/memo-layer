@@ -84,6 +84,7 @@ def test_metrics_from_a_fixture_ledger():
         "by_arm": {
             "gated": {"sessions": 2, "misapplied": 1, "rate": 0.5},
             "none": {"sessions": 0, "misapplied": 0, "rate": None},
+            "notepad": {"sessions": 0, "misapplied": 0, "rate": None},
             "sourced": {"sessions": 0, "misapplied": 0, "rate": None},
             "stated": {"sessions": 0, "misapplied": 0, "rate": None},
             "ungated": {"sessions": 0, "misapplied": 0, "rate": None},
@@ -108,6 +109,7 @@ def test_metrics_from_a_fixture_ledger():
     assert report["rediscovery_tokens"] == {
         "gated": {"count": 2, "mean": 1500.0, "median": 1500.0},
         "none": {"count": 2, "mean": 4000.0, "median": 4000.0},
+        "notepad": {"count": 0, "mean": None, "median": None},
         "sourced": {"count": 0, "mean": None, "median": None},
         "stated": {"count": 0, "mean": None, "median": None},
         "ungated": {"count": 0, "mean": None, "median": None},
