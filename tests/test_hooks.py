@@ -148,10 +148,13 @@ def test_week1_session_replays_from_ledger_and_next_session_sees_edit_and_undo(
         ("tool_result", "tool"),
         ("exit_code", "tool"),
         ("test_result", "tool"),
+        # No PreToolUse for these commands: what they wrote is unknown.
+        ("file_snapshot", "tool"),
         ("tool_call", "model"),
         ("tool_result", "tool"),
         ("exit_code", "tool"),
         ("test_result", "tool"),
+        ("file_snapshot", "tool"),
         ("check", "runner"),
         ("session_end", "runner"),
     ]

@@ -94,14 +94,19 @@ in the same project. The corpus is the log plus the content store it names:
   payload keeps;
 - every file a shell command left changed in the project (`file_snapshot`),
   read from the later of mtime and ctime, so `touch` cannot hide a change,
-  and skipping `.git`, caches, virtualenvs and `node_modules`;
+  and skipping `.git`, caches, virtualenvs and `node_modules`. The dsh
+  plugin sends when each command started with its result; Claude Code's
+  PreToolUse hook, now registered for Bash too, stashes it. A command whose
+  start is unknown leaves unknown content;
 - everything the agent said to the user (`assistant_msg`): the dsh plugin
   sends each assistant message through an `AssistantMessage` hook, and in
   Claude Code a `Stop` hook reads the turn's replies from the transcript.
 
 Taint fails closed: content that could not be kept (a text or file over
-1 MB, more than 200 changed files, a project walk over 20,000 entries) is
-logged as unstored, and every later quote in that project is then taint.
+1 MB, more than 200 changed files, a project walk over 20,000 entries, a
+command with no known start) is logged as unstored, and every later quote
+in that named project is then taint. A typed confirm still validates
+there, so the cost is a confirm, not a lost rule.
 The memory system's own events (proposals, links, deliveries) quote records
 by design and do not count, and the new kinds never ground a record or
 reach the miner. A pasted log, file or reply the agent produced therefore

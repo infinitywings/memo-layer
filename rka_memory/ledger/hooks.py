@@ -344,8 +344,16 @@ def _on_tool(memory: Memory, payload: Mapping[str, Any], *, failed: bool) -> Out
         store=lambda text: signals.store_text(text, memory.cfg),
     )
     events = [_mark_unkept(e, memory) for e in events]
-    if use.tool == "Bash" and isinstance(pre, dict) and isinstance(pre.get("started_ns"), int):
-        events += _shell_snapshots(memory, payload, use.session_id, pre["started_ns"], state_hash)
+    if use.tool == "Bash":
+        # dsh sends the start with the result; Claude Code's PreToolUse hook
+        # stashed it. Without either, what the command wrote is unknown.
+        started = payload.get("started_ns")
+        if not isinstance(started, int) and isinstance(pre, dict):
+            started = pre.get("started_ns")
+        if isinstance(started, int):
+            events += _shell_snapshots(memory, payload, use.session_id, started, state_hash)
+        else:
+            events.append(adapter.snapshot_event(payload, None, None, False, state_hash))
     tracked_path = _tracked_file(memory, use.session_id)
     tracked = _read_json(tracked_path)
     tracked = tracked if isinstance(tracked, dict) else {}

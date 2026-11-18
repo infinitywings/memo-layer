@@ -266,6 +266,21 @@ test('a file write runs only after PreToolUse returns; other tools are not held'
   assert.deepEqual(seen, [[preToolUse], [preToolUse]])
 })
 
+test('a shell command reports when it started, so its writes can be found', async (t) => {
+  const rkm = fakeRkaMemory(t)
+  const host = fakeHost({ command: rkm.command })
+  const agent = fakeAgent('s1', CWD)
+  const allow = async () => ({ kind: 'allow' })
+  const before = Date.now() * 1_000_000
+  await host.emit('tools/pre-execute', { callId: 'b1', name: 'bash', arguments: { command: './gen > ci.log' }, agent }, allow)
+  host.emit('tools/result', { callId: 'b1', name: 'bash', arguments: { command: './gen > ci.log' }, agent },
+    { isError: false, value: { kind: 'foreground', exitCode: 0, stdout: { text: '', truncated: false }, stderr: { text: '', truncated: false } }, content: [] })
+  await until(() => rkm.calls().length === 1)
+
+  const started = rkm.calls()[0]!.input!.started_ns
+  assert.ok(typeof started === 'number' && started >= before && started <= Date.now() * 1_000_000, String(started))
+})
+
 test('tool results become post-tool calls, sent in dsh order', async (t) => {
   const rkm = fakeRkaMemory(t)
   rkm.reply({ PostToolUse: { sleepMs: 150 } })

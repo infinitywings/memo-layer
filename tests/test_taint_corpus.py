@@ -67,6 +67,27 @@ def test_a_file_whose_mtime_the_command_set_back_is_still_snapshot(memory, proj,
     assert "ci.log" in [os.path.basename(e.payload["path"]) for e in events_of(memory, Kind.FILE_SNAPSHOT)]
 
 
+def test_dsh_sends_the_shell_start_with_the_result(memory, proj, tmp_path, capsys):
+    import time
+
+    a = base("sess", proj, tmp_path)
+    fire("SessionStart", {**a, "source": "startup"})
+    started = time.time_ns()
+    (proj / "notes.txt").write_text(f"always {RULE}\n")
+    fire("PostToolUse", {**a, "tool_name": "Bash", "tool_input": {"command": "./gen"}, "tool_use_id": "t1",
+                         "tool_response": {"stdout": "", "stderr": ""}, "started_ns": started})
+    assert "notes.txt" in [os.path.basename(e.payload["path"] or "") for e in events_of(memory, Kind.FILE_SNAPSHOT)]
+
+
+def test_a_shell_command_with_no_known_start_leaves_unknown_content(memory, proj, tmp_path, capsys):
+    a = base("sess", proj, tmp_path)
+    fire("SessionStart", {**a, "source": "startup"})
+    fire("PostToolUse", {**a, "tool_name": "Bash", "tool_input": {"command": "./gen"}, "tool_use_id": "t1",
+                         "tool_response": {"stdout": "", "stderr": ""}})
+    [marker] = events_of(memory, Kind.FILE_SNAPSHOT)
+    assert (marker.payload["path"], marker.payload.get("unstored")) == (None, True)
+
+
 def test_a_tool_output_longer_than_the_payload_is_kept_whole(memory, proj, tmp_path, capsys):
     a = base("sess", proj, tmp_path)
     fire("SessionStart", {**a, "source": "startup"})

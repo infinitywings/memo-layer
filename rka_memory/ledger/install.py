@@ -15,7 +15,8 @@ FILE_TOOLS = "Write|Edit|MultiEdit|NotebookEdit"
 HOOK_EVENTS: dict[str, str | None] = {
     "SessionStart": None,
     "UserPromptSubmit": None,
-    "PreToolUse": FILE_TOOLS,
+    # Bash too: its start is when the files it changes are looked for (DESIGN_V3 3.2).
+    "PreToolUse": f"Bash|{FILE_TOOLS}",
     "PostToolUse": "*",
     "PostToolUseFailure": "*",
     "SessionEnd": None,

@@ -201,7 +201,8 @@ def taint(world: World, quote: str, before: Event, blobs: Path | None = None) ->
     occur, before `before` and in the same project, in what the agent's
     actions put in the log or the content store, including its replies and
     the files its commands changed. Fail-closed: an earlier agent event whose
-    content could not be kept makes every later quote taint."""
+    content could not be kept makes every later quote in the same named
+    project taint; the user's typed confirm still validates there."""
     cache = world.__dict__.setdefault("_taint", {})
     if cache.get("revision") != (world.revision, blobs):
         cache.clear()
@@ -220,7 +221,9 @@ def taint(world: World, quote: str, before: Event, blobs: Path | None = None) ->
     if key not in cache:
         at, here = world.position[before.id], _project(world, before)
         cache[key] = bool(key[0]) and any(
-            pos < at and (project is None or here is None or project == here) and (unknown or key[0] in text)
+            pos < at
+            and ((unknown and project is not None and project == here)
+                 or (not unknown and (project is None or here is None or project == here) and key[0] in text))
             for pos, project, unknown, text in cache["texts"]
         )
     return cache[key]

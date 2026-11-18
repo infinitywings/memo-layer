@@ -559,6 +559,7 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
   const protectedRoots = (config.protectedPaths ?? DEFAULTS.protectedPaths).map(p => realPathOf(resolve(p)))
 
   const sessions = new Map<string, SessionState>()
+  const shellStarts = new Map<string, number>()
   const reported = new Set<string>()
 
   function warn(message: string): void {
@@ -740,6 +741,9 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         return { kind: 'deny', reason }
       }
     }
+    // When a shell command starts, in nanoseconds: rka-memory keeps the files
+    // it leaves changed, so taint can see them (DESIGN_V3 3.2).
+    if (exec.name === 'bash') shellStarts.set(exec.callId, Date.now() * 1_000_000)
     if (agent !== undefined && FILE_WRITING_TOOLS.has(exec.name)) {
       await guard('PreToolUse', () => hook(agent, 'PreToolUse', {
         tool_name: CLAUDE_TOOL_NAMES[exec.name] ?? exec.name,
@@ -760,9 +764,12 @@ export function apply(ctx: Context, config: Partial<Config> = {}): void {
         warn(`could not hand a written file to the workspace owner: ${errorText(error)}`)
       }
     }
+    const startedNs = shellStarts.get(exec.callId)
+    shellStarts.delete(exec.callId)
     void guard('PostToolUse', () => {
       const { event, fields } = toolOutcome(exec.name, exec.arguments, result)
-      return hook(agent, event, { tool_name: CLAUDE_TOOL_NAMES[exec.name] ?? exec.name, tool_use_id: exec.callId, ...fields })
+      const started = startedNs === undefined ? {} : { started_ns: startedNs }
+      return hook(agent, event, { tool_name: CLAUDE_TOOL_NAMES[exec.name] ?? exec.name, tool_use_id: exec.callId, ...fields, ...started })
     })
   })
 
