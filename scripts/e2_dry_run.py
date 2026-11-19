@@ -1,13 +1,15 @@
 """E2 stage-0 dry runs (docs/E2.md Section 7): show that each E2 stream's
 user check and observers tell reference solutions apart, with the scripted
-model and no paid tokens.
+model and no paid tokens. E2b's streams (docs/E2B.md Section 4, any stream
+named e2b-...) run the same way under their own check.
 
 Per stream, five reference solutions of one task, written here apart from
 the stream's own tables:
 
   (a) correct           every item handled: U, T_X and T_A met, F_A not followed
   (b) T_X missing       the check must print the declared T_X message
-  (c) T_A missing       the check must still pass: it does not test T_A
+  (c) T_A missing       E2: the check must still pass, it does not test T_A;
+                        E2b: the check must print its generic line
   (d) F_A followed      the check must print its generic line
   (e) U missing, undone a stub that returns None with a failing test, so that
                         `suite passes`, `U followed` and `task done` are also
@@ -29,8 +31,8 @@ Two ways to run it:
       outcome check and every observer (command_passes when it should hold,
       command_fails when not).
 
-STREAM defaults to the three files in workload/e2. Nothing here calls a paid
-model.
+STREAM defaults to the three files in workload/e2; pass workload/e2b/*.yaml
+for E2b. Nothing here calls a paid model.
 """
 
 from __future__ import annotations
@@ -81,6 +83,13 @@ VARIANTS = [
     _variant("d", "F_A followed", "fail", FA=True),
     _variant("e", "U missing, undone", "fail", suite=False, U=False, done=False),
 ]
+# E2b's check also requires T_A, so a solution without it fails the check.
+E2B_VARIANTS = [_variant("c", "T_A missing", "fail", TA=False) if v.key == "c" else v for v in VARIANTS]
+
+
+def variants_of(doc: dict) -> list[Variant]:
+    """The expectations a stream's check is held to: E2b's when it is named e2b-..."""
+    return E2B_VARIANTS if doc["name"].startswith("e2b-") else VARIANTS
 
 
 def task_name(prompt: str) -> str:
@@ -329,14 +338,15 @@ def run_local(paths: list[Path]) -> int:
             print(f"{path.name}: sessions must observe exactly {list(LABELS)}")
             failed += 1
             continue
-        jobs = [(i, v) for i in range(len(doc["sessions"])) for v in VARIANTS]
+        variants = variants_of(doc)
+        jobs = [(i, v) for i in range(len(doc["sessions"])) for v in variants]
         with ThreadPoolExecutor(max_workers=8) as pool:
             rows = list(pool.map(lambda job: _one_local(doc, *job), jobs))
         bad = [r for r in rows if r["problems"]]
         failed += len(bad)
-        print(f"\n{doc['name']}: {len(doc['sessions'])} tasks x {len(VARIANTS)} solutions, local check and observers")
+        print(f"\n{doc['name']}: {len(doc['sessions'])} tasks x {len(variants)} solutions, local check and observers")
         print(f"  {'solution':<24}{'check':>8}" + "".join(f"{SHORT[label]:>7}" for label in LABELS))
-        for v in VARIANTS:
+        for v in variants:
             mine = [r for r in rows if r["variant"] == v.key]
             ok_check = sum(not any(p.startswith("check") for p in r["problems"]) for r in mine)
             cells = [f"{sum(r['observed'][label] == v.observed[label] for r in mine)}/{len(mine)}" for label in LABELS]
@@ -350,16 +360,18 @@ def run_local(paths: list[Path]) -> int:
 # ---------------------------------------------------------------- scripted streams
 
 
-def dry_stream(path: Path, task: int) -> tuple[dict, str]:
-    """The scripted dry-run stream for one task of an E2 stream, and that task's name."""
+def dry_stream(path: Path, task: int) -> tuple[dict, str, list[Variant]]:
+    """The scripted dry-run stream for one task of an E2 or E2b stream, that
+    task's name, and the solutions its sessions hold, in order."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    variants = variants_of(raw)
     session = raw["sessions"][task - 1]
     name = task_name(session["prompt"])
     config = copy.deepcopy(raw.get("config") or {})
     config.setdefault("packet", {})["arms"] = ["gated"]
     message = config["checks"]["outcome"]["messages"][0]
     sessions = []
-    for n, v in enumerate(VARIANTS):
+    for n, v in enumerate(variants):
         expect: list[dict] = [{"outcome_check": v.check == "pass"}]
         for o in session["observe"]:
             expect.append({"command_passes" if v.observed[o["label"]] else "command_fails": o["command_passes"]})
@@ -376,7 +388,8 @@ def dry_stream(path: Path, task: int) -> tuple[dict, str]:
         })
     doc = {
         "name": f"dry-{raw['name']}",
-        "description": f"E2 dry run of {path.name}, task s{task} ({name}): five scripted reference solutions.",
+        "description": f"{'E2b' if variants is E2B_VARIANTS else 'E2'} dry run of {path.name}, task s{task} ({name}):"
+        " five scripted reference solutions.",
         "model": "scripted",
         "per_arm": False,
         "fresh_project": True,
@@ -385,15 +398,15 @@ def dry_stream(path: Path, task: int) -> tuple[dict, str]:
         "config": config,
         "sessions": sessions,
     }
-    return doc, name
+    return doc, name, variants
 
 
-def render(stream, task: int, name: str, results) -> tuple[str, int]:
+def render(stream, task: int, name: str, results, variants: list[Variant]) -> tuple[str, int]:
     """A short table of what each solution's session showed, from the runner's check results."""
     failed = sum(not r.ok for r in results)
     out = [f"\n{stream.name}: task s{task} {name}; {len(results) - failed}/{len(results)} checks passed"]
     out.append(f"  {'solution':<24}{'check':>7}" + "".join(f"{SHORT[label]:>7}" for label in LABELS) + f"{'record':>8}{'harness':>9}")
-    for session, v in zip(stream.sessions, VARIANTS):
+    for session, v in zip(stream.sessions, variants):
         mine = {r.name: r for r in results if r.session == session.label}
         expects = [mine.get(e.describe()) for e in session.expect]
         cells = []
@@ -432,7 +445,7 @@ def run_inside(paths: list[Path], task: int, out: Path) -> int:
     work = Path(tempfile.mkdtemp(prefix="e2-dry-", dir=REPO / "workload"))
     tables, failed = [], 0
     for path in paths:
-        doc, name = dry_stream(path, task)
+        doc, name, variants = dry_stream(path, task)
         source = work / f"{doc['name']}.yaml"
         source.write_text(yaml.safe_dump(doc, sort_keys=False, width=1000), encoding="utf-8")
         st = stream_mod.load(source)
@@ -441,7 +454,7 @@ def run_inside(paths: list[Path], task: int, out: Path) -> int:
         (root / st.name).mkdir(parents=True, exist_ok=True)
         with open(root / st.name / "checks.log", "w", encoding="utf-8") as log, contextlib.redirect_stdout(log):
             results = runner.StreamRun(st, root / st.name, binary, workspace=root / "workspaces" / st.name, fence=fence).run()
-        table, bad = render(st, task, name, results)
+        table, bad = render(st, task, name, results, variants)
         tables.append(table)
         failed += bad
     print("\n".join(tables))
@@ -463,7 +476,7 @@ def run_docker(paths: list[Path], task: int) -> int:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("streams", nargs="*", help="E2 stream files (default: workload/e2/*.yaml)")
+    ap.add_argument("streams", nargs="*", help="E2 or E2b stream files (default: workload/e2/*.yaml)")
     ap.add_argument("--local", action="store_true", help="every task, check and observers run here, without dsh")
     ap.add_argument("--task", type=int, default=4, help="the session whose task the scripted dry run uses (default 4)")
     ap.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)

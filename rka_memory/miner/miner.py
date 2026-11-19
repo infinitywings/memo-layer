@@ -84,6 +84,8 @@ class MinerView:
     unverified: tuple[RecordRow, ...] = ()
     # Events of the session before `events`: mined by earlier prompts.
     earlier: int = 0
+    # Characters of each event's payload a prompt line shows.
+    payload_chars: int = PAYLOAD_CHARS
 
     @property
     def listed(self) -> tuple[RecordRow, ...]:
@@ -207,11 +209,11 @@ def could_apply(scope: Scope, state: State) -> bool:
     return all(state.get(f) is None or scope.constraint(f).covers(state.get(f)) for f in SCOPE_FIELDS)
 
 
-def _line(event: Event) -> str:
-    return f"{event.id} {event.kind.value} {event.actor.value} {_short(dict(event.payload))}"
+def _line(event: Event, chars: int = PAYLOAD_CHARS) -> str:
+    return f"{event.id} {event.kind.value} {event.actor.value} {_short(dict(event.payload), chars)}"
 
 
-def windows(events: Sequence[Event], max_chars: int) -> list[tuple[Event, ...]]:
+def windows(events: Sequence[Event], max_chars: int, chars: int = PAYLOAD_CHARS) -> list[tuple[Event, ...]]:
     """`events` cut, in order, into runs whose prompt lines fit in `max_chars`
     each. A session can run for days and thousands of events; one prompt
     cannot hold them all. Session markers left over at the end join the run
@@ -220,7 +222,7 @@ def windows(events: Sequence[Event], max_chars: int) -> list[tuple[Event, ...]]:
     run: list[Event] = []
     used = 0
     for ev in events:
-        size = len(_line(ev)) + 1
+        size = len(_line(ev, chars)) + 1
         if run and used + size > max_chars:
             out.append(tuple(run))
             run, used = [], 0
@@ -259,12 +261,13 @@ def view_of(world: World, session_id: str, cfg: Config, window: Sequence[Event] 
         anchors=tuple(sorted(touched)) if cfg.graph_anchors else (),
         unverified=tuple(_row(r) for r in applicable if r.rung is Rung.L1),
         earlier=sum(1 for e in shown if world.position[e.id] < first),
+        payload_chars=cfg.miner_payload_chars,
     )
 
 
-def _short(payload: Any) -> str:
+def _short(payload: Any, chars: int = PAYLOAD_CHARS) -> str:
     text = canonical_json(payload)
-    return text if len(text) <= PAYLOAD_CHARS else text[:PAYLOAD_CHARS] + "..."
+    return text if len(text) <= chars else text[:chars] + "..."
 
 
 def _rows(rows: tuple[RecordRow, ...]) -> str:
@@ -275,7 +278,7 @@ def _rows(rows: tuple[RecordRow, ...]) -> str:
 
 
 def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
-    lines = [_line(e) for e in view.events]
+    lines = [_line(e, view.payload_chars) for e in view.events]
     if view.earlier:
         lines.insert(0, f"({view.earlier} earlier events of this session were mined before and are not shown)")
     return PROMPT.substitute(
@@ -747,7 +750,7 @@ def mine_session(
         if not pending:
             why = "no events to mine since the last mine; use --force"
             return MineResult(session_id, MineStatus.NOTHING_NEW, why)
-        for window in windows(pending, memory.cfg.miner_events_max_chars):
+        for window in windows(pending, memory.cfg.miner_events_max_chars, memory.cfg.miner_payload_chars):
             if not _mine_window(memory, window, backend, result):
                 break
     if result.appended:

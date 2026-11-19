@@ -126,6 +126,7 @@ def test_stream_file_parses_into_typed_sessions(tmp_path):
         (("    expect:\n      - {record: Run pytest -q, rung: L2}", "    expect:\n      - {record: Run pytest -q, rung: L5}"), "expected one of"),
         (("    expect:\n      - {record: Run pytest -q, rung: L2}", "    expect:\n      - {rung: L2}"), "`rung` needs `record`"),
         (("config:\n  packet: {arms: [gated, none]}", "config:\n  miner: {backend: none}"), "the runner sets ['miner']"),
+        (("config:\n  packet: {arms: [gated, none]}", "config:\n  miner: {payload_chars: 2000, backend: none}"), "the runner sets ['miner']"),
         (("  - at: +1d12h", "  - at: -1d"), "is not like +2d"),
         (("          kind: preference", "          kind: opinion"), "kind must be one of"),
         (("event: {kind: user_undo}", "event: {passed: false}"), "needs a `kind`"),
@@ -138,6 +139,11 @@ def test_stream_errors_name_the_problem_when_the_file_loads(tmp_path, edit, mess
     with pytest.raises(StreamError) as err:
         load(write_stream(tmp_path, STREAM.replace(old, new)))
     assert message in str(err.value)
+
+
+def test_a_stream_may_set_what_the_miner_reads_but_not_which_model_mines(tmp_path):
+    s = load(write_stream(tmp_path, STREAM.replace("config:\n  packet: {arms: [gated, none]}", "config:\n  miner: {payload_chars: 2000}")))
+    assert s.config == {"miner": {"payload_chars": 2000}}
 
 
 def test_offsets_read_days_hours_and_minutes():
@@ -352,7 +358,7 @@ def test_record_checks_find_records_by_content_and_metrics_by_dotted_path():
 
 def test_every_shipped_scenario_loads():
     names = [load(p).name for p in sorted((REPO / "workload" / "scenarios").glob("*.yaml"))]
-    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation", "outcome-trial", "sourced", "check-record", "sequential-trial", "notepad"]
+    assert names == ["promotion", "demotion", "broadened-counter", "dependency", "skill", "retirement", "arms", "forgery", "support", "ledger-read", "stated-rule", "anchors", "skill-rules", "replaced-rule", "refines-stale", "ungated-drift", "planted", "countered-claim", "reset", "qualify", "replace-reopen", "update", "close", "correct", "defeat", "pending-restriction", "decision", "laundered", "check-modified", "trial", "citation", "outcome-trial", "sourced", "check-record", "sequential-trial", "notepad", "open-entry"]
 
 
 LIVE = """

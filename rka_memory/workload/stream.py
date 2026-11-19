@@ -35,6 +35,9 @@ from rka_memory.workload.checks import CHECKS, Expect
 
 OFFSET = re.compile(r"\+?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?")
 RUNNER_OWNED_CONFIG = frozenset({"ledger", "core", "miner", "hooks", "skills"})
+# Under `miner`, what the miner reads is the stream's to set (E2b's R1,
+# docs/E2B.md); which model mines stays the runner's.
+STREAM_MINER_CONFIG = frozenset({"payload_chars"})
 # A live model's output is not known in advance, so a live stream cannot
 # script the agent or the miner, name records by content, or assert on them.
 MODELS = ("scripted", "live")
@@ -387,8 +390,11 @@ def parse(doc: Any, source: Path) -> Stream:
     if model not in MODELS:
         raise StreamError(f"{where}: model must be one of {list(MODELS)}, got {model!r}")
     config = _keys(d.get("config") or {}, f"{where}.config", set(), set(d.get("config") or {}))
-    if RUNNER_OWNED_CONFIG & set(config):
-        raise StreamError(f"{where}.config: the runner sets {sorted(RUNNER_OWNED_CONFIG & set(config))}")
+    owned = RUNNER_OWNED_CONFIG & set(config)
+    if owned == {"miner"} and isinstance(config["miner"], dict) and set(config["miner"]) <= STREAM_MINER_CONFIG:
+        owned = set()
+    if owned:
+        raise StreamError(f"{where}.config: the runner sets {sorted(owned)}")
     sessions = tuple(_session(s, i, f"{where}.sessions[{i - 1}]") for i, s in enumerate(_list(d["sessions"], where), 1))
     if not sessions:
         raise StreamError(f"{where}: a stream needs at least one session")

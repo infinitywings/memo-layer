@@ -58,6 +58,7 @@ miner:
   base_url: ""                # openai_compat: e.g. https://api.deepseek.com/v1 (env RKA_MEMORY_MINER_BASE_URL)
   api_key_env: null           # openai_compat: name of the env var holding the key
   extract_rules: true         # also ask for the rules the user stated, as verbatim quotes
+  payload_chars: 240          # characters of each event's payload a prompt line shows (E2b's route: 2000)
 
 notepad:                      # the `notepad` arm's curator, E2's model-curated baseline (docs/E2.md); same keys as miner
   backend: none               # none keeps no notepad; openai_compat for a live run

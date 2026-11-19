@@ -47,6 +47,11 @@ class TrialConfig:
     hold_below: float = 0.1  # on hold while P(treated better) is at most this
     q_hold: float = 0.1  # the chance of delivery on hold
     cluster_similarity: float = 0.5  # token Jaccard at which two records on trial share a coin
+    # How a hypothesis enters a trial under attested validation: "threshold"
+    # once its model-made support would have met v2's threshold (DESIGN_V3
+    # 3.4), "open" as soon as it is proposed, when an outcome check is
+    # configured (E2b's R2, docs/E2B.md).
+    entry: str = "threshold"
 
 
 @dataclass(frozen=True)
@@ -139,6 +144,9 @@ class Config:
     isolation: IsolationConfig = field(default_factory=IsolationConfig)
     outcome: OutcomeConfig = field(default_factory=OutcomeConfig)
     notepad: NotepadConfig = field(default_factory=NotepadConfig)
+    # Characters of each event's payload a miner prompt line shows (E2b's
+    # R1, docs/E2B.md: 2,000 lets the miner read what the agent read).
+    miner_payload_chars: int = 240
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
@@ -257,7 +265,10 @@ def _trials(raw: dict[str, Any]) -> TrialConfig:
         hold_below=_number(raw.get("hold_below", TrialConfig.hold_below)),
         q_hold=_number(raw.get("q_hold", TrialConfig.q_hold)),
         cluster_similarity=_number(raw.get("cluster_similarity", TrialConfig.cluster_similarity)),
+        entry=str(raw.get("entry", TrialConfig.entry)),
     )
+    if t.entry not in ("threshold", "open"):
+        raise ValueError(f"trials.entry must be threshold or open, not {t.entry!r}")
     if not (0 < t.q < 1 and 0 < t.q_hold < 1 and t.e_threshold > 1):
         raise ValueError("trials: q and q_hold must lie strictly between 0 and 1, and e_threshold above 1")
     return t
@@ -323,5 +334,6 @@ def from_dict(raw: dict[str, Any]) -> Config:
         isolation=_isolation(raw.get("checks", {}).get("isolation") or {}),
         outcome=_outcome(raw.get("checks", {}).get("outcome") or {}),
         notepad=_notepad(raw.get("notepad") or {}),
+        miner_payload_chars=int(raw["miner"].get("payload_chars", 240)),
         raw=raw,
     )

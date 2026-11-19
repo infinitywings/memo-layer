@@ -181,3 +181,34 @@ run about 2.9M.
 E2 also left an open question that E2b does not address. On stockbook, a
 rule the user stated was followed less when delivered verbatim than when
 the notepad rephrased it (docs/E2.md, P9).
+
+## 10. Changes made while building, before any run
+
+- **The flags.** `miner.payload_chars` and `trials.entry` are in
+  `rka_memory/config.py`. A stream may now set `miner.payload_chars`.
+  Every other `miner` key stays the runner's, so a stream still cannot
+  change which model mines.
+- **Packet events** list each treated record that the budget left out
+  (`trial_omitted`). This is the count Q8 reads.
+- **The E2b streams** are written by `scripts/e2_streams.py --e2b` to
+  `workload/e2b/`. E2's streams still regenerate byte for byte.
+  - `<fixture>.yaml` runs `e2b-<fixture>-gated` and
+    `e2b-<fixture>-notepad`.
+  - `<fixture>-route.yaml` runs `e2b-<fixture>-route` with both flags set.
+  - The checks add T_A after T_X: calc rejects bool arguments with
+    `TypeError`, textkit takes `locale`, stockbook calls
+    `audit.record` once per call.
+  - The generator runs every task's check on reference solutions in all
+    eight combinations of T_X, T_A and F_A.
+- **Dry runs.** Under an E2b stream, the T_A-missing solution must fail
+  the check with the generic line.
+- **Launcher.** `scripts/e2_parallel.py --experiment e2b` runs E2b jobs into
+  `workload-runs/e2b/seed-<n>/`. `--list` prints the plan without running
+  it. Stage 2 runs seed 1 with `route,gated,notepad` and seed 2 with
+  `route`.
+- **Scenario.** `workload/scenarios/37-open-entry.yaml` runs an
+  agent-visible false claim through open entry. It is on trial from the
+  next session, delivered exactly when its coin treats it, and never
+  promoted.
+- **Analysis.** `scripts/e2b_analysis.py` computes Q1 to Q8 and the drift
+  rule. It rescores E2's runs under the E2b check from their observers.

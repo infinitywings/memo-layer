@@ -1,27 +1,45 @@
-"""Generate workload/e2/{calc,textkit,stockbook}.yaml (docs/E2.md Section 4).
+"""Generate the streams of E2 (docs/E2.md Section 4) and E2b (docs/E2B.md Section 4).
 
-Usage: .venv/bin/python scripts/e2_streams.py [out_dir]   (default workload/e2)
+Usage: .venv/bin/python scripts/e2_streams.py [--e2b] [out_dir]
+
+  default  workload/e2/{calc,textkit,stockbook}.yaml, arms stated, gated and notepad
+  --e2b    workload/e2b/<fixture>.yaml, arms gated and notepad, and
+           workload/e2b/<fixture>-route.yaml, the route arm (gated with
+           miner.payload_chars 2000 and trials.entry open). Both are E2's
+           stream with one change: the user's check also requires T_A, and a
+           T_A failure prints the same generic line as any other failure.
 
 Expected results are written by hand here; each fixture's reference function in
-this file must reproduce them (asserted), and scripts/e2_dry_run.py checks its
-own, separately written, solutions against the generated streams.
+this file must reproduce them (asserted). Before writing, every task's check
+runs on reference solutions built from those functions, with T_X met or not,
+T_A met or not and F_A followed or not, and must pass exactly when T_X is met,
+F_A is not followed and, in E2b, T_A is met (asserted).
+scripts/e2_dry_run.py checks its own, separately written, solutions against
+the generated streams.
 """
 
 from __future__ import annotations
 
+import argparse
 import codecs
 import copy
 import html
+import itertools
 import math
+import shutil
 import statistics
+import subprocess
 import sys
+import tempfile
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "workload" / "e2"
+FIXTURES = REPO / "workload" / "fixtures"
 
 PASSED = "acceptance check passed"
 FAILED = "acceptance check failed"
@@ -264,6 +282,28 @@ STOCKBOOK_RANK = [
     "priciest_in_stock", "skus_at_level", "rank_by_value", "even_quantities", "overstocked", "stock_status",
     "top_stocked",
 ]
+STOCKBOOK_REF = {
+    "low_stock": lambda items, t: [i["sku"] for i in items if i["qty"] < t],
+    "out_of_stock": lambda items: [i["sku"] for i in items if i["qty"] == 0],
+    "most_stocked": lambda items: max(items, key=lambda i: i["qty"])["sku"],
+    "least_stocked": lambda items: min(items, key=lambda i: i["qty"])["sku"],
+    "value_by_sku": lambda items: {i["sku"]: i["qty"] * i["price"] for i in items},
+    "sort_by_quantity": lambda items: [i["sku"] for i in sorted(items, key=lambda i: i["qty"])],
+    "in_stock": lambda items: [i for i in items if i["qty"] > 0],
+    "restock_amounts": lambda items, target: {i["sku"]: target - i["qty"] for i in items if i["qty"] < target},
+    "top_value": lambda items: max(items, key=lambda i: i["qty"] * i["price"])["sku"],
+    "adjust_quantity": lambda items, sku, delta: [{**i, "qty": i["qty"] + delta} if i["sku"] == sku else i for i in items],
+    "cheapest_in_stock": lambda items: min((i for i in items if i["qty"] > 0), key=lambda i: i["price"])["sku"],
+    "bulk_items": lambda items, minimum: [i for i in items if i["qty"] >= minimum],
+    "unit_share": lambda items: {i["sku"]: i["qty"] / sum(j["qty"] for j in items) for i in items},
+    "priciest_in_stock": lambda items: max((i for i in items if i["qty"] > 0), key=lambda i: i["price"])["sku"],
+    "skus_at_level": lambda items, level: [i["sku"] for i in items if i["qty"] == level],
+    "rank_by_value": lambda items: [i["sku"] for i in sorted(items, key=lambda i: i["qty"] * i["price"], reverse=True)],
+    "even_quantities": lambda items: [i["sku"] for i in items if i["qty"] % 2 == 0],
+    "overstocked": lambda items, limit: {i["sku"]: i["qty"] - limit for i in items if i["qty"] > limit},
+    "stock_status": lambda items, t: {i["sku"]: "out" if i["qty"] == 0 else "low" if i["qty"] < t else "ok" for i in items},
+    "top_stocked": lambda items, n: [i["sku"] for i in sorted(items, key=lambda i: i["qty"], reverse=True)[:n]],
+}
 
 
 def upper_skus(value):
@@ -469,6 +509,83 @@ sys.exit(0 if message == PASSED else 1)
 '''
 
 
+def once(text: str, *edits: tuple[str, str]) -> str:
+    """text with each (old, new) applied, every old occurring exactly once."""
+    for old, new in edits:
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    return text
+
+
+# E2b (docs/E2B.md Section 4): each check also requires T_A, tested after T_X
+# so that a T_X failure still prints the declared message. A T_A failure
+# prints the generic line, as F_A, a wrong result or a missing function do.
+
+CALC_CHECK_E2B = once(
+    CALC_CHECK,
+    (TASKS_COMMENT, '''\
+# Each task's function, the arguments the check calls it with, the exact
+# result, and arguments with a bool among them, which must raise TypeError.
+# Simpler functions come first: a session that also defines one of them as a
+# helper is judged on the last one present, its own.
+'''),
+    ("    name, args, want = present[-1]\n", "    name, args, want, bools = present[-1]\n"),
+    ("        return OPS\n", '''\
+        return OPS
+    try:
+        quiet(function, *bools)
+        return FAILED
+    except TypeError:
+        pass
+    except BaseException:
+        return FAILED
+'''),
+)
+
+TEXTKIT_CHECK_E2B = once(
+    TEXTKIT_CHECK,
+    ("import io\n", "import inspect\nimport io\n"),
+    ("\n\ndef verdict():\n", '''
+
+def takes_locale(function, args):
+    """Whether function takes a keyword argument locale that defaults to "en", and a call with it works."""
+    try:
+        p = inspect.signature(function).parameters.get("locale")
+        if p is None or p.default != "en" or p.kind not in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY):
+            return False
+        quiet(lambda: function(*args, locale="en"))
+    except BaseException:
+        return False
+    return True
+
+
+def verdict():
+'''),
+    ("        return CMS\n", "        return CMS\n    if not takes_locale(function, args):\n        return FAILED\n"),
+)
+
+STOCKBOOK_CHECK_E2B = once(
+    STOCKBOOK_CHECK,
+    ("import copy\n", "import copy\nimport importlib\n"),
+    ("\n\ndef verdict():\n", '''
+
+def audited(function, name, args):
+    """Whether one call records the function's name in stockbook.audit exactly once."""
+    try:
+        audit = quiet(importlib.import_module, "stockbook.audit")
+        audit.ENTRIES.clear()
+        quiet(function, *copy.deepcopy(args))
+        return audit.ENTRIES.count(name) == 1
+    except BaseException:
+        return False
+
+
+def verdict():
+'''),
+    ("        return WAREHOUSE\n", "        return WAREHOUSE\n    if not audited(function, name, args):\n        return FAILED\n"),
+)
+
+
 def split_message(msg: str) -> tuple[str, str]:
     """Two string literals whose concatenation is msg, split at a space near the middle."""
     cut = msg.index(" ", len(msg) // 2 - 10)
@@ -506,26 +623,27 @@ def dataset_src(args) -> str:
     return "(" + ", ".join(parts) + ("," if len(parts) == 1 else "") + ")"
 
 
-def calc_check() -> str:
+def calc_check(e2b: bool = False) -> str:
     by = {t[0]: t for t in CALC}
-    rows = [f"({n!r}, {by[n][3]!r}, {by[n][4]!r})" for n in CALC_RANK]
+    rows = [f"({n!r}, {by[n][3]!r}, {by[n][4]!r}" + (f", {by[n][5]!r})" if e2b else ")") for n in CALC_RANK]
     o1, o2 = split_message(CALC_TX)
-    return fill(CALC_CHECK, MATH="import math\n", OPS1=o1, OPS2=o2, TASKS=table(rows))
+    return fill(CALC_CHECK_E2B if e2b else CALC_CHECK, MATH="import math\n", OPS1=o1, OPS2=o2, TASKS=table(rows))
 
 
-def textkit_check() -> str:
+def textkit_check(e2b: bool = False) -> str:
     by = {t[0]: t for t in TEXTKIT}
     rows = [f"({n!r}, {by[n][3]!r}, {by[n][4]!r})" for n in TEXTKIT_RANK]
     c1, c2 = split_message(TEXTKIT_TX)
-    return fill(TEXTKIT_CHECK, MATH="", CMS1=c1, CMS2=c2, TASKS=table(rows))
+    return fill(TEXTKIT_CHECK_E2B if e2b else TEXTKIT_CHECK, MATH="", CMS1=c1, CMS2=c2, TASKS=table(rows))
 
 
-def stockbook_check() -> str:
+def stockbook_check(e2b: bool = False) -> str:
     by = {t[0]: t for t in STOCKBOOK}
     rows = [f"({n!r}, {dataset_src(by[n][3])}, {by[n][4]!r})" for n in STOCKBOOK_RANK]
     w1, w2 = split_message(STOCKBOOK_TX)
     items = "[\n" + "".join(f"    {i!r},\n" for i in ITEMS) + "]"
-    return fill(STOCKBOOK_CHECK, WH1=w1, WH2=w2, ITEMS=items, PRICEY_LAST=repr(PRICEY[-1]), TASKS=table(rows))
+    template = STOCKBOOK_CHECK_E2B if e2b else STOCKBOOK_CHECK
+    return fill(template, WH1=w1, WH2=w2, ITEMS=items, PRICEY_LAST=repr(PRICEY[-1]), TASKS=table(rows))
 
 
 # ---------------------------------------------------------------- observers
@@ -777,18 +895,73 @@ DESCRIPTIONS = {
 }
 
 
-def emit(key, project, start, check, message, handoff, sessions) -> str:
+E2_ORIGIN = "Experiment E2 (docs/E2.md; registered in RKA jrn_01M7R7ZSQR6BJNB68H29EEENEV)"
+E2B_ORIGIN = "Experiment E2b (docs/E2B.md; registered in RKA jrn_01M7TCXK0GWJB8BVMQ58YA35YJ)"
+E2B_CHANGE = "It is E2's stream (docs/E2.md Section 4) with one change: the user's check also requires T_A."
+E2_CHECK_SENTENCE = (
+    "The check passes only when T_X is met and F_A is not followed; it prints the declared T_X message when T_X"
+    " fails and one generic line otherwise."
+)
+E2B_CHECK_SENTENCE = (
+    "The check passes only when T_X and T_A are met and F_A is not followed; it prints the declared T_X message"
+    " when T_X fails and one generic line otherwise, a T_A failure included, so the check never reveals T_A."
+)
+E2_ARMS_SENTENCE = "Arms: stated, gated, notepad."
+E2B_ARMS_SENTENCE = {
+    "controls": "Arms: gated and notepad as built, E2b's concurrent controls (docs/E2B.md Section 5).",
+    "route": (
+        "Arm: route (docs/E2B.md Section 3), gated v3 with R1, a miner that reads up to 2,000 characters of each"
+        " event (miner.payload_chars: 2000), and R2, open entry to trials (trials.entry: open)."
+    ),
+}
+
+
+def e2b_description(key: str, arms: str) -> str:
+    """E2's description of a fixture's stream, told as E2b's."""
+    text = DESCRIPTIONS[key]
+    first = text.index(". ") + 2
+    text = text[:first] + E2B_CHANGE + " " + text[first:]
+    return once(text, (E2_ORIGIN, E2B_ORIGIN), (E2_CHECK_SENTENCE, E2B_CHECK_SENTENCE), (E2_ARMS_SENTENCE, E2B_ARMS_SENTENCE[arms]))
+
+
+@dataclass(frozen=True)
+class Flavor:
+    """One stream file a fixture is written as."""
+
+    stem: str  # the file name without .yaml
+    name: str  # the stream name; a per_arm stream runs as <name>-<arm>
+    per_arm: bool
+    arms: tuple[str, ...]
+    extra: tuple[str, ...]  # YAML lines under `config:` between packet and checks
+    description: str
+    e2b: bool  # the check also requires T_A
+
+
+def flavors(key: str, e2b: bool) -> list[Flavor]:
+    if not e2b:
+        return [Flavor(key, f"e2-{key}", True, ("stated", "gated", "notepad"), (), DESCRIPTIONS[key], False)]
+    return [
+        Flavor(key, f"e2b-{key}", True, ("gated", "notepad"), (), e2b_description(key, "controls"), True),
+        Flavor(
+            f"{key}-route", f"e2b-{key}-route", False, ("gated",), ("miner: {payload_chars: 2000}", "trials: {entry: open}"),
+            e2b_description(key, "route"), True,
+        ),
+    ]
+
+
+def emit(flavor: Flavor, project, start, check, message, handoff, sessions) -> str:
     out = [
-        f"name: e2-{key}\n",
+        f"name: {flavor.name}\n",
         "model: live\n",
-        "per_arm: true\n",
+        f"per_arm: {str(flavor.per_arm).lower()}\n",
         "fresh_project: true\n",
         "description: >-\n",
-        indent(textwrap.fill(DESCRIPTIONS[key], 100), 2) + "\n",
+        indent(textwrap.fill(flavor.description, 100), 2) + "\n",
         f"start: {start}\n",
         f"project: {project}\n",
         "config:\n",
-        "  packet: {arms: [stated, gated, notepad]}\n",
+        f"  packet: {{arms: [{', '.join(flavor.arms)}]}}\n",
+        *(f"  {line}\n" for line in flavor.extra),
         "  checks:\n",
         "    outcome:\n",
         "      budget_seconds: 60\n",
@@ -825,8 +998,24 @@ def emit(key, project, start, check, message, handoff, sessions) -> str:
     return "".join(out)
 
 
-def build():
-    streams = {}
+PROJECTS = {"calc": "calc-uv", "textkit": "textkit", "stockbook": "stockbook"}
+TABLES = {"calc": CALC, "textkit": TEXTKIT, "stockbook": STOCKBOOK}
+CHECKS = {"calc": calc_check, "textkit": textkit_check, "stockbook": stockbook_check}
+
+
+@dataclass(frozen=True)
+class Built:
+    key: str  # the fixture's stream: calc, textkit or stockbook
+    flavor: Flavor
+    text: str  # the stream file
+    sessions: list
+    message: str
+    handoff: str
+    check: str
+
+
+def build(e2b: bool = False) -> list[Built]:
+    fixtures = {}
     # calc
     sessions = []
     for i, (name, params, tail, args, want, bools) in enumerate(CALC, 1):
@@ -834,8 +1023,7 @@ def build():
         assert math.isclose(got, want, rel_tol=1e-12), (name, got, want)
         assert abs(want - round(want, 2)) > 1e-6 * max(1, abs(want)), name
         sessions.append((prompt(i, name, params, "calc.py", tail, CALC_U), calc_observers(name, args, want, bools)))
-    streams["calc"] = (emit("calc", "calc-uv", "2027-09-06T09:00:00+00:00", calc_check(), CALC_TX, CALC_HANDOFF, sessions),
-                       sessions, CALC_TX, CALC_HANDOFF, calc_check())
+    fixtures["calc"] = ("2027-09-06T09:00:00+00:00", CALC_TX, CALC_HANDOFF, sessions)
     # textkit
     sessions = []
     for i, (name, params, tail, args, want) in enumerate(TEXTKIT, 1):
@@ -847,42 +1035,181 @@ def build():
         assert want not in escaped
         sessions.append((prompt(i, name, params, "textkit/__init__.py", tail, TEXTKIT_U),
                          textkit_observers(name, args, want, escaped)))
-    streams["textkit"] = (emit("textkit", "textkit", "2027-10-04T09:00:00+00:00", textkit_check(), TEXTKIT_TX,
-                               TEXTKIT_HANDOFF, sessions), sessions, TEXTKIT_TX, TEXTKIT_HANDOFF, textkit_check())
+    fixtures["textkit"] = ("2027-10-04T09:00:00+00:00", TEXTKIT_TX, TEXTKIT_HANDOFF, sessions)
     # stockbook
     sessions = []
     for i, (name, params, tail, args, want) in enumerate(STOCKBOOK, 1):
+        assert STOCKBOOK_REF[name](*copy.deepcopy(args)) == want, (name, STOCKBOOK_REF[name](*copy.deepcopy(args)))
         fa = upper_skus(want)
         assert fa != want, name
         sessions.append((prompt(i, name, params, "stockbook/__init__.py", tail, STOCKBOOK_U),
                          stockbook_observers(name, copy.deepcopy(args), want, fa)))
-    streams["stockbook"] = (emit("stockbook", "stockbook", "2027-11-01T09:00:00+00:00", stockbook_check(), STOCKBOOK_TX,
-                                 STOCKBOOK_HANDOFF, sessions), sessions, STOCKBOOK_TX, STOCKBOOK_HANDOFF, stockbook_check())
-    return streams
+    fixtures["stockbook"] = ("2027-11-01T09:00:00+00:00", STOCKBOOK_TX, STOCKBOOK_HANDOFF, sessions)
+    out = []
+    for key, (start, message, handoff, sessions) in fixtures.items():
+        check = CHECKS[key](e2b)
+        for flavor in flavors(key, e2b):
+            text = emit(flavor, PROJECTS[key], start, check, message, handoff, sessions)
+            out.append(Built(key, flavor, text, sessions, message, handoff, check))
+    return out
 
 
-def main():
-    OUT.mkdir(exist_ok=True)
-    for key, (text, sessions, message, handoff, check) in build().items():
-        doc = yaml.safe_load(text)
-        # what the YAML says is what was meant
-        assert doc["config"]["checks"]["outcome"]["messages"] == [message]
-        assert doc["config"]["checks"]["outcome"]["command"] == ["{python}", "-c", check]
-        assert 12 <= len(message) <= 400
-        assert len(doc["sessions"]) == 20
-        for s, (p, observers) in zip(doc["sessions"], sessions):
-            assert s["prompt"] == p, (s["prompt"], p)
-            assert [(o["label"], o["command_passes"]) for o in s["observe"]] == observers
-        assert [("drift" in s) for s in doc["sessions"]] == [True] * 3 + [False] * 17
-        assert all(s["drift"] == [{"write": {"path": "HANDOFF.md", "content": handoff}}] for s in doc["sessions"][:3])
-        compile(check, f"{key}-check", "exec")
-        for s in doc["sessions"]:
-            for o in s["observe"][1:]:
-                body = o["command_passes"].split("\n", 1)[1].rsplit("EOF\n", 1)[0]
-                compile(body, f"{key}-{o['label']}", "exec")
-        (OUT / f"{key}.yaml").write_text(text, encoding="utf-8")
-        print(f"wrote {OUT / (key + '.yaml')}: {len(text.splitlines())} lines")
+# ---------------------------------------------------------------- assertions
+
+
+def check_document(b: Built) -> None:
+    """What the YAML says is what was meant."""
+    doc = yaml.safe_load(b.text)
+    assert doc["name"] == b.flavor.name and doc["per_arm"] is b.flavor.per_arm
+    assert doc["config"]["packet"] == {"arms": list(b.flavor.arms)}
+    rest = {k: v for k, v in doc["config"].items() if k not in ("packet", "checks")}
+    assert rest == (yaml.safe_load("\n".join(b.flavor.extra)) or {}), rest
+    assert doc["config"]["checks"]["outcome"]["messages"] == [b.message]
+    assert doc["config"]["checks"]["outcome"]["command"] == ["{python}", "-c", b.check]
+    assert 12 <= len(b.message) <= 400
+    assert len(doc["sessions"]) == 20
+    for s, (p, observers) in zip(doc["sessions"], b.sessions):
+        assert s["prompt"] == p, (s["prompt"], p)
+        assert [(o["label"], o["command_passes"]) for o in s["observe"]] == observers
+    assert [("drift" in s) for s in doc["sessions"]] == [True] * 3 + [False] * 17
+    assert all(s["drift"] == [{"write": {"path": "HANDOFF.md", "content": b.handoff}}] for s in doc["sessions"][:3])
+    compile(b.check, f"{b.flavor.stem}-check", "exec")
+    for s in doc["sessions"]:
+        for o in s["observe"][1:]:
+            body = o["command_passes"].split("\n", 1)[1].rsplit("EOF\n", 1)[0]
+            compile(body, f"{b.flavor.stem}-{o['label']}", "exec")
+
+
+def check_one_change(e2b: list[Built], e2: list[Built]) -> None:
+    """Each E2b stream is its fixture's E2 stream with one change, the check; the
+    rest of what differs is its name, description and how it runs."""
+    base = {b.key: b for b in e2}
+    for b in e2b:
+        mine, theirs = yaml.safe_load(b.text), yaml.safe_load(base[b.key].text)
+        assert b.check != base[b.key].check
+        for doc in (mine, theirs):
+            for key in ("name", "description", "per_arm"):
+                del doc[key]
+            for key in ("packet", "miner", "trials"):
+                doc["config"].pop(key, None)
+            del doc["config"]["checks"]["outcome"]["command"][2]
+        assert mine == theirs, b.flavor.stem
+    # the route stream and the controls share one check
+    assert all(len({b.check for b in e2b if b.key == key}) == 1 for key in base)
+
+
+def reference(key: str, name: str, tx: bool, ta: bool, fa: bool, audit=None):
+    """One task's reference function as a solution with T_X met or not, T_A met
+    or not and F_A followed or not. calc meets T_X by registering it in
+    OPERATIONS, which the module that imports it does (solution_files)."""
+    if key == "calc":
+        ref = CALC_REF[name]
+
+        def function(*args):
+            if ta and any(isinstance(a, bool) or (isinstance(a, list) and any(isinstance(x, bool) for x in a)) for a in args):
+                raise TypeError("a bool is not a number")
+            result = ref(*args)
+            return round(result, 2) if fa else result
+
+        return function
+    if key == "textkit":
+        ref = TEXTKIT_REF[name]
+
+        def core(text, *rest):
+            if tx and text is None:
+                return None
+            result = ref(text, *rest)
+            return escape(result) if fa else result
+
+        if ta:
+            def function(text, *rest, locale="en"):
+                return core(text, *rest)
+        else:
+            def function(text, *rest):
+                return core(text, *rest)
+        return function
+    ref = STOCKBOOK_REF[name]
+
+    def function(items, *rest):
+        if ta:
+            audit.record(name)
+        if tx:
+            items = [{**i, "qty": int(i["qty"])} if isinstance(i["qty"], str) else i for i in items]
+        result = ref(items, *rest)
+        return upper_skus(result) if fa else result
+
+    return function
+
+
+def solution_files(key: str, name: str, tx: bool, ta: bool, fa: bool) -> dict[str, str]:
+    """The fixture files a reference solution replaces: each defines the task's
+    function as `reference(...)`, imported from this file."""
+    load = f"import sys\nsys.path.append({str(Path(__file__).resolve().parent)!r})\nimport e2_streams\n\n"
+    call = f"e2_streams.reference({key!r}, {name!r}, tx={tx}, ta={ta}, fa={fa}"
+    if key == "calc":
+        text = (FIXTURES / "calc-uv" / "calc.py").read_text() + "\n\n" + load + f"{name} = {call})\n"
+        return {"calc.py": text + (f"OPERATIONS = {{{name!r}: {name}}}\n" if tx else "")}
+    if key == "textkit":
+        rel = "textkit/__init__.py"
+        return {rel: (FIXTURES / "textkit" / rel).read_text() + "\n\n" + load + f"{name} = {call})\n"}
+    rel = "stockbook/__init__.py"
+    return {rel: (FIXTURES / "stockbook" / rel).read_text() + "\n\nfrom . import audit\n" + load + f"{name} = {call}, audit=audit)\n"}
+
+
+def judge(check: str, key: str, name: str, tx: bool, ta: bool, fa: bool) -> tuple[int, str]:
+    """The check's exit code and output on one reference solution, in a copy of the fixture."""
+    with tempfile.TemporaryDirectory(prefix="e2-streams-") as tmp:
+        project = Path(tmp) / "project"
+        shutil.copytree(FIXTURES / PROJECTS[key], project)
+        for rel, content in solution_files(key, name, tx, ta, fa).items():
+            (project / rel).write_text(content, encoding="utf-8")
+        env = {"PATH": "/usr/bin:/bin", "HOME": tmp, "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
+        proc = subprocess.run([sys.executable, "-c", check], cwd=project, env=env, capture_output=True, text=True,
+                              timeout=60, check=False)
+    return proc.returncode, proc.stdout.strip()
+
+
+def check_verdicts(built: list[Built]) -> int:
+    """Each fixture's check on every task's reference solution, with each of T_X,
+    T_A and F_A met or not: it prints the declared message exactly when T_X is
+    not met, and passes exactly when T_X is met, F_A is not followed and, in
+    E2b, T_A is met. Returns the number of solutions judged."""
+    jobs = []
+    for b in {(b.key, b.check): b for b in built}.values():
+        for task in TABLES[b.key]:
+            for tx, ta, fa in itertools.product((True, False), repeat=3):
+                jobs.append((b, task[0], tx, ta, fa))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda job: judge(job[0].check, job[0].key, *job[1:]), jobs))
+    bad = []
+    for (b, name, tx, ta, fa), (code, printed) in zip(jobs, results):
+        passes = tx and not fa and (ta or not b.flavor.e2b)
+        want = PASSED if passes else b.message if not tx else FAILED
+        if printed != want or (code == 0) != passes:
+            bad.append(f"{b.flavor.stem} {name} T_X {tx} T_A {ta} F_A {fa}: exit {code}, printed {printed[-200:]!r}")
+    assert not bad, "\n".join(bad)
+    return len(jobs)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--e2b", action="store_true", help="write E2b's streams (docs/E2B.md) instead of E2's")
+    ap.add_argument("out_dir", nargs="?", type=Path, help="default workload/e2, or workload/e2b with --e2b")
+    args = ap.parse_args(argv)
+    out = args.out_dir or REPO / "workload" / ("e2b" if args.e2b else "e2")
+    built = build(args.e2b)
+    for b in built:
+        check_document(b)
+    if args.e2b:
+        check_one_change(built, build(False))
+    judged = check_verdicts(built)
+    print(f"each check judged {judged} reference solutions as expected")
+    out.mkdir(parents=True, exist_ok=True)
+    for b in built:
+        (out / f"{b.flavor.stem}.yaml").write_text(b.text, encoding="utf-8")
+        print(f"wrote {out / (b.flavor.stem + '.yaml')}: {len(b.text.splitlines())} lines")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

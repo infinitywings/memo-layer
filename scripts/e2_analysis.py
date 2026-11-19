@@ -65,6 +65,7 @@ class Session:
     tokens: dict = field(default_factory=dict)
     packet_tokens: int = 0
     read_handoff: bool = False
+    trial_omitted: int = 0
 
 
 @dataclass
@@ -79,6 +80,10 @@ class Run:
     trials: list[str] = field(default_factory=list)
     t_x_l2: int | None = None
     t_x_delivered: int | None = None
+    experiment: str = "e2"
+    # Every record with trial coins: id, content, status, coins and the
+    # sessions of its first coin and of its promotion (E2b's Q1 to Q7).
+    trial_info: list[dict] = field(default_factory=list)
 
     def measured(self) -> list[Session]:
         return [s for s in self.sessions if s.n in MEASURED]
@@ -130,8 +135,10 @@ def _notes_by_session(arm_dir: Path, order: list[str | None]) -> dict[str, str]:
 
 def summarize(arm_dir: Path) -> Run:
     manifest = json.loads((arm_dir / "manifest.json").read_text())
-    arm = manifest["config"]["packet"]["arms"][0]
-    fixture = manifest["stream"].removeprefix("e2-").removesuffix(f"-{arm}")
+    # e2-<fixture>-<arm> or e2b-<fixture>-<arm>; E2b's route arm runs the
+    # gated packet with the route's flags.
+    experiment, rest = manifest["stream"].split("-", 1)
+    fixture, arm = rest.rsplit("-", 1)
     rows = json.loads((arm_dir / "report.json").read_text())["sessions"]
     events = _events(arm_dir)
     world = project(events)
@@ -145,11 +152,13 @@ def summarize(arm_dir: Path) -> Run:
             s.passed = bool(e.payload["passed"])
         elif e.kind is Kind.SESSION_END:
             s.tokens = {k: v for k, v in e.payload.items() if k.startswith("tokens_")}
-        elif e.kind is Kind.PACKET_DELIVERED and e.payload.get("channel") == "session_start":
-            s.packet_tokens = int(e.payload.get("tokens") or 0)
+        elif e.kind is Kind.PACKET_DELIVERED:
+            s.trial_omitted += len(e.payload.get("trial_omitted") or ())
+            if e.payload.get("channel") == "session_start":
+                s.packet_tokens = int(e.payload.get("tokens") or 0)
         elif e.kind is Kind.TOOL_CALL and s.n in HANDOFF_SESSIONS and "HANDOFF" in json.dumps(dict(e.payload)):
             s.read_handoff = True
-    run = Run(fixture, arm, arm_dir.parent.name, sessions)
+    run = Run(fixture, arm, arm_dir.parent.name, sessions, experiment=experiment)
     run.miner_tokens = sum(int(e.payload.get("tokens") or 0) for e in events if e.kind is Kind.COST and e.payload.get("component") == "miner")
     log = arm_dir / "ledger" / "notepad" / "log.jsonl"
     if log.exists():
@@ -162,7 +171,7 @@ def summarize(arm_dir: Path) -> Run:
         for s in sessions:
             ids = {rid for d in world.deliveries if d.event.session_id == s.session_id for rid in d.record_ids}
             s.memory = "\n".join(world.records[r].spec.content for r in sorted(ids) if r in world.records)
-    if arm == "gated":
+    if arm in ("gated", "route"):
         _gated(run, world, arm_dir)
     return run
 
@@ -171,10 +180,19 @@ def _gated(run: Run, world: World, arm_dir: Path) -> None:
     cfg = config_mod.load(path=arm_dir / "config.yaml")
     cfg = replace(cfg, ledger_dir=arm_dir / "ledger")
     index = {s.session_id: s.n for s in run.sessions if s.session_id}
+    ended = {world.position[s.ended.id]: index[sid] for sid, s in world.sessions.items() if s.ended is not None and sid in index}
     for rid in sorted({str(e.payload.get("record_id")) for e in world.trials}):
         if rid in world.records:
-            t = trials.evaluate_sequential(world.records[rid], world, cfg)
-            run.trials.append(f"{t.status} {t.treated}/{t.withheld} wealth {t.wealth:.2f}: {world.records[rid].spec.content[:70]}")
+            rec = world.records[rid]
+            t = trials.evaluate_sequential(rec, world, cfg)
+            run.trials.append(f"{t.status} {t.treated}/{t.withheld} wealth {t.wealth:.2f}: {rec.spec.content[:70]}")
+            coins = sorted(index[e.session_id] for e in world.trials if e.payload.get("record_id") == rid and e.session_id in index)
+            run.trial_info.append({
+                "record_id": rid, "content": rec.spec.content, "by": rec.proposed.actor.value,
+                "proposed": index.get(rec.proposed.session_id), "status": t.status, "wealth": t.wealth,
+                "first_coin": coins[0] if coins else None,
+                "promoted": ended.get(t.completed_at) if t.status == "positive" else None,
+            })
     for rid, rec in world.records.items():
         if rec.proposed.actor is not Actor.RUNNER or not re.search(ITEMS[run.fixture]["T_X"], rec.spec.content):
             continue
@@ -199,14 +217,15 @@ def pct(x: float | None) -> str:
 
 def load_runs(paths: list[str]) -> list[Run]:
     dirs = [Path(p) for p in paths] or [Path(p) for p in sorted(glob.glob("workload-runs/*/"))]
-    arm_dirs = sorted(a for d in dirs for a in (d.glob("e2-*") if not d.name.startswith("e2-") else [d]) if (a / "report.json").exists())
+    arm_dirs = sorted(a for d in dirs for a in (d.glob("e2*-*") if not d.name.startswith("e2") else [d]) if (a / "report.json").exists())
     runs = [summarize(a) for a in arm_dirs]
     for fixture in {r.fixture for r in runs}:
         stamps = sorted({r.run_dir for r in runs if r.fixture == fixture})
         for r in runs:
             if r.fixture == fixture:
                 r.seed = stamps.index(r.run_dir) + 1
-    return sorted(runs, key=lambda r: (r.fixture, r.seed, ARMS.index(r.arm) if r.arm in ARMS else 9))
+    order = ("stated", "gated", "route", "notepad")
+    return sorted(runs, key=lambda r: (r.fixture, r.seed, order.index(r.arm) if r.arm in order else 9))
 
 
 def pairs(runs: list[Run]) -> dict[tuple[str, int], dict[str, Run]]:

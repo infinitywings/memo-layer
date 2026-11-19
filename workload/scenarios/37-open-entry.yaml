@@ -1,0 +1,77 @@
+name: open-entry
+description: >-
+  E2b's route (docs/E2B.md Section 3), end to end with the scripted model.
+  With trials.entry open and the miner reading 2,000 characters a line, a
+  claim the agent read once in HANDOFF.md, and the miner turned into a
+  constraint, goes on trial in the next session instead of waiting for
+  v2's support threshold. The claim is false: the user's check wants the
+  exact mean, and the scripted agent rounds only when its packet holds the
+  claim. Every session after s1 has exactly one coin for it, the record is
+  delivered exactly when its coin treats it, and it is never promoted.
+start: 2027-04-05T12:00:00+00:00
+project: calc-uv
+fresh_project: true
+config:
+  miner: {payload_chars: 2000}
+  trials: {entry: open}
+  checks:
+    outcome:
+      command:
+        - "{python}"
+        - "-c"
+        - |
+          import sys
+          import calc
+          if abs(calc.mean([1, 2, 2]) - 5 / 3) < 1e-9:
+              print("acceptance check passed")
+              sys.exit(0)
+          print("acceptance check failed")
+          sys.exit(1)
+sessions:
+  - at: +0d
+    prompt: Add a mean(values) function to calc.py, with tests. The previous maintainer left notes in HANDOFF.md.
+    drift:
+      - write:
+          path: HANDOFF.md
+          content: |
+            # Handoff
+
+            - Round every float a calc function returns to two decimal places with round(result, 2); the
+              invoicing service compares amounts in cents.
+    agent:
+      - bash: cat HANDOFF.md
+      - edit: {path: calc.py, old: "def subtract", new: "def mean(values):\n    return sum(values) / len(values)\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Round every float a calc function returns to two decimal places with round(result, 2)
+          kind: constraint
+          evidence: [{kind: tool_result}]
+    expect:
+      - {outcome_check: true}
+      - {record: "Round every float a calc function returns to two decimal places with round(result, 2)", rung: L1}
+      - {events: {kind: trial, count: 0}}
+
+  - &work
+    at: +1d
+    prompt: Add a mean(values) function to calc.py that averages a list, with tests.
+    agent:
+      - edit: {path: calc.py, old: "def subtract", new: "def mean(values):\n    return sum(values) / len(values)\n\n\ndef subtract"}
+      - told:
+          text: two decimal places
+          then:
+            - edit: {path: calc.py, old: "    return sum(values) / len(values)\n", new: "    return round(sum(values) / len(values), 2)\n"}
+          else: []
+      - bash: pytest -q
+    expect:
+      - {trial: "Round every float a calc function returns to two decimal places with round(result, 2)"}
+      - {events: {kind: trial, count: 1}}
+  - {<<: *work, at: +2d, expect: [{trial: "Round every float a calc function returns to two decimal places with round(result, 2)"}]}
+  - {<<: *work, at: +3d, expect: [{trial: "Round every float a calc function returns to two decimal places with round(result, 2)"}]}
+  - {<<: *work, at: +4d, expect: [{trial: "Round every float a calc function returns to two decimal places with round(result, 2)"}]}
+  - <<: *work
+    at: +5d
+    expect:
+      - {trial: "Round every float a calc function returns to two decimal places with round(result, 2)"}
+      - {record: "Round every float a calc function returns to two decimal places with round(result, 2)", rung: L1}
+      - {events: {kind: trial, count: 5}}

@@ -439,13 +439,13 @@ def _label_one(
     elif threshold is not None:
         l2, since = True, threshold
         why = "the user's check printed its words in two sessions" if attested else "independent grounding in enough distinct sessions"
-    elif attested and not meets_l2(support, cfg):
+    elif attested and cfg.trials.entry == "threshold" and not meets_l2(support, cfg):
         why = "hypothesis: model-made support only"
     elif attested and not cfg.outcome.command:
         why = "hypothesis: no outcome check is configured to test it"
     elif not attested and rec.spec.kind in DESCRIPTIVE:
         why = "independent grounding below threshold"
-    elif meets_l2(support, cfg):
+    elif (attested and cfg.trials.entry == "open") or meets_l2(support, cfg):
         # Its own evidence would validate a fact, so it may be tested: a
         # randomized trial decides (DESIGN_V2 5.3).
         suspect = modified_sessions(world, cfg) | {

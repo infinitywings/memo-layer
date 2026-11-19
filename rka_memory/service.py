@@ -119,6 +119,9 @@ class Memory:
                     "budget_tokens": view.budget_tokens,
                     "view_hash": view.hash,
                     "tokens": views.estimate_tokens(view.render()) if view.render() else 0,
+                    # A treated record the budget left out never reached the
+                    # agent: its trial must count it (docs/E2B.md, Q8).
+                    "trial_omitted": [rid for rid in treated if rid in view.omitted],
                 },
                 state_hash=state.hash(),
             )

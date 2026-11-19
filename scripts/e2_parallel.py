@@ -11,11 +11,16 @@ jobs share only the image.
 Usage:
   E2 stage 2, one seed of every fixture and arm:
     .venv/bin/python scripts/e2_parallel.py --seed 2 [--fixtures calc,textkit] [--arms gated] [--jobs 5]
+  E2b (docs/E2B.md), arms route, gated and notepad:
+    .venv/bin/python scripts/e2_parallel.py --experiment e2b --seed 1 [--arms route] [--fixtures calc]
   Any streams, as path@stream-name:
     .venv/bin/python scripts/e2_parallel.py --out DIR [--jobs 3] workload/scenarios/36-notepad.yaml@notepad ...
+  --list prints the jobs and stops: nothing is built or run.
 
 An E2 job's results land in workload-runs/e2/seed-<n>/e2-<fixture>-<arm>,
 one seed per directory, which is how scripts/e2_analysis.py groups seeds.
+E2b's land in workload-runs/e2b/seed-<n>/e2b-<fixture>-<arm>; its route arm
+runs workload/e2b/<fixture>-route.yaml, the others workload/e2b/<fixture>.yaml.
 Each job's log and the runner's own copy stay under <out>/.jobs/<job>/.
 """
 
@@ -35,11 +40,18 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 E2_FIXTURES = ("calc", "textkit", "stockbook")
 E2_ARMS = ("stated", "gated", "notepad")
+# E2b's arms (docs/E2B.md Section 5): the route, and gated and notepad as concurrent controls.
+E2B_ARMS = ("route", "gated", "notepad")
+ARMS = {"e2": E2_ARMS, "e2b": E2B_ARMS}
 IMAGE_PROJECT = "rka-memory-test"
 STAGGER_SECONDS = 5
 # The notepad arm's sessions ran about twice as long as the others in the
-# pilot: start the longest jobs first so the last wave is short.
-LONGEST_FIRST = {"notepad": 0, "gated": 1, "stated": 2}
+# pilot: start the longest jobs first so the last wave is short. A route run
+# is estimated between the two (docs/E2B.md Section 8).
+LONGEST_FIRST = {
+    "e2": {"notepad": 0, "gated": 1, "stated": 2},
+    "e2b": {"notepad": 0, "route": 1, "gated": 2},
+}
 
 
 @dataclass(frozen=True)
@@ -63,13 +75,28 @@ def project_name(name: str, tag: str = "") -> str:
     return slug[:63]
 
 
-def e2_jobs(seed: int, fixtures: tuple[str, ...], arms: tuple[str, ...], root: Path) -> list[Job]:
+def stream_file(experiment: str, fixture: str, arm: str) -> str:
+    """The stream an arm runs: E2b's route arm has a stream file of its own."""
+    if experiment == "e2b" and arm == "route":
+        return f"workload/e2b/{fixture}-route.yaml"
+    return f"workload/{experiment}/{fixture}.yaml"
+
+
+def e2_jobs(seed: int, fixtures: tuple[str, ...], arms: tuple[str, ...], root: Path, experiment: str = "e2") -> list[Job]:
+    unknown = sorted(set(arms) - set(ARMS[experiment]))
+    if unknown:
+        raise SystemExit(f"{experiment} has no arm {unknown}; its arms are {list(ARMS[experiment])}")
     out = root / f"seed-{seed}"
     return [
-        Job(f"workload/e2/{f}.yaml", f"e2-{f}-{a}", out, project_name(f"e2-{f}-{a}", f"s{seed}"))
+        Job(stream_file(experiment, f, a), f"{experiment}-{f}-{a}", out, project_name(f"{experiment}-{f}-{a}", f"s{seed}"))
         for f in fixtures
         for a in arms
     ]
+
+
+def longest_first(jobs: list[Job], experiment: str) -> list[Job]:
+    order = LONGEST_FIRST[experiment]
+    return sorted(jobs, key=lambda j: order.get(j.name.rsplit("-", 1)[-1], len(order)))
 
 
 def spec_jobs(specs: list[str], out: Path) -> list[Job]:
@@ -127,21 +154,24 @@ def live(jobs: list[Job]) -> bool:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seed", type=int, action="append", help="run E2 seed N of every fixture and arm (repeatable)")
+    ap.add_argument("--experiment", choices=sorted(ARMS), default="e2", help="whose streams --seed runs (default e2)")
+    ap.add_argument("--seed", type=int, action="append", help="run seed N of every fixture and arm (repeatable)")
     ap.add_argument("--fixtures", default=",".join(E2_FIXTURES))
-    ap.add_argument("--arms", default=",".join(E2_ARMS))
-    ap.add_argument("--out", type=Path, help="where finished arm directories go (default workload-runs/e2/seed-N)")
+    ap.add_argument("--arms", help="default: stated,gated,notepad for e2; route,gated,notepad for e2b")
+    ap.add_argument("--out", type=Path, help="where finished arm directories go (default workload-runs/<experiment>/seed-N)")
     ap.add_argument("--jobs", type=int, default=5, help="runs at once")
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--skip-existing", action="store_true", help="leave out jobs whose results are already there")
+    ap.add_argument("--list", action="store_true", help="print the jobs and stop: nothing is built or run")
     ap.add_argument("specs", nargs="*", help="path@stream-name, instead of --seed")
     args = ap.parse_args(argv)
     if (args.seed is None) == (not args.specs):
         raise SystemExit("give --seed N or path@stream-name jobs, not both")
     if args.seed is not None:
-        root = (args.out or REPO / "workload-runs" / "e2").resolve()
-        jobs = [j for s in args.seed for j in e2_jobs(s, tuple(args.fixtures.split(",")), tuple(args.arms.split(",")), root)]
-        jobs.sort(key=lambda j: LONGEST_FIRST.get(j.name.rsplit("-", 1)[-1], 3))
+        root = (args.out or REPO / "workload-runs" / args.experiment).resolve()
+        arms = tuple(args.arms.split(",")) if args.arms else ARMS[args.experiment]
+        fixtures = tuple(args.fixtures.split(","))
+        jobs = longest_first([j for s in args.seed for j in e2_jobs(s, fixtures, arms, root, args.experiment)], args.experiment)
     else:
         if args.out is None:
             raise SystemExit("path@stream-name jobs need --out")
@@ -153,6 +183,10 @@ def main(argv: list[str]) -> int:
         taken = []
     if taken:
         raise SystemExit(f"already there, refusing to run over them: {[str(t) for t in taken]}")
+    if args.list:
+        for j in jobs:
+            print(f"{j.name} ({j.project}) {j.stream} -> {j.out / j.name}", flush=True)
+        return 0
     if live(jobs) and not os.environ.get("DEEPSEEK_API_KEY"):
         has_key = subprocess.run(["grep", "-q", "^DEEPSEEK_API_KEY=.", str(REPO / ".env")], capture_output=True).returncode == 0
         if not has_key:
