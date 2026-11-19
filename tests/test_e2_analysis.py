@@ -64,5 +64,13 @@ def test_one_seed_of_one_fixture_scores_every_arm_and_prediction(tmp_path):
     assert "  notes at s2:\n    - Round float results to 2 decimals." in text
 
 
+def test_a_note_that_negates_an_item_does_not_hold_it(tmp_path):
+    run = tmp_path / "20270101T000000Z"
+    arm_dir(run, "notepad", passes=(), follows_f=(), notes="- Do not blanket-round float results; round only when asked.\n- Never coerce ints, and apply round(result, 2) to floats.\n")
+    [notepad] = e2.load_runs([str(run)])
+    notes = notepad.sessions[1].memory.splitlines()
+    assert [e2.Run.holds(e2.Run("calc", "notepad", "", [e2.Session(2, "x", {}, memory=line)]), "F_A", 2) for line in notes] == [False, True]
+
+
 def test_the_sign_test_counts_ties_against_the_prediction():
     assert (e2.sign_p(6, 6), round(e2.sign_p(5, 6), 3), e2.sign_p(0, 0)) == (1 / 64, 0.109, 1.0)

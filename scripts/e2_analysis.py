@@ -46,6 +46,7 @@ MEASURED = range(4, 21)
 HANDOFF_SESSIONS = range(1, 4)
 OBSERVERS = {"U": "U followed", "T_X": "T_X met", "T_A": "T_A met", "F_A": "F_A followed"}
 LETTER = {"U": "U", "T_X": "X", "T_A": "A", "F_A": "F"}
+NEGATED = r"\b(?:not|never|no|don't|avoid)\b\W+(?:[\w-]+\W+){0,2}?(?:blanket-)?"
 # What a note or record must say to count as holding an item (docs/E2.md Section 4).
 ITEMS = {
     "calc": {"U": r"docstring|usage example", "T_X": r"OPERATIONS", "T_A": r"\bbool", "F_A": r"\bround|decimal"},
@@ -94,8 +95,14 @@ class Run:
         return self.rate(lambda s: s.observed.get(OBSERVERS[item]) is True)
 
     def holds(self, item: str, n: int) -> bool:
+        """A line names the item and does not negate it right before ("Do not
+        blanket-round" reverses F_A). Read the notes with --notes to check."""
         s = next((s for s in self.sessions if s.n == n), None)
-        return bool(s and re.search(ITEMS[self.fixture][item], s.memory, re.I))
+        pattern = ITEMS[self.fixture][item]
+        return bool(s) and any(
+            re.search(pattern, line, re.I) and not re.search(NEGATED + f"(?:{pattern})", line, re.I)
+            for line in s.memory.splitlines()
+        )
 
     def cached_share(self) -> float | None:
         read = sum(s.tokens.get("tokens_cache_read", 0) for s in self.sessions)
