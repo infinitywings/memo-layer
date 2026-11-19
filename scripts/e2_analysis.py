@@ -173,7 +173,11 @@ def _gated(run: Run, world: World, arm_dir: Path) -> None:
             continue
         l2 = [m for m in rec.history if m.to_rung is Rung.L2]
         if l2:
-            run.t_x_l2 = index.get(world.events[l2[0].event_id].session_id)
+            # The gate logs its moves under its own session id: place the move
+            # in the last stream session that had started by then.
+            at = world.position[l2[0].event_id]
+            started = [n for sid, n in index.items() if world.position[world.sessions[sid].started.id] <= at]
+            run.t_x_l2 = max(started) if started else None
         delivered = [index[d.event.session_id] for d in world.deliveries if rid in d.record_ids and d.event.session_id in index]
         run.t_x_delivered = min(delivered) if delivered else None
 
