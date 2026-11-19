@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +37,9 @@ E2_FIXTURES = ("calc", "textkit", "stockbook")
 E2_ARMS = ("stated", "gated", "notepad")
 IMAGE_PROJECT = "rka-memory-test"
 STAGGER_SECONDS = 5
+# The notepad arm's sessions ran about twice as long as the others in the
+# pilot: start the longest jobs first so the last wave is short.
+LONGEST_FIRST = {"notepad": 0, "gated": 1, "stated": 2}
 
 
 @dataclass(frozen=True)
@@ -124,24 +127,30 @@ def live(jobs: list[Job]) -> bool:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seed", type=int, help="run E2 seed N of every fixture and arm")
+    ap.add_argument("--seed", type=int, action="append", help="run E2 seed N of every fixture and arm (repeatable)")
     ap.add_argument("--fixtures", default=",".join(E2_FIXTURES))
     ap.add_argument("--arms", default=",".join(E2_ARMS))
     ap.add_argument("--out", type=Path, help="where finished arm directories go (default workload-runs/e2/seed-N)")
     ap.add_argument("--jobs", type=int, default=5, help="runs at once")
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--skip-existing", action="store_true", help="leave out jobs whose results are already there")
     ap.add_argument("specs", nargs="*", help="path@stream-name, instead of --seed")
     args = ap.parse_args(argv)
     if (args.seed is None) == (not args.specs):
         raise SystemExit("give --seed N or path@stream-name jobs, not both")
     if args.seed is not None:
         root = (args.out or REPO / "workload-runs" / "e2").resolve()
-        jobs = e2_jobs(args.seed, tuple(args.fixtures.split(",")), tuple(args.arms.split(",")), root)
+        jobs = [j for s in args.seed for j in e2_jobs(s, tuple(args.fixtures.split(",")), tuple(args.arms.split(",")), root)]
+        jobs.sort(key=lambda j: LONGEST_FIRST.get(j.name.rsplit("-", 1)[-1], 3))
     else:
         if args.out is None:
             raise SystemExit("path@stream-name jobs need --out")
         jobs = spec_jobs(args.specs, args.out.resolve())
     taken = [j.out / j.name for j in jobs if (j.out / j.name).exists()]
+    if taken and args.skip_existing:
+        print(f"already there, left out: {[str(t) for t in taken]}", flush=True)
+        jobs = [j for j in jobs if (j.out / j.name) not in taken]
+        taken = []
     if taken:
         raise SystemExit(f"already there, refusing to run over them: {[str(t) for t in taken]}")
     if live(jobs) and not os.environ.get("DEEPSEEK_API_KEY"):
@@ -157,7 +166,7 @@ def main(argv: list[str]) -> int:
     failed = 0
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = [pool.submit(run, j, STAGGER_SECONDS * (i % args.jobs) if i < args.jobs else 0) for i, j in enumerate(jobs)]
-        for f in futures:
+        for f in as_completed(futures):
             job, code, checks, moved = f.result()
             ok = code == 0 and moved is not None
             failed += not ok
