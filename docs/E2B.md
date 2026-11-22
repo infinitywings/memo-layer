@@ -212,3 +212,44 @@ the notepad rephrased it (docs/E2.md, P9).
   promoted.
 - **Analysis.** `scripts/e2b_analysis.py` computes Q1 to Q8 and the drift
   rule. It rescores E2's runs under the E2b check from their observers.
+
+## 11. Model change after stage 2 stopped
+
+Stage 2 started on 2026-11-21 and stopped about ten minutes in. The
+DeepSeek account ran out of balance (HTTP 402), so no stage-2 run finished.
+The one run copied out, seed-1 stockbook notepad, is kept apart in
+`workload-runs/e2b/no-balance/` and analyzed nowhere. The PI then chose to
+move live runs to OpenAI models on the PI's ChatGPT plan
+(RKA jrn_01M80PDMGCRKNFK7X84RWGSX50).
+
+**The route.** OpenAI's Sign in with ChatGPT for open-source and local apps
+(Preview) lets an app spend plan usage on `POST /v1/responses` with an OAuth
+token.
+- `scripts/openai_plan.py` signs in once in the browser, keeps the
+  credential record outside the repository, and serves a token proxy on the
+  host's loopback.
+- The proxy refreshes the rotating token one refresh at a time and removes
+  the request fields the plan route rejects. It sets `store: false` and
+  `stream: true`, and logs each request's usage without content.
+- In the container, `RKM_LIVE_PROVIDER=openai` (`rka_memory/workload/live.py`)
+  routes dsh through its `openai-responses` adapter, and the miner and the
+  notepad curator through the proxy's chat route. Both use the same model.
+- `scripts/e2_parallel.py --provider openai --model <slug>` writes to
+  `workload-runs/e2b-openai/`.
+
+**What it changes in the design.**
+- E2's runs and the E2b pilot ran on DeepSeek. Under another model family
+  they are no control for anything. The OpenAI E2b therefore runs every arm
+  concurrently at both seeds, 18 runs, and `scripts/e2b_analysis.py` takes
+  its controls from those runs (`--e2` given no directories). The drift rule
+  has nothing to compare against and does not apply.
+- Q1 to Q8 and the decision rules stand as written. Their expected rates
+  came from DeepSeek runs, so a miss may reflect the model rather than the
+  route. The report says so per prediction.
+- The pilot is rerun on the OpenAI model (Section 8, stage 1) before stage 2.
+- DeepSeek and OpenAI runs are never pooled. The DeepSeek pilot stays in
+  `workload-runs/e2b/` as it is.
+- The cost is now plan usage, not tokens bought. The proxy's usage log gives
+  each run's input, cached and output tokens. Plus has a five-hour limit
+  shared across apps and a weekly limit, and the stream fails with
+  `subscription_sharing_usage_limit_exceeded` when a limit is reached.

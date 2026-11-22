@@ -12,6 +12,8 @@ promotion; then the drift rule and Q1 to Q8, with one-sided exact sign
 tests in which a tie counts against the prediction.
 
 Usage: .venv/bin/python scripts/e2b_analysis.py [--e2 DIR ...] [--e2b DIR ...] [--promoted]
+       On OpenAI runs, compare only concurrent controls:
+       .venv/bin/python scripts/e2b_analysis.py --e2b workload-runs/e2b-openai/seed-* --e2
 """
 
 from __future__ import annotations
@@ -76,8 +78,9 @@ def drift(e2b_runs: list[e2.Run], e2_runs: list[e2.Run]) -> tuple[list[str], set
 
 def controls(e2b_runs: list[e2.Run], e2_runs: list[e2.Run], drifted: set[str]) -> dict[tuple[str, int, str], e2.Run]:
     """The control for each (fixture, seed, arm): E2's rescored runs, or,
-    for an arm that drifted, only the concurrent E2b runs."""
-    source = {arm: e2b_runs if arm in drifted else e2_runs for arm in ("gated", "notepad")}
+    for an arm that drifted or with no E2 runs (another model family, as on
+    the ChatGPT plan), only the concurrent E2b runs."""
+    source = {arm: e2b_runs if arm in drifted or not e2_runs else e2_runs for arm in ("gated", "notepad")}
     return {(r.fixture, r.seed, r.arm): r for arm, runs in source.items() for r in runs if r.arm == arm}
 
 

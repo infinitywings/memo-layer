@@ -73,9 +73,17 @@ services:
     entrypoint: ["/opt/rka-memory/.venv/bin/rka-memory", "workload", "run"]
     command: ["/opt/rka-memory/workload/scenarios", "--out", "/runs/workload"]
     environment:
-      # live streams only (`make live`); scripted streams never read them
+      # live streams only (`make live`); scripted streams never read them.
+      # RKM_LIVE_PROVIDER=openai runs them on the ChatGPT plan through the
+      # host's token proxy (scripts/openai_plan.py serve, rka_memory/workload/live.py)
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       RKM_MINER_MODEL: ${RKM_MINER_MODEL:-}
+      RKM_LIVE_PROVIDER: ${RKM_LIVE_PROVIDER:-deepseek}
+      RKM_OPENAI_MODEL: ${RKM_OPENAI_MODEL:-}
+      RKM_OPENAI_PROXY_KEY: ${RKM_OPENAI_PROXY_KEY:-}
+      RKM_OPENAI_BASE_URL: ${RKM_OPENAI_BASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - runs:/runs
 

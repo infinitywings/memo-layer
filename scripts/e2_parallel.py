@@ -22,17 +22,24 @@ one seed per directory, which is how scripts/e2_analysis.py groups seeds.
 E2b's land in workload-runs/e2b/seed-<n>/e2b-<fixture>-<arm>; its route arm
 runs workload/e2b/<fixture>-route.yaml, the others workload/e2b/<fixture>.yaml.
 Each job's log and the runner's own copy stay under <out>/.jobs/<job>/.
+
+--provider openai runs live streams on the user's ChatGPT plan through the
+host's token proxy (scripts/openai_plan.py serve) and --model, default
+RKM_OPENAI_MODEL. Its results land in workload-runs/<experiment>-openai/, so
+runs on two model families never share a directory.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,13 +89,13 @@ def stream_file(experiment: str, fixture: str, arm: str) -> str:
     return f"workload/{experiment}/{fixture}.yaml"
 
 
-def e2_jobs(seed: int, fixtures: tuple[str, ...], arms: tuple[str, ...], root: Path, experiment: str = "e2") -> list[Job]:
+def e2_jobs(seed: int, fixtures: tuple[str, ...], arms: tuple[str, ...], root: Path, experiment: str = "e2", tag: str = "") -> list[Job]:
     unknown = sorted(set(arms) - set(ARMS[experiment]))
     if unknown:
         raise SystemExit(f"{experiment} has no arm {unknown}; its arms are {list(ARMS[experiment])}")
     out = root / f"seed-{seed}"
     return [
-        Job(stream_file(experiment, f, a), f"{experiment}-{f}-{a}", out, project_name(f"{experiment}-{f}-{a}", f"s{seed}"))
+        Job(stream_file(experiment, f, a), f"{experiment}-{f}-{a}", out, project_name(f"{experiment}-{f}-{a}", f"{tag}s{seed}"))
         for f in fixtures
         for a in arms
     ]
@@ -143,6 +150,10 @@ def run(job: Job, delay: float) -> tuple[Job, int, str, Path | None]:
     env = {**os.environ, "RKA_STACK_CORE_PORT": ""}
     with open(job.log, "w") as fh:
         code = subprocess.run(command(job), cwd=REPO, env=env, stdout=fh, stderr=subprocess.STDOUT).returncode
+        # `run --rm` leaves the project's network behind, and Docker runs out
+        # of address pools after a few dozen; the runs volume stays.
+        subprocess.run(["./scripts/dockerw", "compose", "-p", job.project, "--profile", "workload", "down"],
+                       cwd=REPO, env=env, stdout=fh, stderr=subprocess.STDOUT, check=False)
     # A run with a failed check still copied its results out: keep them.
     moved = collect(job)
     return job, code, verdict(job.log, job.name), moved
@@ -150,6 +161,31 @@ def run(job: Job, delay: float) -> tuple[Job, int, str, Path | None]:
 
 def live(jobs: list[Job]) -> bool:
     return any(re.search(r"^model:\s*live\b", (REPO / j.stream).read_text(), re.M) for j in jobs)
+
+
+PLAN_DIR = Path(os.environ.get("RKM_OPENAI_PLAN_DIR") or Path.home() / ".config" / "rka-memory-dev")
+PROXY_HEALTH = "http://127.0.0.1:8790/healthz"
+
+
+def provider_env(provider: str, model: str | None) -> dict[str, str]:
+    """What a live run on `provider` needs in the environment compose reads."""
+    if provider == "deepseek":
+        if not os.environ.get("DEEPSEEK_API_KEY"):
+            has_key = subprocess.run(["grep", "-q", "^DEEPSEEK_API_KEY=.", str(REPO / ".env")], capture_output=True, check=False).returncode == 0
+            if not has_key:
+                raise SystemExit("live streams need DEEPSEEK_API_KEY in the shell or in .env")
+        return {"RKM_LIVE_PROVIDER": "deepseek"}
+    if not model:
+        raise SystemExit("--provider openai needs --model or RKM_OPENAI_MODEL (scripts/openai_plan.py models lists them)")
+    key = PLAN_DIR / "proxy-key"
+    if not key.exists():
+        raise SystemExit(f"no proxy key at {key}: run scripts/openai_plan.py login, then serve")
+    try:
+        with urllib.request.urlopen(PROXY_HEALTH, timeout=5) as resp:
+            json.load(resp)
+    except OSError as exc:
+        raise SystemExit(f"the plan proxy is not answering at {PROXY_HEALTH} ({exc}): run scripts/openai_plan.py serve") from exc
+    return {"RKM_LIVE_PROVIDER": "openai", "RKM_OPENAI_MODEL": model, "RKM_OPENAI_PROXY_KEY": key.read_text().strip()}
 
 
 def main(argv: list[str]) -> int:
@@ -163,15 +199,19 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--skip-existing", action="store_true", help="leave out jobs whose results are already there")
     ap.add_argument("--list", action="store_true", help="print the jobs and stop: nothing is built or run")
+    ap.add_argument("--provider", choices=["deepseek", "openai"], default=os.environ.get("RKM_LIVE_PROVIDER") or "deepseek",
+                    help="live model: DeepSeek, or the ChatGPT plan through the host's token proxy")
+    ap.add_argument("--model", default=os.environ.get("RKM_OPENAI_MODEL"), help="--provider openai: the model slug")
     ap.add_argument("specs", nargs="*", help="path@stream-name, instead of --seed")
     args = ap.parse_args(argv)
     if (args.seed is None) == (not args.specs):
         raise SystemExit("give --seed N or path@stream-name jobs, not both")
     if args.seed is not None:
-        root = (args.out or REPO / "workload-runs" / args.experiment).resolve()
+        suffix = "" if args.provider == "deepseek" else f"-{args.provider}"
+        root = (args.out or REPO / "workload-runs" / f"{args.experiment}{suffix}").resolve()
         arms = tuple(args.arms.split(",")) if args.arms else ARMS[args.experiment]
         fixtures = tuple(args.fixtures.split(","))
-        jobs = longest_first([j for s in args.seed for j in e2_jobs(s, fixtures, arms, root, args.experiment)], args.experiment)
+        jobs = longest_first([j for s in args.seed for j in e2_jobs(s, fixtures, arms, root, args.experiment, "oa-" if suffix else "")], args.experiment)
     else:
         if args.out is None:
             raise SystemExit("path@stream-name jobs need --out")
@@ -187,10 +227,8 @@ def main(argv: list[str]) -> int:
         for j in jobs:
             print(f"{j.name} ({j.project}) {j.stream} -> {j.out / j.name}", flush=True)
         return 0
-    if live(jobs) and not os.environ.get("DEEPSEEK_API_KEY"):
-        has_key = subprocess.run(["grep", "-q", "^DEEPSEEK_API_KEY=.", str(REPO / ".env")], capture_output=True).returncode == 0
-        if not has_key:
-            raise SystemExit("live streams need DEEPSEEK_API_KEY in the shell or in .env")
+    if live(jobs):
+        os.environ.update(provider_env(args.provider, args.model))
     if not args.no_build:
         subprocess.run(["./scripts/dockerw", "compose", "-p", IMAGE_PROJECT, "--profile", "workload", "build", "workload"],
                        cwd=REPO, env={**os.environ, "RKA_STACK_CORE_PORT": ""}, check=True, capture_output=True)

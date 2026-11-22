@@ -20,10 +20,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import yaml
 
@@ -33,11 +34,11 @@ from rka_memory import graph, notepad
 from rka_memory.domain import Actor, Event, Kind, clock_file_now
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.miner import miner
-from rka_memory.miner.backends import DEEPSEEK, deepseek_miner
 from rka_memory.service import Memory
 from rka_memory.workload import files, report
 from rka_memory.workload.actions import Clean
 from rka_memory.workload.checks import Observed, evaluate, find_record
+from rka_memory.workload.live import LiveRoute, live_route
 from rka_memory.workload.stream import Session, Stream, Typed, Verdict, load_all
 from rka_memory.world import World, project
 
@@ -248,14 +249,16 @@ class MockModel:
 
 
 class LiveModel:
-    """dsh's own default route (DeepSeek) for the agent and DeepSeek for the
-    miner. Nothing to script, and no request log to read."""
+    """A live provider for the agent and the miner (workload/live.py).
+    Nothing to script, and no request log to read."""
 
     port = None
 
     def __init__(self) -> None:
-        if not os.environ.get(DEEPSEEK["api_key_env"]):
-            raise ValueError(f"a live stream needs {DEEPSEEK['api_key_env']} in the environment")
+        self.route = live_route()
+        missing = self.route.missing(os.environ)
+        if missing:
+            raise ValueError(f"a live stream on {self.route.provider} needs {', '.join(missing)} in the environment")
 
     def script(self, **_: Any) -> None:
         pass
@@ -356,6 +359,7 @@ class StreamRun:
     ) -> None:
         self.stream = stream
         self.paths = RunPaths.under(root.resolve(), (workspace or root / "project").resolve())
+        self.live: LiveRoute | None = None
         self.confine = confinement()
         self.fence = fence.resolve() if fence is not None else None
         # Paths outside the runs volume the agent must not reach either, such
@@ -435,9 +439,9 @@ class StreamRun:
     def arms(self) -> tuple[str, ...]:
         return tuple((self.stream.config.get("packet") or {}).get("arms") or ())
 
-    def _setup(self, port: int | None) -> None:
+    def _setup(self, port: int | None, live: LiveRoute | None) -> None:
         p = self.paths
-        model = deepseek_miner() if port is None else {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
+        model = live.miner if live else {"backend": "openai_compat", "base_url": f"http://127.0.0.1:{port}/v1", "model": "mock"}
         # A notepad-only run keeps notes instead of records: its miner reads
         # every session and proposes nothing, and the notepad's curator gets
         # the model the miner would have had (docs/E2.md Section 3).
@@ -486,11 +490,14 @@ class StreamRun:
         ]
         if port is not None:
             p.route_overlay.write_text(yaml.safe_dump(route, sort_keys=False))
+        elif live and live.dsh:
+            p.route_overlay.write_text(yaml.safe_dump(live.dsh, sort_keys=False))
         (p.root / "manifest.json").write_text(
             json.dumps(
                 {
                     "stream": self.stream.name,
                     "model": self.stream.model,
+                    "provider": live.provider if live else None,
                     "confined": self.confine is not None,
                     "source": str(self.stream.source),
                     "start": self.stream.start.isoformat(),
@@ -707,7 +714,8 @@ class StreamRun:
             self.check(label, "model started", False, str(exc))
             return self._finish()
         try:
-            self._setup(mock.port)
+            self.live = mock.route if isinstance(mock, LiveModel) else None
+            self._setup(mock.port, self.live)
             for s in self.stream.sessions:
                 label = s.label
                 self._session(s, mock)
@@ -725,8 +733,8 @@ class StreamRun:
             "stream": self.stream.name,
             "model": self.stream.model,
             "description": self.stream.description,
-            "route": "dsh's default DeepSeek model" if live else "scripted model",
-            "miner": f"{deepseek_miner()['model']} at {DEEPSEEK['base_url']}" if live else "scripted model",
+            "route": self.live.route if self.live else ("not started" if live else "scripted model"),
+            "miner": self.live.miner_label if self.live else ("not started" if live else "scripted model"),
             "sessions": self.rows,
             "records": report.records(self.world()) if p.ledger.exists() else [],
             "metrics": self._metrics() if p.ledger.exists() else {},

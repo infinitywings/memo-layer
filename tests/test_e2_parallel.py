@@ -94,3 +94,13 @@ def test_list_prints_the_jobs_and_neither_builds_nor_runs(tmp_path, monkeypatch,
     ]
     assert par.main(["--seed", "1", "--fixtures", "calc", "--out", str(tmp_path), "--list"]) == 0
     assert [line.split()[0] for line in capsys.readouterr().out.splitlines()] == ["e2-calc-notepad", "e2-calc-gated", "e2-calc-stated"]
+
+
+def test_openai_jobs_get_projects_of_their_own(tmp_path):
+    [job] = par.e2_jobs(1, ("calc",), ("route",), tmp_path, "e2b", "oa-")
+    assert job.project == "rkm-e2b-calc-route-oa-s1"
+
+
+def test_an_openai_run_needs_a_model():
+    with pytest.raises(SystemExit, match="needs --model"):
+        par.provider_env("openai", None)

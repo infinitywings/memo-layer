@@ -86,3 +86,9 @@ def test_a_drifted_control_is_replaced_by_its_concurrent_run(tmp_path):
     assert drifted == {"gated"} and any(line.endswith("-> DRIFT on pass") for line in lines)
     ctl = e2b.controls(new, old, drifted)
     assert (ctl[("calc", 1, "gated")].experiment, ctl[("calc", 1, "notepad")].experiment) == ("e2b", "e2")
+
+
+def test_without_e2_runs_the_controls_are_the_concurrent_runs(tmp_path):
+    new, _ = runs(tmp_path)
+    ctl = e2b.controls(new, [], set())
+    assert (ctl[("calc", 1, "gated")].experiment, ctl[("calc", 1, "notepad")].experiment) == ("e2b", "e2b")
