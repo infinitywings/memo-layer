@@ -46,10 +46,16 @@ REPO = Path(rka_memory.__file__).resolve().parent.parent
 PLUGIN = REPO / "plugins" / "dsh" / "src" / "index.ts"
 MOCK = REPO / "scripts" / "mock_llm.py"
 DSH_TIMEOUT = 600
-# The agent gets no web_search or web_fetch. The stream files that hold the
-# user's hidden checks are in a public repository, and live agents have
-# searched the web for their benchmark by name (run 20261116T144401Z).
-NO_WEB_TOOLS = {"id": "tool-web", "disabled": True}
+# Tools a stream's agent does not get:
+# - web_search and web_fetch. The stream files that hold the user's hidden
+#   checks are in a public repository, and live agents have searched the web
+#   for their benchmark by name (run 20261116T144401Z).
+# - subagent, subagent_fork and workflow. A subagent runs a session of its
+#   own, which the memory layer would deliver to and give a trial coin of its
+#   own. The DeepSeek runs (E2, the E2b pilot) never started one in 360
+#   sessions; gpt-6.1-terra did in its fourth (run 20261122T041459Z).
+DISABLED_TOOLS = [{"id": tool, "disabled": True} for tool in (
+    "tool-web", "tool-subagent", "tool-subagent-fork", "tool-subagent-control", "tool-workflow")]
 PLUGIN_TIMEOUT_MS = 600_000
 QUIET_TIMEOUT = 300
 # Rule 2's isolation re-run, inside the image only (docker/dsh/Dockerfile):
@@ -466,7 +472,7 @@ class StreamRun:
         plugin_config = {"command": [str(rka_bin())], "timeoutMs": PLUGIN_TIMEOUT_MS, "protectedPaths": self.protected()}
         p.rka_overlay.write_text(
             yaml.safe_dump(
-                [{"insert": [{"id": "rka-memory", "name": str(PLUGIN), "config": plugin_config}]}, NO_WEB_TOOLS],
+                [{"insert": [{"id": "rka-memory", "name": str(PLUGIN), "config": plugin_config}]}, *DISABLED_TOOLS],
                 sort_keys=False,
             )
         )

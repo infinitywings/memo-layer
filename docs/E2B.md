@@ -253,3 +253,12 @@ token.
   each run's input, cached and output tokens. Plus has a five-hour limit
   shared across apps and a weekly limit, and the stream fails with
   `subscription_sharing_usage_limit_exceeded` when a limit is reached.
+- **No subagents.** The first OpenAI pilot (2026-11-22, run
+  20261122T041459Z) stopped at s4: gpt-6.1-terra called dsh's subagent
+  tool, and the subagent's session was recorded beside the task's, with a
+  packet and a trial coin of its own. The DeepSeek runs never started a
+  subagent in 360 sessions. The runner now disables the subagent,
+  subagent_fork and workflow tools as it disables the web tools, and the
+  pilot restarts from s1. The aborted run is kept in
+  `workload-runs/e2b-openai/aborted/subagent-s4/`. How the memory layer
+  should treat a subagent's session in real use is open.
