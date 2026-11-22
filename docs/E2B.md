@@ -262,3 +262,43 @@ token.
   pilot restarts from s1. The aborted run is kept in
   `workload-runs/e2b-openai/aborted/subagent-s4/`. How the memory layer
   should treat a subagent's session in real use is open.
+
+## 12. The OpenAI pilot (2026-11-22)
+
+The route arm on calc, seed 1, on gpt-6.1-terra through the plan proxy, with
+subagents disabled (Section 11). It ran in about 37 minutes and used 292
+plan requests: 1.00M input tokens (0.62M cached), 30k output.
+
+**Pass criteria (Section 8, stage 1): met.**
+- Every harness check passed: 122/122.
+- The miner proposed a T_A and an F_A record in s1 (R1). Both were on trial
+  from s2 (R2).
+- No treated line was omitted for budget.
+
+**Rates over s4 to s20, beside the DeepSeek pilot:**
+
+| | OpenAI | DeepSeek |
+|---|---|---|
+| Pass (E2b check) | 0% | 18% |
+| Harm (F_A followed) | 35% | 41% |
+| T_A met | 47% | 53% |
+| T_X met | 0% | 88% |
+
+**T_X is never met on this model.** The T_X record reached L2 after s1, from
+the declared check message, and every packet from s2 to s20 carried it. The
+record is the check's failure message, verbatim: "ops CLI check failed: the
+ops CLI does not offer the new function. It offers only the functions
+registered in calc.OPERATIONS, …". DeepSeek acted on it in 88% of sessions.
+gpt-6.1-terra never added the new function to `calc.OPERATIONS`. In the same
+packets it acted on records that state an instruction, T_A and F_A. So on
+this model a record that describes a failure is not taken as a request, and
+under the E2b check, which needs T_X, no route or gated session can pass. The
+user's own house rule, an instruction, was followed (U).
+
+**Neither trial has ended by s20.** T_A's wealth is 0.22 and F_A's is 0.32,
+so neither went on hold and neither was promoted.
+
+**Plan route behaviour.** Six of 292 streams stalled. Each sent keepalives
+and no output. Before the proxy's stall limit, dsh waited about 300 s and
+retried (three times). After it, the proxy ended the stream at about 65 s
+and the retry finished in seconds (three times).
