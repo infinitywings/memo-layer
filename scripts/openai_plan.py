@@ -61,6 +61,11 @@ CALLBACK_PATH = "/auth/callback"
 CALLBACK_PORT = 1455
 DEFAULT_DIR = Path.home() / ".config" / "rka-memory-dev"
 REFRESH_MARGIN_SECONDS = 300
+# The plan route sometimes holds a stream open on keepalives alone; dsh then
+# waits about 300 s before it retries. Completed responses took at most
+# 10.6 s in the first 187 (2026-11-22), so a minute without progress is a
+# stall: the proxy ends the stream unfinished and the caller retries.
+STALL_SECONDS = 60.0
 
 # preview-limitations: fields the plan route rejects
 UNSUPPORTED = frozenset({
@@ -398,9 +403,21 @@ class Outcome:
     terminal: str | None = None
     response: dict[str, Any] | None = None
     code: str | None = None
+    started: float = 0.0
+    events: int = 0
+    first_event: float | None = None
+    last_event: float | None = None
+    last_type: str | None = None
+    last_progress: float = 0.0
 
     def scan(self, event: dict[str, Any]) -> None:
         kind = event.get("type")
+        now = round(time.monotonic() - self.started, 2)
+        self.events += 1
+        self.first_event = now if self.first_event is None else self.first_event
+        self.last_event, self.last_type = now, kind
+        if kind != "keepalive":
+            self.last_progress = now
         if kind in ("response.completed", "response.failed", "response.incomplete"):
             self.terminal = kind
             self.response = event.get("response") or {}
@@ -408,6 +425,13 @@ class Outcome:
         elif kind == "error":
             self.terminal = "error"
             self.code = event.get("code") or (event.get("error") or {}).get("code")
+
+    def stalled(self, limit: float) -> bool:
+        return self.terminal is None and time.monotonic() - self.started - self.last_progress > limit
+
+    def timing(self) -> dict[str, Any]:
+        """When events arrived, for streams that stall: seconds from the request."""
+        return {"events": self.events, "first_event": self.first_event, "last_event": self.last_event, "last_type": self.last_type}
 
 
 class Proxy:
@@ -417,6 +441,7 @@ class Proxy:
         self.client = client
         self.upstream = upstream
         self.key = proxy_key(paths)
+        self.stall_seconds = STALL_SECONDS
         self.log_lock = threading.Lock()
 
     def log(self, **row: Any) -> None:
@@ -446,7 +471,7 @@ class Proxy:
         request, _ = sanitize(chat_to_responses(body))
         started = time.monotonic()
         resp = self.open_stream(request)
-        outcome = Outcome(resp.status_code)
+        outcome = Outcome(resp.status_code, started=started)
         try:
             if resp.status_code != 200:
                 text = resp.read().decode(errors="replace")
@@ -454,6 +479,9 @@ class Proxy:
                 return resp.status_code, {"error": {"message": text[:500], "code": "upstream_http"}}
             for event in sse_events(resp.iter_lines()):
                 outcome.scan(event)
+                if outcome.stalled(self.stall_seconds):
+                    outcome.terminal = "stalled"
+                    break
         finally:
             resp.close()
         response = outcome.response or {}
@@ -531,7 +559,7 @@ def handler_for(proxy: Proxy) -> type[BaseHTTPRequestHandler]:
             request, dropped = sanitize(body)
             started = time.monotonic()
             resp = proxy.open_stream(request)
-            outcome = Outcome(resp.status_code)
+            outcome = Outcome(resp.status_code, started=started)
             try:
                 self.send_response(resp.status_code)
                 self.send_header("Content-Type", resp.headers.get("content-type", "text/event-stream"))
@@ -548,6 +576,10 @@ def handler_for(proxy: Proxy) -> type[BaseHTTPRequestHandler]:
                         for event in sse_events(iter([*pending, ""])):
                             outcome.scan(event)
                         pending = []
+                        if outcome.stalled(proxy.stall_seconds):
+                            # ending the stream unfinished makes the caller retry
+                            outcome.terminal = "stalled"
+                            break
                 for event in sse_events(iter(pending)):
                     outcome.scan(event)
             except (BrokenPipeError, ConnectionResetError):
@@ -557,7 +589,7 @@ def handler_for(proxy: Proxy) -> type[BaseHTTPRequestHandler]:
                 self.close_connection = True
             proxy.log(route="responses", model=body.get("model"), status=resp.status_code, terminal=outcome.terminal,
                       code=outcome.code, dropped=dropped, keys=sorted(request), tools=len(request.get("tools") or []),
-                      seconds=round(time.monotonic() - started, 2), **usage_of(outcome.response or {}))
+                      seconds=round(time.monotonic() - started, 2), **outcome.timing(), **usage_of(outcome.response or {}))
 
         def log_message(self, *_: Any) -> None:
             pass

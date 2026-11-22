@@ -192,3 +192,22 @@ def test_the_responses_route_streams_through_and_wants_the_proxy_key(tmp_path):
         server.shutdown()
     [row] = [json.loads(line) for line in proxy.paths.usage.read_text().splitlines()]
     assert (row["route"], row["dropped"], row["terminal"], row["output"]) == ("responses", ["temperature"], "response.completed", 7)
+
+
+def test_a_stream_held_open_on_keepalives_is_ended_unfinished(tmp_path):
+    stalled = sse({"type": "response.created"}, {"type": "keepalive"}, {"type": "keepalive"}, completed("late"))
+    proxy = proxy_for(record(tmp_path, saved_at=time.time()), Upstream(stalled))
+    proxy.stall_seconds = -1.0
+    status, doc = proxy.chat({"model": "m1", "messages": [{"role": "user", "content": "x"}]})
+    assert (status, doc["error"]["message"]) == (502, "response ended with stalled")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), plan.handler_for(proxy))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with httpx.stream("POST", f"http://127.0.0.1:{server.server_port}/v1/responses", json={"model": "m1", "input": []},
+                          headers={"Authorization": f"Bearer {proxy.key}"}) as resp:
+            types = [e["type"] for e in plan.sse_events(resp.iter_lines())]
+    finally:
+        server.shutdown()
+    assert "response.completed" not in types
+    rows = [json.loads(line) for line in proxy.paths.usage.read_text().splitlines()]
+    assert [r["terminal"] for r in rows] == ["stalled", "stalled"]
