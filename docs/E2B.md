@@ -267,7 +267,8 @@ token.
 
 The route arm on calc, seed 1, on gpt-6.1-terra through the plan proxy, with
 subagents disabled (Section 11). It ran in about 37 minutes and used 292
-plan requests: 1.00M input tokens (0.62M cached), 30k output.
+plan requests: 1.00M input tokens (0.62M cached), 30k output. dsh sent no
+reasoning field, and the model used 0 reasoning tokens (Section 13).
 
 **Pass criteria (Section 8, stage 1): met.**
 - Every harness check passed: 122/122.
@@ -302,3 +303,49 @@ so neither went on hold and neither was promoted.
 and no output. Before the proxy's stall limit, dsh waited about 300 s and
 retried (three times). After it, the proxy ended the stream at about 65 s
 and the retry finished in seconds (three times).
+
+## 13. The pilot on gpt-6.2-sol with reasoning (2026-11-23)
+
+The PI switched the model to gpt-6.2-sol and asked for reasoning. The agent
+now reasons at medium (`RKM_OPENAI_REASONING`; the plan offers low to max).
+The miner uses the same model through the proxy's chat route, with no
+reasoning field. The run is in `workload-runs/e2b-gpt-6.2-sol-medium/`.
+OpenAI runs now land in a directory per model and reasoning level, and
+`scripts/e2b_analysis.py` leaves out E2 controls from another provider.
+
+Two things changed from Section 12, the model and the reasoning, so this
+pilot cannot say which of them made the difference.
+
+It ran in about 27 minutes and used 306 plan requests: 1.15M input tokens
+(0.19M cached), 42k output, 7.2k of it reasoning in 58 requests. One request
+got HTTP 503 and dsh retried it. No stream stalled. The longest request took
+27 s.
+
+**Pass criteria (Section 8, stage 1): met.**
+- Every harness check passed: 122/122.
+- The miner proposed T_A and F_A in s2. Both were on trial from s3.
+- No treated line was omitted for budget.
+
+**Rates over s4 to s20:**
+
+| | gpt-6.2-sol, medium | gpt-6.1-terra, none | DeepSeek |
+|---|---|---|---|
+| Pass (E2b check) | 53% | 0% | 18% |
+| Harm (F_A followed) | 6% | 35% | 41% |
+| T_A met | 59% | 47% | 53% |
+| T_X met | 94% | 0% | 88% |
+
+**T_X is met again.** gpt-6.2-sol acted on the verbatim check failure in 94%
+of sessions, so the E2b check can be passed on this model.
+
+**Both trials ended the way the design intends.** T_A was promoted at s19
+(wealth 22.4). F_A went on hold (wealth 0.11), and harm fell to 6%.
+
+**Against the predictions (one run):** T_A met in 59% is inside the
+predicted 25% to 65%. Harm of 6% is below the predicted 10% to 30%. T_A was
+promoted by s20 but not by s10, as predicted for most runs.
+
+**Cost of stage 2 on this model.** A route run used 1.15M input tokens with
+17% cached. The 17 remaining runs include the longer notepad arm, so stage 2
+would use roughly 20M to 25M input tokens of plan usage.
+

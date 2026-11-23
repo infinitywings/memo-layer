@@ -92,3 +92,13 @@ def test_without_e2_runs_the_controls_are_the_concurrent_runs(tmp_path):
     new, _ = runs(tmp_path)
     ctl = e2b.controls(new, [], set())
     assert (ctl[("calc", 1, "gated")].experiment, ctl[("calc", 1, "notepad")].experiment) == ("e2b", "e2b")
+
+
+def test_e2_runs_on_another_provider_are_not_controls(tmp_path, capsys):
+    runs(tmp_path)
+    manifest = tmp_path / "e2b" / "seed-1" / "e2b-calc-route" / "manifest.json"
+    manifest.write_text(json.dumps({**json.loads(manifest.read_text()), "provider": "openai"}))
+    assert e2b.providers([str(tmp_path / "e2b" / "seed-1")]) == {"openai", "deepseek"}
+    e2b.main(["--e2b", str(tmp_path / "e2b" / "seed-1"), "--e2", str(tmp_path / "e2" / "seed-1")])
+    out = capsys.readouterr().out
+    assert "left out the E2 runs: they ran on deepseek, the E2b runs on deepseek, openai" in out

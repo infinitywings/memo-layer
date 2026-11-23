@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import re
 import sys
 from pathlib import Path
@@ -143,6 +144,11 @@ def render(e2b_runs: list[e2.Run], e2_runs: list[e2.Run], show_promoted: bool) -
     return "\n".join([*lines, "", *predictions(e2b_runs, e2_runs)])
 
 
+def providers(dirs: list[str]) -> set[str]:
+    """The live providers of the runs under `dirs`, from their manifests; runs before the field existed were DeepSeek's."""
+    return {json.loads(m.read_text()).get("provider") or "deepseek" for d in dirs for m in Path(d).glob("*/manifest.json")}
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--e2", nargs="*", default=sorted(glob.glob("workload-runs/e2/seed-*")))
@@ -154,6 +160,10 @@ def main(argv: list[str]) -> int:
     if not e2b_runs:
         print("no E2b runs found")
         return 1
+    if e2_runs and providers(args.e2) != providers(args.e2b):
+        # No comparison pools two model families: the controls are then the concurrent E2b runs.
+        print(f"left out the E2 runs: they ran on {', '.join(sorted(providers(args.e2)))}, the E2b runs on {', '.join(sorted(providers(args.e2b)))}")
+        e2_runs = []
     print(render(e2b_runs, e2_runs, args.promoted))
     return 0
 
