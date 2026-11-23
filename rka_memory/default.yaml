@@ -59,6 +59,10 @@ miner:
   api_key_env: null           # openai_compat: name of the env var holding the key
   extract_rules: true         # also ask for the rules the user stated, as verbatim quotes
   payload_chars: 240          # characters of each event's payload a prompt line shows (E2b's route: 2000)
+  file_claims: false          # also list requirements project files state, as file claims only the user can validate (E2c's R3)
+
+review:                       # `rka-memory review`: file claims awaiting the user's verdict (E2c's R4, docs/E2C.md)
+  per_session: 0              # claims listed at a time; 0 lists none
 
 notepad:                      # the `notepad` arm's curator, E2's model-curated baseline (docs/E2.md); same keys as miner
   backend: none               # none keeps no notepad; openai_compat for a live run

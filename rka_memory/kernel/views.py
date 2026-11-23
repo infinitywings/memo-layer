@@ -337,6 +337,8 @@ def packet(
         unvalidated = [
             r for r in world.records.values()
             if labels.rung(r.id) is Rung.L1 and r.id not in hidden and r.scope.covers(state)
+            # A file claim reaches no agent before the user confirms it.
+            and r.spec.claimed_by is None
         ]
 
     def line(r: RecordState) -> Line:

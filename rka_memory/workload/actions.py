@@ -4,6 +4,7 @@ that applies the actions, so neither imports the other."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -82,5 +83,42 @@ class Typed:
     from_session: str | None = None
 
 
+REVIEW_POLICIES = ("oracle", "stamp")
+# Words that make a claim a suggestion to look into, not a requirement; the
+# oracle leaves such a line unanswered (docs/E2C.md Section 4).
+DOUBT = (
+    "verify", "before adding", "before relying", "check whether", "confirm whether", "find out whether",
+    "unverified", "unconfirmed", "not sure", "unclear", "reportedly",
+)
+
+
+@dataclass(frozen=True)
+class Review:
+    """The user reads `rka-memory review` after the session is mined and types
+    a verdict through `rka-memory rkm` on each line the policy decides
+    (docs/E2C.md Section 4). The oracle knows the fixture's requirements: it
+    confirms a claim matching a `confirm` pattern, rejects one matching a
+    `reject` pattern with `reason`, and leaves a claim matching both,
+    neither, or words of doubt. The stamp user confirms every line unread."""
+
+    policy: str
+    confirm: tuple[str, ...] = ()
+    reject: tuple[str, ...] = ()
+    reason: str = "not a requirement"
+
+    def decide(self, claim: str) -> str:
+        """confirm, reject or leave, for a claim as its line states it."""
+        if self.policy == "stamp":
+            return "confirm"
+        text = " ".join(claim.split())
+        if any(d in text.lower() for d in DOUBT):
+            return "leave"
+        true = any(re.search(p, text, re.IGNORECASE) for p in self.confirm)
+        false = any(re.search(p, text, re.IGNORECASE) for p in self.reject)
+        if true != false:
+            return "confirm" if true else "reject"
+        return "leave"
+
+
 FileAction = Write | Remove | Append | Replace | Restore | Clean | Commit | Move
-UserAction = FileAction | Verdict | Typed
+UserAction = FileAction | Verdict | Typed | Review

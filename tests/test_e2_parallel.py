@@ -112,3 +112,25 @@ def test_openai_runs_land_in_a_directory_per_model_and_reasoning_level():
     with pytest.raises(SystemExit, match="needs --model"):
         par.run_suffix("openai", None, "medium")
 
+
+
+def test_every_e2c_job_runs_a_stream_of_its_own_named_as_the_job(tmp_path):
+    from rka_memory.workload.stream import load
+
+    jobs = par.e2_jobs(1, par.E2_FIXTURES, par.E2C_ARMS, tmp_path, "e2c")
+    assert len(jobs) == 9
+    for job in jobs:
+        assert load(par.REPO / job.stream).name == job.name
+
+
+def test_e2c_starts_oracle_then_stamp_then_gated_r1(tmp_path):
+    jobs = [j for s in (1, 2) for j in par.e2_jobs(s, ("calc",), par.E2C_ARMS, tmp_path, "e2c")]
+    ordered = par.longest_first(jobs, "e2c")
+    assert [j.name for j in ordered] == ["e2c-calc-oracle"] * 2 + ["e2c-calc-stamp"] * 2 + ["e2c-calc-gated-r1"] * 2
+
+
+def test_e2c_runs_stamp_on_seed_1_only_unless_asked():
+    assert par.seed_arms("e2c", 1, par.E2C_ARMS, False) == par.E2C_ARMS
+    assert par.seed_arms("e2c", 2, par.E2C_ARMS, False) == ("oracle", "gated-r1")
+    assert par.seed_arms("e2c", 2, ("stamp",), True) == ("stamp",)
+    assert par.seed_arms("e2b", 2, par.E2B_ARMS, False) == par.E2B_ARMS

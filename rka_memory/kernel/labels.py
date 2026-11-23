@@ -39,6 +39,9 @@ threshold support; a counter blocks L2 only when it is the user's own words
 or verdict, and every other counter link is kept as advice; and a record of
 any kind enters a trial, which needs a configured outcome check. Pending
 restrictions do not withhold.
+
+A file claim (E2c's R3: a requirement a project file states) reaches L2 only
+by the user's affirmation; it never meets a threshold or enters a trial.
 """
 
 from __future__ import annotations
@@ -142,10 +145,15 @@ def _affirmations(rec: RecordState, world: World, cfg: Config) -> list[Grounding
     and standing statements of exactly its words. Both the withdrawn set and
     the label read this one list, so they cannot disagree about whether the
     user affirmed the record after withdrawing it."""
-    return [g for g in counted(rec, world, cfg, Polarity.SUPPORT) if affirmation(g) and inside(rec.scope, g)]
+    found = [g for g in counted(rec, world, cfg, Polarity.SUPPORT) if affirmation(g) and inside(rec.scope, g)]
+    if rec.spec.claimed_by is not None:
+        # A file claim is the user's only by a verdict typed on it (docs/E2C.md, R3).
+        found = [g for g in found if g.event.kind in TYPED_AFFIRMATIONS]
+    return found
 
 
 RUNNER_OWNED = frozenset({"citation", "falsifier"})
+TYPED_AFFIRMATIONS = frozenset({Kind.USER_CONFIRM, Kind.USER_AMEND})
 
 
 def _withdrawals(rec: RecordState, world: World, cfg: Config) -> tuple[int, int, str]:
@@ -322,7 +330,7 @@ def _withhold_pending_restrictions(world: World, labels: Labels, held: dict[str,
     pending: dict[str, list[str]] = {}
     for rec in world.records.values():
         lab = labels.by_id[rec.id]
-        if rec.proposed.kind is not Kind.RECORD_PROPOSED or lab.rung is not Rung.L1:
+        if rec.proposed.kind is not Kind.RECORD_PROPOSED or lab.rung is not Rung.L1 or rec.spec.claimed_by is not None:
             continue
         cited = {world.events[e].session_id for e in lab.support}
         for target in rec.spec.refines:
@@ -436,6 +444,10 @@ def _label_one(
         since = min(world.position[g.event.id] for g in affirmations if world.position[g.event.id] > fall)
         if fall < 0 and threshold is not None:
             since = min(since, threshold)
+    elif rec.spec.claimed_by is not None:
+        # A file claim reaches L2 only by the user's word: no check, support
+        # or trial validates what a file asserts (docs/E2C.md, R3).
+        why = "file claim: needs the user's confirm"
     elif threshold is not None:
         l2, since = True, threshold
         why = "the user's check printed its words in two sessions" if attested else "independent grounding in enough distinct sessions"

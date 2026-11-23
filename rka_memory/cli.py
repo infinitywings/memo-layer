@@ -117,6 +117,22 @@ def cmd_rkm(args) -> int:
     return 0
 
 
+def cmd_review(args) -> int:
+    """File claims awaiting the user's verdict (rka_memory/review.py)."""
+    from rka_memory import review
+
+    mem = _memory()
+    if mem.cfg.review_per_session == 0:
+        print("review is off; set review.per_session in the rka-memory config to list file claims", file=sys.stderr)
+        return 0
+    lines = review.take(mem.world(), mem.cfg)
+    if args.json:
+        _print([line.to_json() for line in lines])
+    else:
+        print(review.render(lines))
+    return 0
+
+
 def cmd_impact(args) -> int:
     mem = _memory()
     if args.record_id not in mem.world().records:
@@ -337,6 +353,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("rkm", help="a typed amendment or verdict, e.g. `rka-memory rkm update r_x toolchain=pip new text`")
     s.add_argument("words", nargs="+")
     s.set_defaults(fn=cmd_rkm)
+
+    s = sub.add_parser("review", help="file claims awaiting your confirm or reject; the agent does not see them")
+    s.add_argument("--json", action="store_true", help="print the list as JSON")
+    s.set_defaults(fn=cmd_review)
 
     s = sub.add_parser("impact", help="what rejecting a record would withdraw, withhold and keep; records nothing")
     s.add_argument("record_id")

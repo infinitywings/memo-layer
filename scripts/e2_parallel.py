@@ -13,6 +13,8 @@ Usage:
     .venv/bin/python scripts/e2_parallel.py --seed 2 [--fixtures calc,textkit] [--arms gated] [--jobs 5]
   E2b (docs/E2B.md), arms route, gated and notepad:
     .venv/bin/python scripts/e2_parallel.py --experiment e2b --seed 1 [--arms route] [--fixtures calc]
+  E2c (docs/E2C.md), arms oracle, stamp and gated-r1:
+    .venv/bin/python scripts/e2_parallel.py --experiment e2c --seed 1 --provider openai [--arms oracle] [--fixtures calc]
   Any streams, as path@stream-name:
     .venv/bin/python scripts/e2_parallel.py --out DIR [--jobs 3] workload/scenarios/36-notepad.yaml@notepad ...
   --list prints the jobs and stops: nothing is built or run.
@@ -21,6 +23,7 @@ An E2 job's results land in workload-runs/e2/seed-<n>/e2-<fixture>-<arm>,
 one seed per directory, which is how scripts/e2_analysis.py groups seeds.
 E2b's land in workload-runs/e2b/seed-<n>/e2b-<fixture>-<arm>; its route arm
 runs workload/e2b/<fixture>-route.yaml, the others workload/e2b/<fixture>.yaml.
+E2c's arms each run workload/e2c/<fixture>-<arm>.yaml.
 Each job's log and the runner's own copy stay under <out>/.jobs/<job>/.
 
 --provider openai runs live streams on the user's ChatGPT plan through the
@@ -52,7 +55,10 @@ E2_FIXTURES = ("calc", "textkit", "stockbook")
 E2_ARMS = ("stated", "gated", "notepad")
 # E2b's arms (docs/E2B.md Section 5): the route, and gated and notepad as concurrent controls.
 E2B_ARMS = ("route", "gated", "notepad")
-ARMS = {"e2": E2_ARMS, "e2b": E2B_ARMS}
+# E2c's arms (docs/E2C.md Section 5): the review route with the oracle and the
+# stamp user, and gated v3 with R1 as the concurrent control.
+E2C_ARMS = ("oracle", "stamp", "gated-r1")
+ARMS = {"e2": E2_ARMS, "e2b": E2B_ARMS, "e2c": E2C_ARMS}
 IMAGE_PROJECT = "rka-memory-test"
 STAGGER_SECONDS = 5
 # The notepad arm's sessions ran about twice as long as the others in the
@@ -61,6 +67,7 @@ STAGGER_SECONDS = 5
 LONGEST_FIRST = {
     "e2": {"notepad": 0, "gated": 1, "stated": 2},
     "e2b": {"notepad": 0, "route": 1, "gated": 2},
+    "e2c": {"oracle": 0, "stamp": 1, "gated-r1": 2},
 }
 
 
@@ -86,9 +93,12 @@ def project_name(name: str, tag: str = "") -> str:
 
 
 def stream_file(experiment: str, fixture: str, arm: str) -> str:
-    """The stream an arm runs: E2b's route arm has a stream file of its own."""
+    """The stream an arm runs: E2b's route arm and every E2c arm have a stream
+    file of their own."""
     if experiment == "e2b" and arm == "route":
         return f"workload/e2b/{fixture}-route.yaml"
+    if experiment == "e2c":
+        return f"workload/e2c/{fixture}-{arm}.yaml"
     return f"workload/{experiment}/{fixture}.yaml"
 
 
@@ -104,9 +114,18 @@ def e2_jobs(seed: int, fixtures: tuple[str, ...], arms: tuple[str, ...], root: P
     ]
 
 
+def seed_arms(experiment: str, seed: int, arms: tuple[str, ...], chosen: bool) -> tuple[str, ...]:
+    """The arms a seed runs. E2c's stamp arm measures a bound and runs on seed
+    1 only (docs/E2C.md Section 5), unless --arms names it."""
+    if experiment == "e2c" and seed != 1 and not chosen:
+        return tuple(a for a in arms if a != "stamp")
+    return arms
+
+
 def longest_first(jobs: list[Job], experiment: str) -> list[Job]:
     order = LONGEST_FIRST[experiment]
-    return sorted(jobs, key=lambda j: order.get(j.name.rsplit("-", 1)[-1], len(order)))
+    # A job is named <experiment>-<fixture>-<arm>, and an arm may hold a dash.
+    return sorted(jobs, key=lambda j: order.get(j.name.split("-", 2)[-1], len(order)))
 
 
 def spec_jobs(specs: list[str], out: Path) -> list[Job]:
@@ -206,7 +225,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--experiment", choices=sorted(ARMS), default="e2", help="whose streams --seed runs (default e2)")
     ap.add_argument("--seed", type=int, action="append", help="run seed N of every fixture and arm (repeatable)")
     ap.add_argument("--fixtures", default=",".join(E2_FIXTURES))
-    ap.add_argument("--arms", help="default: stated,gated,notepad for e2; route,gated,notepad for e2b")
+    ap.add_argument("--arms", help="default: stated,gated,notepad for e2; route,gated,notepad for e2b; oracle,stamp,gated-r1 for e2c")
     ap.add_argument("--out", type=Path, help="where finished arm directories go (default workload-runs/<experiment>/seed-N)")
     ap.add_argument("--jobs", type=int, default=5, help="runs at once")
     ap.add_argument("--no-build", action="store_true")
@@ -226,7 +245,11 @@ def main(argv: list[str]) -> int:
         root = (args.out or REPO / "workload-runs" / f"{args.experiment}{suffix}").resolve()
         arms = tuple(args.arms.split(",")) if args.arms else ARMS[args.experiment]
         fixtures = tuple(args.fixtures.split(","))
-        jobs = longest_first([j for s in args.seed for j in e2_jobs(s, fixtures, arms, root, args.experiment, "oa-" if suffix else "")], args.experiment)
+        jobs = longest_first(
+            [j for s in args.seed for j in e2_jobs(s, fixtures, seed_arms(args.experiment, s, arms, bool(args.arms)), root,
+                                                   args.experiment, "oa-" if suffix else "")],
+            args.experiment,
+        )
     else:
         if args.out is None:
             raise SystemExit("path@stream-name jobs need --out")

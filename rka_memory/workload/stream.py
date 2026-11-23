@@ -24,8 +24,10 @@ from rka_memory.workload.actions import (
     FileAction,
     Move,
     Remove,
+    REVIEW_POLICIES,
     Replace,
     Restore,
+    Review,
     Typed,
     UserAction,
     Verdict,
@@ -35,9 +37,9 @@ from rka_memory.workload.checks import CHECKS, Expect
 
 OFFSET = re.compile(r"\+?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?")
 RUNNER_OWNED_CONFIG = frozenset({"ledger", "core", "miner", "hooks", "skills"})
-# Under `miner`, what the miner reads is the stream's to set (E2b's R1,
-# docs/E2B.md); which model mines stays the runner's.
-STREAM_MINER_CONFIG = frozenset({"payload_chars"})
+# Under `miner`, what the miner reads and whether it lists file claims are
+# the stream's to set (E2b's R1, E2c's R3); which model mines stays the runner's.
+STREAM_MINER_CONFIG = frozenset({"payload_chars", "file_claims"})
 # A live model's output is not known in advance, so a live stream cannot
 # script the agent or the miner, name records by content, or assert on them.
 MODELS = ("scripted", "live")
@@ -181,8 +183,30 @@ def _typed(value: Any, where: str) -> Typed:
     return Typed(op, _str(d["record"], where), text, when, d.get("from_session"))
 
 
+def _review(value: Any, where: str) -> Review:
+    d = _keys(value, where, {"policy"}, {"confirm", "reject", "reason"})
+    policy = d["policy"]
+    if policy not in REVIEW_POLICIES:
+        raise StreamError(f"{where}: review policy must be one of {list(REVIEW_POLICIES)}")
+    patterns = {k: tuple(_str(x, f"{where}.{k}") for x in _list(d.get(k), f"{where}.{k}")) for k in ("confirm", "reject")}
+    if policy == "oracle" and not (patterns["confirm"] and patterns["reject"]):
+        raise StreamError(f"{where}: the oracle needs `confirm` and `reject` patterns for the fixture's true and false claims")
+    if policy == "stamp" and (patterns["confirm"] or patterns["reject"]):
+        raise StreamError(f"{where}: the stamp user reads no line, so it takes no patterns")
+    for k, found in patterns.items():
+        for x in found:
+            try:
+                re.compile(x)
+            except re.error as exc:
+                raise StreamError(f"{where}.{k}: {x!r} is not a regular expression: {exc}") from None
+    reason = _str(d.get("reason") or Review.reason, f"{where}.reason")
+    return Review(policy, patterns["confirm"], patterns["reject"], reason)
+
+
 def _user_action(raw: Any, where: str) -> UserAction:
-    key, value = _single(raw, where, FILE_ACTIONS | {"confirm", "reject", "rkm"})
+    key, value = _single(raw, where, FILE_ACTIONS | {"confirm", "reject", "rkm", "review"})
+    if key == "review":
+        return _review(value, where)
     if key == "confirm":
         return Verdict(True, _str(value, where))
     if key == "reject":
@@ -238,7 +262,7 @@ RULE_KINDS = ("preference", "constraint")
 REQUEST_CHECKS = frozenset({"model_saw", "model_never_saw", "in_prompt", "skill_offered"})
 CANDIDATE_KEYS = {
     "broaden", "evidence", "falsifier", "confidence", "steps", "acceptance_check", "depends_on", "about", "supersedes",
-    "refines", "implements", "alternatives", "reason", "cites",
+    "refines", "implements", "alternatives", "reason", "cites", "claimed_by",
 }
 
 
@@ -252,6 +276,8 @@ def _candidate(raw: Any, where: str) -> dict[str, Any]:
     depends_on = [_str(x, f"{where}.depends_on") for x in _list(c.get("depends_on"), where)]
     for i, cite in enumerate(_list(c.get("cites"), where)):
         _keys(cite, f"{where}.cites[{i}]", {"path", "quote"}, {"absent"})
+    if "claimed_by" in c:
+        _keys(c["claimed_by"], f"{where}.claimed_by", {"path", "quote"})
     return {**c, "evidence": evidence, "depends_on": depends_on}
 
 

@@ -42,6 +42,8 @@ from rka_memory.kernel import trials  # noqa: E402
 from rka_memory.world import World, project  # noqa: E402
 
 ARMS = ("stated", "gated", "notepad")
+# Arms that run the gated packet, whose trials are read.
+GATED_ARMS = ("gated", "route", "oracle", "stamp", "gated-r1")
 MEASURED = range(4, 21)
 HANDOFF_SESSIONS = range(1, 4)
 OBSERVERS = {"U": "U followed", "T_X": "T_X met", "T_A": "T_A met", "F_A": "F_A followed"}
@@ -135,10 +137,10 @@ def _notes_by_session(arm_dir: Path, order: list[str | None]) -> dict[str, str]:
 
 def summarize(arm_dir: Path) -> Run:
     manifest = json.loads((arm_dir / "manifest.json").read_text())
-    # e2-<fixture>-<arm> or e2b-<fixture>-<arm>; E2b's route arm runs the
-    # gated packet with the route's flags.
-    experiment, rest = manifest["stream"].split("-", 1)
-    fixture, arm = rest.rsplit("-", 1)
+    # <experiment>-<fixture>-<arm>, where an arm may hold a dash (E2c's
+    # gated-r1). E2b's route arm and E2c's arms run the gated packet with
+    # their own flags.
+    experiment, fixture, arm = manifest["stream"].split("-", 2)
     rows = json.loads((arm_dir / "report.json").read_text())["sessions"]
     events = _events(arm_dir)
     world = project(events)
@@ -171,7 +173,7 @@ def summarize(arm_dir: Path) -> Run:
         for s in sessions:
             ids = {rid for d in world.deliveries if d.event.session_id == s.session_id for rid in d.record_ids}
             s.memory = "\n".join(world.records[r].spec.content for r in sorted(ids) if r in world.records)
-    if arm in ("gated", "route"):
+    if arm in GATED_ARMS:
         _gated(run, world, arm_dir)
     return run
 

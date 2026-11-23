@@ -1,0 +1,90 @@
+name: file-claim-confirm
+description: >-
+  E2c's route (docs/E2C.md Section 3), end to end with the scripted model. The
+  agent reads HANDOFF.md, which states a true requirement (T_A) and a false
+  one (F_A). With miner.file_claims on, the miner lists each as a file claim
+  quoting the file. Neither enters a trial, though trials.entry is open and an
+  outcome check is configured, and no packet holds either. After s1 is mined
+  the oracle user reads `rka-memory review`, confirms T_A and rejects F_A
+  through `rka-memory rkm`. In s2 HANDOFF.md is gone; T_A stays L2 and is
+  delivered with the clause that the user confirmed it, and F_A never reaches
+  the agent.
+start: 2027-05-03T12:00:00+00:00
+project: calc-uv
+fresh_project: true
+config:
+  miner: {payload_chars: 2000, file_claims: true}
+  review: {per_session: 3}
+  trials: {entry: open}
+  checks:
+    outcome:
+      command:
+        - "{python}"
+        - "-c"
+        - |
+          import sys
+          import calc
+          try:
+              calc.multiply(True, 2)
+          except TypeError:
+              print("acceptance check passed")
+              sys.exit(0)
+          print("acceptance check failed")
+          sys.exit(1)
+sessions:
+  - at: +0d
+    prompt: Add a multiply(a, b) function to calc.py, with a test. The previous maintainer left notes in HANDOFF.md.
+    drift:
+      - write:
+          path: HANDOFF.md
+          content: |
+            # Handoff
+
+            - Every calc function must raise TypeError when it is given a bool where a number
+              belongs.
+            - Round every float a calc function returns to two decimal places with round(result, 2).
+    agent:
+      - bash: cat HANDOFF.md
+      - edit: {path: calc.py, old: "def subtract", new: "def multiply(a, b):\n    return a * b\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Every calc function must raise TypeError when it is given a bool where a number belongs
+          kind: constraint
+          evidence: [{kind: tool_result}]
+          claimed_by: {path: HANDOFF.md, quote: "Every calc function must raise TypeError when it is given a bool where a number belongs."}
+        - content: Round every float a calc function returns to two decimal places with round(result, 2)
+          kind: constraint
+          evidence: [{kind: tool_result}]
+          claimed_by: {path: HANDOFF.md, quote: "Round every float a calc function returns to two decimal places with round(result, 2)."}
+    user:
+      - review:
+          policy: oracle
+          confirm: ["TypeError.*\\bbool", "\\bbool.*TypeError"]
+          reject: ["two decimal places", "round\\(result, 2\\)"]
+    expect:
+      - {outcome_check: false}
+      - {events: {kind: trial, count: 0}}
+      - {record: "Every calc function must raise TypeError when it is given a bool where a number belongs", rung: L2}
+      - {record: "Round every float a calc function returns to two decimal places with round(result, 2)", rung: L4}
+      - {record: "Every calc function must raise TypeError when it is given a bool where a number belongs", delivered: false}
+      - {events: {kind: user_confirm, count: 1}}
+      - {events: {kind: user_reject, count: 1}}
+
+  - at: +1d
+    prompt: Add a ratio(a, b) function to calc.py, with a test.
+    agent:
+      - told:
+          text: Every calc function must raise TypeError when it is given a bool
+          then:
+            - edit: {path: calc.py, old: "def subtract", new: "def ratio(a, b):\n    if isinstance(a, bool) or isinstance(b, bool):\n        raise TypeError(\"bool is not a number\")\n    return a / b\n\n\ndef subtract"}
+          else:
+            - edit: {path: calc.py, old: "def subtract", new: "def ratio(a, b):\n    return a / b\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: "Every calc function must raise TypeError when it is given a bool where a number belongs", rung: L2}
+      - {record: "Every calc function must raise TypeError when it is given a bool where a number belongs", delivered: true}
+      - {model_saw: "Every calc function must raise TypeError when it is given a bool where a number belongs (Source: the user confirmed it.)"}
+      - {model_never_saw: "two decimal places"}
+      - {events: {kind: trial, count: 0}}
+      - {file_contains: {path: "{project}/calc.py", text: "raise TypeError"}}

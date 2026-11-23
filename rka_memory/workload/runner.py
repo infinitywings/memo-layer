@@ -30,13 +30,13 @@ import yaml
 
 import rka_memory
 from rka_memory import config as config_mod
-from rka_memory import graph, notepad
+from rka_memory import graph, notepad, review
 from rka_memory.domain import Actor, Event, Kind, clock_file_now
 from rka_memory.ledger.jsonl import JsonlLedger
 from rka_memory.miner import miner
 from rka_memory.service import Memory
 from rka_memory.workload import files, report
-from rka_memory.workload.actions import Clean
+from rka_memory.workload.actions import Clean, Review
 from rka_memory.workload.checks import Observed, evaluate, find_record
 from rka_memory.workload.live import LiveRoute, live_route
 from rka_memory.workload.stream import Session, Stream, Typed, Verdict, load_all
@@ -597,6 +597,37 @@ class StreamRun:
         recorded = sum(1 for e in self.world().events.values() if e.kind is Kind.USER_AMEND) - before
         self.check(s.label, f"{name} recorded as {len(prompts)} user_amend", bool(prompts) and recorded == len(prompts), f"{recorded} events")
 
+    def _review(self, s: Session, n: int, action: Review) -> None:
+        """The user reads the review list and types a verdict on each line the
+        policy decides, through `rka-memory rkm`: the user's own shell, not a
+        dsh prompt, which would open a session with a packet of its own
+        (docs/E2C.md Section 4). Each line and its decision is logged."""
+        p = self.paths
+        # The image's RKA_MEMORY_DIR names the stack's ledger, not this run's.
+        cfg = replace(config_mod.load(path=p.config), ledger_dir=p.ledger_dir)
+        name = f"review {n} ({action.policy})"
+        if cfg.review_per_session < 1:
+            self.check(s.label, name, False, "review.per_session is 0, so the list is off")
+            return
+        lines = review.take(self.world(), cfg, clock_file_now(p.clock))
+        failed = []
+        with (p.logs / "review.jsonl").open("a", encoding="utf-8") as log:
+            for line in lines:
+                decision = action.decide(line.content)
+                typed = None
+                if decision != "leave":
+                    words = ["rkm", decision, line.record_id] + ([action.reason] if decision == "reject" else [])
+                    out = subprocess.run([str(rka_bin()), *words], env=self._env(), capture_output=True, text=True, check=False)
+                    kind = Kind.USER_CONFIRM if decision == "confirm" else Kind.USER_REJECT
+                    recorded = [e for e in self.world().events.values() if e.kind is kind and e.payload.get("record_id") == line.record_id]
+                    typed = out.returncode == 0 and len(recorded) == 1
+                    if not typed:
+                        failed.append(f"{' '.join(words)}: exit {out.returncode}, {len(recorded)} events, {out.stderr.strip()[-200:]}")
+                entry = {"session": s.label, "policy": action.policy, **line.to_json(), "decision": decision, "typed": typed}
+                log.write(json.dumps(entry) + "\n")
+        listed = ", ".join(f"{line.record_id} {action.decide(line.content)}" for line in lines) or "nothing listed"
+        self.check(s.label, f"{name}: every verdict recorded", not failed, failed[:3] or listed)
+
     def _session(self, s: Session, mock: MockModel | LiveModel) -> None:
         p = self.paths
         self._set_clock(self.stream.start + s.at)
@@ -654,6 +685,9 @@ class StreamRun:
             elif isinstance(action, Typed):
                 verdicts += 1
                 self._typed(s, verdicts, action, mock)
+            elif isinstance(action, Review):
+                verdicts += 1
+                self._review(s, verdicts, action)
             else:
                 files.apply(action, p.project, self.before, self.confine)
         new_errors = self._hook_errors()[len(errors):]

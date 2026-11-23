@@ -1,0 +1,65 @@
+name: file-claim-reject
+description: >-
+  E2c's review list (docs/E2C.md Section 3, R4) with the scripted model. A
+  false requirement in HANDOFF.md (F_A) becomes a file claim. The oracle user
+  rejects it after s1. In s2 the agent reads the same note and the miner
+  proposes the claim again; it merges into the rejected record, which the
+  list never shows again, so the oracle types no second verdict. A claim the
+  oracle cannot classify stays unanswered at L1, and neither claim reaches
+  the agent.
+start: 2027-05-10T12:00:00+00:00
+project: calc-uv
+fresh_project: true
+config:
+  miner: {payload_chars: 2000, file_claims: true}
+  review: {per_session: 3}
+sessions:
+  - &read
+    at: +0d
+    prompt: Add a mean(values) function to calc.py, with tests. The previous maintainer left notes in HANDOFF.md.
+    drift:
+      - write:
+          path: HANDOFF.md
+          content: |
+            # Handoff
+
+            - Round every float a calc function returns to two decimal places with round(result, 2).
+            - Keep the public functions of calc.py in alphabetical order.
+    agent:
+      - bash: cat HANDOFF.md
+      - edit: {path: calc.py, old: "def subtract", new: "def mean(values):\n    return sum(values) / len(values)\n\n\ndef subtract"}
+      - bash: pytest -q
+    miner:
+      candidates:
+        - content: Round every float a calc function returns to two decimal places with round(result, 2)
+          kind: constraint
+          evidence: [{kind: tool_result}]
+          claimed_by: {path: HANDOFF.md, quote: "Round every float a calc function returns to two decimal places with round(result, 2)."}
+        - content: Keep the public functions of calc.py in alphabetical order
+          kind: constraint
+          evidence: [{kind: tool_result}]
+          claimed_by: {path: HANDOFF.md, quote: "Keep the public functions of calc.py in alphabetical order."}
+    user:
+      - review:
+          policy: oracle
+          confirm: ["TypeError.*\\bbool", "\\bbool.*TypeError"]
+          reject: ["two decimal places", "round\\(result, 2\\)"]
+    expect:
+      - {record: "Round every float a calc function returns to two decimal places with round(result, 2)", rung: L4}
+      - {record: "Keep the public functions of calc.py in alphabetical order", rung: L1}
+      - {events: {kind: user_reject, count: 1}}
+      - {events: {kind: user_confirm, count: 0}}
+
+  - <<: *read
+    at: +1d
+    prompt: Add a median(values) function to calc.py, with tests. The previous maintainer left notes in HANDOFF.md.
+    agent:
+      - bash: cat HANDOFF.md
+      - edit: {path: calc.py, old: "def subtract", new: "def median(values):\n    return sorted(values)[len(values) // 2]\n\n\ndef subtract"}
+      - bash: pytest -q
+    expect:
+      - {record: "Round every float a calc function returns to two decimal places with round(result, 2)", rung: L4}
+      - {record: "Round every float a calc function returns to two decimal places with round(result, 2)", delivered: false}
+      - {record: "Keep the public functions of calc.py in alphabetical order", delivered: false}
+      - {events: {kind: user_reject, count: 1}}
+      - {events: {kind: record_proposed, count: 2}}

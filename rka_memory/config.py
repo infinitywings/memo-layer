@@ -147,6 +147,11 @@ class Config:
     # Characters of each event's payload a miner prompt line shows (E2b's
     # R1, docs/E2B.md: 2,000 lets the miner read what the agent read).
     miner_payload_chars: int = 240
+    # E2c's R3 (docs/E2C.md): the miner also lists the requirements project
+    # files state that nobody has confirmed, as file claims.
+    miner_file_claims: bool = False
+    # E2c's R4: file claims `rka-memory review` lists at a time; 0 is off.
+    review_per_session: int = 0
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
 
     def weight(self, kind: Kind) -> float:
@@ -274,6 +279,12 @@ def _trials(raw: dict[str, Any]) -> TrialConfig:
     return t
 
 
+def _per_session(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"review.per_session must be a whole number from 0, got {value!r}")
+    return value
+
+
 VALIDATIONS = frozenset({"attested", "threshold"})
 
 
@@ -335,5 +346,7 @@ def from_dict(raw: dict[str, Any]) -> Config:
         outcome=_outcome(raw.get("checks", {}).get("outcome") or {}),
         notepad=_notepad(raw.get("notepad") or {}),
         miner_payload_chars=int(raw["miner"].get("payload_chars", 240)),
+        miner_file_claims=_flag(raw["miner"].get("file_claims", False), "miner.file_claims"),
+        review_per_session=_per_session((raw.get("review") or {}).get("per_session", 0)),
         raw=raw,
     )

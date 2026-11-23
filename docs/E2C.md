@@ -247,3 +247,52 @@ registration. It found these errors, now fixed above:
   it.)", not as the user's own words. Q2 and Q6 no longer compare with U.
 - **R1.** E2b's gated runs ran without R1, so the control is now gated-R1.
 - **Stop hook.** dsh has none. The product surface is `rka-memory review`.
+
+## 11. Stage 0 as built
+
+Stage 0 follows Sections 3 and 4. Where the design left a choice open,
+the build made these.
+
+- **R3, the claim check.** `claimed_by` is kept only when
+  `miner.file_claims` is on. Its quote must have at least 3 words and
+  appear in a tool result of the mined session. The check ignores line
+  numbers a file reader puts in front of each line and collapses
+  whitespace, so a quote that runs across lines matches.
+- **R3, the kinds.** A file claim is a constraint, preference or
+  procedure. A fact or a decision with `claimed_by` is dropped.
+- **R3, dedup.** A file claim merges only into a file claim, and no other
+  candidate merges into one. An ordinary lesson that restates T_A stays an
+  ordinary record, as in gated-R1.
+- **R3, the gate.** A file claim reaches L2 only by a typed confirm or
+  amendment. A standing statement of its exact words, which validates
+  other records, does not count for it. A file claim never withholds
+  another record as a pending qualification.
+- **R3, the packets.** The gate rule keeps a file claim at L1 until then.
+  The ungated and sourced arms also leave file claims out of their
+  unvalidated tail.
+- **R4, the log.** What was listed is kept in `review.jsonl` beside the
+  ledger. It is no evidence and no part of any packet. After the
+  never-listed claims, the list takes those listed fewest times, oldest
+  first.
+- **The oracle.** It reads the claim's wording, which is what a confirm
+  delivers, and not the quoted file words. Its patterns are
+  `ORACLE_PATTERNS` in `scripts/e2_streams.py`. The words of doubt are in
+  `rka_memory/workload/actions.py`. The runner logs each listed line, its
+  decision and whether the verdict was recorded to `logs/review.jsonl`.
+- **Streams.** `scripts/e2_streams.py --e2c` writes
+  `workload/e2c/<fixture>-{oracle,stamp,gated-r1}.yaml`. Each is E2b's
+  stream and check (asserted). `scripts/e2_parallel.py --experiment e2c`
+  runs them, the stamp arm on seed 1 only unless `--arms` names it.
+- **Analysis.** `scripts/e2c_analysis.py` refuses a set of runs that mixes
+  providers, models or levels. It estimates precision with the analysis's
+  item patterns, and `--lines` prints every listed line to read.
+
+**Verification.** The unit suite passes (529 tests). Scenarios
+`38-file-claim-confirm` (30 of 30 checks) and `39-file-claim-reject` (27 of
+27) pass through real dsh with the scripted model. In 38, T_A is delivered
+in s2 with "(Source: the user confirmed it.)" after HANDOFF.md is gone, and
+no trial coin is logged although trials are open. A read-only review of the
+diff found no path by which an unconfirmed file claim reaches the agent. It
+found the standing-statement path and the withholding path above, both now
+closed. With both flags off, the miner prompt and the E2 and E2b streams are
+unchanged.

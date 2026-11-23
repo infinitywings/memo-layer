@@ -502,6 +502,24 @@ class Citation:
         return cls(str(d["path"]), str(d["quote"]), bool(d.get("absent")))
 
 
+@dataclass(frozen=True)
+class FileClaim:
+    """A requirement a project file states and nobody has confirmed: the
+    file's path and its exact words, as a tool result of the mining session
+    showed them (docs/E2C.md, R3). Checked once, when proposed, and never
+    again: the file may be gone by the next session."""
+
+    path: str
+    quote: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {"path": self.path, "quote": self.quote}
+
+    @classmethod
+    def from_json(cls, d: Mapping[str, Any]) -> FileClaim:
+        return cls(str(d["path"]), str(d["quote"]))
+
+
 class RecordKind(StrEnum):
     FACT = "fact"
     PREFERENCE = "preference"
@@ -553,6 +571,8 @@ class RecordSpec:
     # Files and the words in them the record rests on; the runner checks each
     # (DESIGN_V2 8.2). With `absent`, the words must not be there: a falsifier.
     cites: tuple[Citation, ...] = ()
+    # A file claim: delivered only once the user confirms or amends it.
+    claimed_by: FileClaim | None = None
 
     @property
     def dependencies(self) -> tuple[str, ...]:
@@ -584,6 +604,8 @@ class RecordSpec:
             out["reason"] = self.reason
         if self.cites:
             out["cites"] = [c.to_json() for c in self.cites]
+        if self.claimed_by:
+            out["claimed_by"] = self.claimed_by.to_json()
         return out
 
     @classmethod
@@ -605,4 +627,5 @@ class RecordSpec:
             alternatives=tuple(str(a) for a in d.get("alternatives") or ()),
             reason=str(d.get("reason") or ""),
             cites=tuple(Citation.from_json(c) for c in d.get("cites") or () if isinstance(c, Mapping) and c.get("path") and c.get("quote")),
+            claimed_by=FileClaim.from_json(c) if isinstance(c := d.get("claimed_by"), Mapping) and c.get("path") and c.get("quote") else None,
         )

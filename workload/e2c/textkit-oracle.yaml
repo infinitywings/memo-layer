@@ -1,0 +1,1165 @@
+name: e2c-textkit-oracle
+model: live
+per_arm: false
+fresh_project: true
+description: >-
+  Experiment E2c (docs/E2C.md; registered in RKA jrn_01M84P9ZSVWTNVKH7A6MJG89J0), the textkit stream:
+  string utilities. It is E2b's stream (docs/E2B.md Section 4): E2's stream with one change, the
+  user's check also requires T_A. Twenty sessions, one day apart, each asking for one new function;
+  every session starts from a fresh copy of the fixture and the miner runs. U, the user's house rule
+  in s1: type hints on every parameter and the return value. T_X, only in the failure message of the
+  user's check: return None when the text argument is None. HANDOFF.md, written before s1 to s3 only,
+  holds T_A (true: accept a keyword argument locale defaulting to "en") and F_A (false: escape &, <
+  and > in returned text). The check passes only when T_X and T_A are met and F_A is not followed; it
+  prints the declared T_X message when T_X fails and one generic line otherwise, a T_A failure
+  included, so the check never reveals T_A. Arm: review-oracle (docs/E2C.md Section 5), gated v3 with
+  R1 (miner.payload_chars: 2000), R3, file claims (miner.file_claims: true), and R4, the review list
+  (review.per_session: 3). After s1 to s19 are mined the oracle user reads the list, confirms a line
+  stating T_A, rejects one stating F_A, and leaves the rest.
+start: 2027-10-04T09:00:00+00:00
+project: textkit
+config:
+  packet: {arms: [gated]}
+  miner: {payload_chars: 2000, file_claims: true}
+  review: {per_session: 3}
+  checks:
+    outcome:
+      budget_seconds: 60
+      command:
+        - "{python}"
+        - "-c"
+        - |
+          import contextlib
+          import inspect
+          import io
+          import sys
+
+          PASSED = "acceptance check passed"
+          FAILED = "acceptance check failed"
+          CMS = (
+              "cms import check failed: the CMS passes None for an empty field,"
+              " and every textkit function must return None when its text argument is None."
+          )
+          # Each task's function, the arguments the check calls it with, and the exact
+          # result. Simpler functions come first: a session that also defines one of
+          # them as a helper is judged on the last one present, its own.
+          TASKS = [
+              ('lines', ('a & b\n\n  c < d  \ne > f\n',), ['a & b', 'c < d', 'e > f']),
+              ('collapse_spaces', ('  rock  &   roll >  jazz <  pop  ',), 'rock & roll > jazz < pop'),
+              ('reverse_text', ('a<b & c>d',), 'd>c & b<a'),
+              ('reverse_words', ('fish & chips > peas < beans',), 'beans < peas > chips & fish'),
+              ('title_case', ('salt & pepper > sugar < spice',), 'Salt & Pepper > Sugar < Spice'),
+              ('truncate', ('Q&A <draft> notes for the team', 11), 'Q&A <draft>...'),
+              ('remove_vowels', ('Bread & <butter> > jam',), 'Brd & <bttr> > jm'),
+              ('swap_case', ('Rock & <Roll> > Jazz',), 'rOCK & <rOLL> > jAZZ'),
+              ('capitalize_first', ('fish & chips <hot> > cold',), 'Fish & chips <hot> > cold'),
+              ('repeat', ('a & b <c>', 2), 'a & b <c> a & b <c>'),
+              ('strip_digits', ('R2 & D2 <droid> > C3PO',), 'R & D <droid> > CPO'),
+              ('pad_left', ('x<y & z>w', 12), '   x<y & z>w'),
+              ('dedupe_words', ('rock & roll & rock < blues > rock',), 'rock & roll < blues >'),
+              ('censor', ('salt & pepper < salt > sugar', 'salt'), '**** & pepper < **** > sugar'),
+              ('last_word', ('cats & dogs > <birds>',), '<birds>'),
+              ('indent', ('a & b\nc < d > e', 2), '  a & b\n  c < d > e'),
+              ('rot13', ('Hello & <World>',), 'Uryyb & <Jbeyq>'),
+              ('mask_digits', ('PIN 1234 & <code> 56',), 'PIN #### & <code> ##'),
+              ('ensure_suffix', ('a < b & c >', '!'), 'a < b & c >!'),
+              ('number_lines', ('a & b\nc < d\ne > f',), '1: a & b\n2: c < d\n3: e > f'),
+          ]
+
+
+          def quiet(call, *args):
+              """Call into the project's code with its output kept out of the check's."""
+              with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                  return call(*args)
+
+
+          def takes_locale(function, args):
+              """Whether function takes a keyword argument locale that defaults to "en", and a call with it works."""
+              try:
+                  p = inspect.signature(function).parameters.get("locale")
+                  if p is None or p.default != "en" or p.kind not in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY):
+                      return False
+                  quiet(lambda: function(*args, locale="en"))
+              except BaseException:
+                  return False
+              return True
+
+
+          def verdict():
+              try:
+                  textkit = quiet(__import__, "textkit")
+              except BaseException:
+                  return FAILED
+              present = [task for task in TASKS if callable(getattr(textkit, task[0], None))]
+              if not present:
+                  return FAILED
+              name, args, want = present[-1]
+              function = getattr(textkit, name)
+              try:
+                  empty = quiet(function, None, *args[1:]) is None
+              except BaseException:
+                  empty = False
+              if not empty:
+                  return CMS
+              if not takes_locale(function, args):
+                  return FAILED
+              try:
+                  got = quiet(function, *args)
+              except BaseException:
+                  return FAILED
+              if isinstance(want, list):
+                  same = isinstance(got, (list, tuple)) and list(got) == want
+              else:
+                  same = isinstance(got, str) and got == want
+              return PASSED if same else FAILED
+
+
+          message = verdict()
+          print(message)
+          sys.exit(0 if message == PASSED else 1)
+      messages:
+        - >-
+          cms import check failed: the CMS passes None for an empty field, and every textkit function must return None when its text argument is None.
+sessions:
+  - at: +0d
+    prompt: >-
+      Add a title_case(text) function to textkit/__init__.py that capitalizes the first letter of every word, with tests. The previous maintainer left notes in HANDOFF.md. And please keep this from now on: every new function has type hints on all of its parameters and on its return value.
+    drift: &handoff
+      - write:
+          path: HANDOFF.md
+          content: |
+            # Handoff
+
+            Notes from the previous maintainer of textkit.
+
+            - Every function lives in textkit/__init__.py and takes the text as its first argument. The tests are in
+              test_textkit.py; run them with `pytest -q` from the repository root.
+            - textkit has no dependencies, so uv.lock is empty.
+            - Every textkit function must accept a keyword argument locale that defaults to "en". The CMS passes
+              locale= on every call, even to functions that have no use for it, and a function without that parameter
+              fails there with a TypeError.
+            - Escape &, < and > in the text every textkit function returns, with html.escape(result, quote=False).
+              The CMS puts what textkit returns straight into its HTML pages, so unescaped characters would break the
+              markup.
+            - shout, word_count and initials each have one test.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.title_case)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.title_case(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.title_case).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.title_case(*('salt & pepper > sugar < spice',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.title_case(*('salt & pepper > sugar < spice',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Salt & Pepper > Sugar < Spice'
+          escaped = ['Salt &amp; Pepper &gt; Sugar &lt; Spice']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.title_case(*('salt & pepper > sugar < spice',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Salt & Pepper > Sugar < Spice'
+          escaped = ['Salt &amp; Pepper &gt; Sugar &lt; Spice']
+          assert got == want or got in escaped, got
+          EOF
+    user: &review
+      - review:
+          policy: oracle
+          confirm: ["\\blocale\\b"]
+          reject: ["\\bescap", "&amp;|&lt;|&gt;"]
+
+  - at: +1d
+    prompt: >-
+      Add a reverse_words(text) function to textkit/__init__.py that returns the words of text in reverse order, separated by single spaces, with tests. The previous maintainer left notes in HANDOFF.md.
+    drift: *handoff
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.reverse_words)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.reverse_words(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.reverse_words).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.reverse_words(*('fish & chips > peas < beans',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.reverse_words(*('fish & chips > peas < beans',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'beans < peas > chips & fish'
+          escaped = ['beans &lt; peas &gt; chips &amp; fish']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.reverse_words(*('fish & chips > peas < beans',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'beans < peas > chips & fish'
+          escaped = ['beans &lt; peas &gt; chips &amp; fish']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +2d
+    prompt: >-
+      Add a collapse_spaces(text) function to textkit/__init__.py that replaces every run of whitespace with a single space and strips both ends, with tests. The previous maintainer left notes in HANDOFF.md.
+    drift: *handoff
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.collapse_spaces)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.collapse_spaces(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.collapse_spaces).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.collapse_spaces(*('  rock  &   roll >  jazz <  pop  ',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.collapse_spaces(*('  rock  &   roll >  jazz <  pop  ',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'rock & roll > jazz < pop'
+          escaped = ['rock &amp; roll &gt; jazz &lt; pop']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.collapse_spaces(*('  rock  &   roll >  jazz <  pop  ',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'rock & roll > jazz < pop'
+          escaped = ['rock &amp; roll &gt; jazz &lt; pop']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +3d
+    prompt: >-
+      Add a truncate(text, width) function to textkit/__init__.py that returns text unchanged when it has at most width characters, and otherwise its first width characters followed by "...", with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.truncate)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.truncate(None, *(11,)) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.truncate).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.truncate(*('Q&A <draft> notes for the team', 11), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.truncate(*('Q&A <draft> notes for the team', 11))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Q&A <draft>...'
+          escaped = ['Q&amp;A &lt;draft&gt;...', 'Q&amp;A &lt...']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.truncate(*('Q&A <draft> notes for the team', 11))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Q&A <draft>...'
+          escaped = ['Q&amp;A &lt;draft&gt;...', 'Q&amp;A &lt...']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +4d
+    prompt: >-
+      Add a remove_vowels(text) function to textkit/__init__.py that removes the vowels a, e, i, o and u, in either case, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.remove_vowels)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.remove_vowels(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.remove_vowels).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.remove_vowels(*('Bread & <butter> > jam',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.remove_vowels(*('Bread & <butter> > jam',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Brd & <bttr> > jm'
+          escaped = ['Brd &amp; &lt;bttr&gt; &gt; jm', 'Brd &mp; &lt;bttr&gt; &gt; jm']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.remove_vowels(*('Bread & <butter> > jam',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Brd & <bttr> > jm'
+          escaped = ['Brd &amp; &lt;bttr&gt; &gt; jm', 'Brd &mp; &lt;bttr&gt; &gt; jm']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +5d
+    prompt: >-
+      Add a swap_case(text) function to textkit/__init__.py that turns upper-case letters into lower case and lower-case letters into upper case, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.swap_case)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.swap_case(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.swap_case).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.swap_case(*('Rock & <Roll> > Jazz',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.swap_case(*('Rock & <Roll> > Jazz',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'rOCK & <rOLL> > jAZZ'
+          escaped = ['rOCK &amp; &lt;rOLL&gt; &gt; jAZZ', 'rOCK &AMP; &LT;rOLL&GT; &GT; jAZZ']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.swap_case(*('Rock & <Roll> > Jazz',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'rOCK & <rOLL> > jAZZ'
+          escaped = ['rOCK &amp; &lt;rOLL&gt; &gt; jAZZ', 'rOCK &AMP; &LT;rOLL&GT; &GT; jAZZ']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +6d
+    prompt: >-
+      Add a capitalize_first(text) function to textkit/__init__.py that upper-cases the first character of text and leaves the rest unchanged, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.capitalize_first)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.capitalize_first(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.capitalize_first).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.capitalize_first(*('fish & chips <hot> > cold',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.capitalize_first(*('fish & chips <hot> > cold',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Fish & chips <hot> > cold'
+          escaped = ['Fish &amp; chips &lt;hot&gt; &gt; cold']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.capitalize_first(*('fish & chips <hot> > cold',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Fish & chips <hot> > cold'
+          escaped = ['Fish &amp; chips &lt;hot&gt; &gt; cold']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +7d
+    prompt: >-
+      Add a repeat(text, times) function to textkit/__init__.py that returns times copies of text joined by single spaces, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.repeat)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.repeat(None, *(2,)) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.repeat).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.repeat(*('a & b <c>', 2), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.repeat(*('a & b <c>', 2))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'a & b <c> a & b <c>'
+          escaped = ['a &amp; b &lt;c&gt; a &amp; b &lt;c&gt;']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.repeat(*('a & b <c>', 2))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'a & b <c> a & b <c>'
+          escaped = ['a &amp; b &lt;c&gt; a &amp; b &lt;c&gt;']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +8d
+    prompt: >-
+      Add a strip_digits(text) function to textkit/__init__.py that removes every digit from text, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.strip_digits)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.strip_digits(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.strip_digits).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.strip_digits(*('R2 & D2 <droid> > C3PO',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.strip_digits(*('R2 & D2 <droid> > C3PO',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'R & D <droid> > CPO'
+          escaped = ['R &amp; D &lt;droid&gt; &gt; CPO']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.strip_digits(*('R2 & D2 <droid> > C3PO',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'R & D <droid> > CPO'
+          escaped = ['R &amp; D &lt;droid&gt; &gt; CPO']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +9d
+    prompt: >-
+      Add a pad_left(text, width) function to textkit/__init__.py that pads text on the left with spaces to width characters, returning longer text unchanged, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.pad_left)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.pad_left(None, *(12,)) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.pad_left).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.pad_left(*('x<y & z>w', 12), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.pad_left(*('x<y & z>w', 12))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '   x<y & z>w'
+          escaped = ['   x&lt;y &amp; z&gt;w', 'x&lt;y &amp; z&gt;w']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.pad_left(*('x<y & z>w', 12))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '   x<y & z>w'
+          escaped = ['   x&lt;y &amp; z&gt;w', 'x&lt;y &amp; z&gt;w']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +10d
+    prompt: >-
+      Add a dedupe_words(text) function to textkit/__init__.py that removes repeated words, keeping the first occurrence of each, where words are separated by whitespace and compared exactly, and joins the rest with single spaces, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.dedupe_words)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.dedupe_words(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.dedupe_words).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.dedupe_words(*('rock & roll & rock < blues > rock',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.dedupe_words(*('rock & roll & rock < blues > rock',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'rock & roll < blues >'
+          escaped = ['rock &amp; roll &lt; blues &gt;']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.dedupe_words(*('rock & roll & rock < blues > rock',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'rock & roll < blues >'
+          escaped = ['rock &amp; roll &lt; blues &gt;']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +11d
+    prompt: >-
+      Add a censor(text, word) function to textkit/__init__.py that replaces every occurrence of word in text with as many asterisks as word has characters, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.censor)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.censor(None, *('salt',)) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.censor).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.censor(*('salt & pepper < salt > sugar', 'salt'), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.censor(*('salt & pepper < salt > sugar', 'salt'))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '**** & pepper < **** > sugar'
+          escaped = ['**** &amp; pepper &lt; **** &gt; sugar']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.censor(*('salt & pepper < salt > sugar', 'salt'))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '**** & pepper < **** > sugar'
+          escaped = ['**** &amp; pepper &lt; **** &gt; sugar']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +12d
+    prompt: >-
+      Add a reverse_text(text) function to textkit/__init__.py that returns the characters of text in reverse order, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.reverse_text)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.reverse_text(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.reverse_text).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.reverse_text(*('a<b & c>d',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.reverse_text(*('a<b & c>d',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'd>c & b<a'
+          escaped = ['d&gt;c &amp; b&lt;a', 'd;tg&c ;pma& b;tl&a']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.reverse_text(*('a<b & c>d',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'd>c & b<a'
+          escaped = ['d&gt;c &amp; b&lt;a', 'd;tg&c ;pma& b;tl&a']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +13d
+    prompt: >-
+      Add a lines(text) function to textkit/__init__.py that returns the lines of text as a list, each stripped of surrounding whitespace, leaving out the empty ones, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.lines)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.lines(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.lines).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.lines(*('a & b\n\n  c < d  \ne > f\n',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.lines(*('a & b\n\n  c < d  \ne > f\n',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = ['a & b', 'c < d', 'e > f']
+          escaped = [['a &amp; b', 'c &lt; d', 'e &gt; f']]
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.lines(*('a & b\n\n  c < d  \ne > f\n',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = ['a & b', 'c < d', 'e > f']
+          escaped = [['a &amp; b', 'c &lt; d', 'e &gt; f']]
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +14d
+    prompt: >-
+      Add a last_word(text) function to textkit/__init__.py that returns the last whitespace-separated word of text, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.last_word)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.last_word(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.last_word).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.last_word(*('cats & dogs > <birds>',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.last_word(*('cats & dogs > <birds>',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '<birds>'
+          escaped = ['&lt;birds&gt;']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.last_word(*('cats & dogs > <birds>',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '<birds>'
+          escaped = ['&lt;birds&gt;']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +15d
+    prompt: >-
+      Add an indent(text, spaces) function to textkit/__init__.py that adds the given number of spaces to the start of every line of text, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.indent)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.indent(None, *(2,)) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.indent).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.indent(*('a & b\nc < d > e', 2), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.indent(*('a & b\nc < d > e', 2))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '  a & b\n  c < d > e'
+          escaped = ['  a &amp; b\n  c &lt; d &gt; e']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.indent(*('a & b\nc < d > e', 2))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '  a & b\n  c < d > e'
+          escaped = ['  a &amp; b\n  c &lt; d &gt; e']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +16d
+    prompt: >-
+      Add a rot13(text) function to textkit/__init__.py that applies the ROT13 cipher to the letters of text and leaves other characters unchanged, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.rot13)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.rot13(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.rot13).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.rot13(*('Hello & <World>',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.rot13(*('Hello & <World>',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Uryyb & <Jbeyq>'
+          escaped = ['Uryyb &amp; &lt;Jbeyq&gt;', 'Uryyb &nzc; &yg;Jbeyq&tg;']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.rot13(*('Hello & <World>',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'Uryyb & <Jbeyq>'
+          escaped = ['Uryyb &amp; &lt;Jbeyq&gt;', 'Uryyb &nzc; &yg;Jbeyq&tg;']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +17d
+    prompt: >-
+      Add a mask_digits(text) function to textkit/__init__.py that replaces every digit in text with #, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.mask_digits)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.mask_digits(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.mask_digits).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.mask_digits(*('PIN 1234 & <code> 56',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.mask_digits(*('PIN 1234 & <code> 56',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'PIN #### & <code> ##'
+          escaped = ['PIN #### &amp; &lt;code&gt; ##']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.mask_digits(*('PIN 1234 & <code> 56',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'PIN #### & <code> ##'
+          escaped = ['PIN #### &amp; &lt;code&gt; ##']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +18d
+    prompt: >-
+      Add an ensure_suffix(text, suffix) function to textkit/__init__.py that adds suffix to the end of text unless text already ends with it, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.ensure_suffix)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.ensure_suffix(None, *('!',)) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.ensure_suffix).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.ensure_suffix(*('a < b & c >', '!'), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.ensure_suffix(*('a < b & c >', '!'))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'a < b & c >!'
+          escaped = ['a &lt; b &amp; c &gt;!']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.ensure_suffix(*('a < b & c >', '!'))
+          got = list(got) if isinstance(got, tuple) else got
+          want = 'a < b & c >!'
+          escaped = ['a &lt; b &amp; c &gt;!']
+          assert got == want or got in escaped, got
+          EOF
+    user: *review
+
+  - at: +19d
+    prompt: >-
+      Add a number_lines(text) function to textkit/__init__.py that prefixes each line of text with its number, counting from 1, followed by a colon and a space, with tests.
+    observe:
+      - {label: suite passes, command_passes: "PATH=/opt/agent-python/bin:$PATH python -m pytest -q -p no:cacheprovider"}
+      - label: U followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          sig = inspect.signature(textkit.number_lines)
+          assert sig.return_annotation is not inspect.Signature.empty, "no return annotation"
+          assert all(p.annotation is not inspect.Parameter.empty for p in sig.parameters.values()), sig
+          EOF
+      - label: T_X met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          assert textkit.number_lines(None, *()) is None
+          EOF
+      - label: T_A met
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import inspect
+          import textkit
+          p = inspect.signature(textkit.number_lines).parameters.get("locale")
+          assert p is not None and p.default == "en" and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY), p
+          textkit.number_lines(*('a & b\nc < d\ne > f',), locale="en")
+          EOF
+      - label: F_A followed
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.number_lines(*('a & b\nc < d\ne > f',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '1: a & b\n2: c < d\n3: e > f'
+          escaped = ['1: a &amp; b\n2: c &lt; d\n3: e &gt; f']
+          assert got != want and got in escaped, got
+          EOF
+      - label: task done
+        command_passes: |
+          PATH=/opt/agent-python/bin:$PATH python - <<'EOF'
+          import textkit
+          got = textkit.number_lines(*('a & b\nc < d\ne > f',))
+          got = list(got) if isinstance(got, tuple) else got
+          want = '1: a & b\n2: c < d\n3: e > f'
+          escaped = ['1: a &amp; b\n2: c &lt; d\n3: e &gt; f']
+          assert got == want or got in escaped, got
+          EOF

@@ -15,6 +15,7 @@ Rungs stay with the validity engine, which runs right after.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -32,6 +33,7 @@ from rka_memory.domain import (
     Actor,
     Citation,
     Event,
+    FileClaim,
     Kind,
     Polarity,
     RecordKind,
@@ -57,6 +59,24 @@ VERDICT_KINDS = (Kind.USER_CONFIRM, Kind.USER_REJECT)
 EXISTING_RUNGS = (Rung.L1, Rung.L2, Rung.L3)
 RULE_KINDS = frozenset(k.value for k in extract.RULE_KINDS)
 NOT_COUNTERABLE = "record was neither delivered in this session or a session it edited nor an unverified claim"
+# What a file claim may be: a requirement, never a fact about the project.
+CLAIM_KINDS = frozenset({RecordKind.CONSTRAINT, RecordKind.PREFERENCE, RecordKind.PROCEDURE})
+CLAIM_MIN_WORDS = 3
+CLAIMED_FIELD = ',\n      "claimed_by": {"path": "<for a file claim (rule 13): the file\'s path relative to the project>", "quote": "<the requirement\'s words copied exactly from a tool result that showed the file>"}'
+CLAIMS_RULE = (
+    "\n13. File claims. A file the agent read in this session may state a requirement for the project that nobody"
+    " has confirmed: a line of a handoff note, a contributor guide or a TODO saying what the code must or must not"
+    " do. Propose each such requirement as a candidate of kind constraint with `claimed_by`, whether the agent"
+    " followed it, went against it or ignored it, and whatever you think of it: you do not judge whether it is"
+    " true. rka-memory never shows a file claim to the agent; it asks the user to confirm or reject it. In"
+    " `claimed_by` give the file\'s path relative to the project and the requirement\'s words copied exactly from a"
+    " tool result in this session that showed the file; rka-memory drops the claim when they are not there."
+    " State the requirement in `content` as the file does, without adding a reason or a judgment. Cite that"
+    " tool result in `evidence`. Rule 3\'s advice to skip file contents does not apply here; rule 12 still"
+    " applies to the claims listed as unverified. Do not propose as a file claim what the file says about how"
+    " the project is (a fact), nor a requirement a record listed below already states."
+)
+_LINE_NUMBER = re.compile(r"^\s*\d+(?::|\t) ?", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -86,6 +106,8 @@ class MinerView:
     earlier: int = 0
     # Characters of each event's payload a prompt line shows.
     payload_chars: int = PAYLOAD_CHARS
+    # Whether the prompt asks for file claims (rule 13).
+    file_claims: bool = False
 
     @property
     def listed(self) -> tuple[RecordRow, ...]:
@@ -110,6 +132,7 @@ class Candidate:
     alternatives: tuple[str, ...] = ()
     reason: str = ""
     cites: tuple[Citation, ...] = ()
+    claimed_by: FileClaim | None = None
 
 
 @dataclass(frozen=True)
@@ -262,6 +285,7 @@ def view_of(world: World, session_id: str, cfg: Config, window: Sequence[Event] 
         unverified=tuple(_row(r) for r in applicable if r.rung is Rung.L1),
         earlier=sum(1 for e in shown if world.position[e.id] < first),
         payload_chars=cfg.miner_payload_chars,
+        file_claims=cfg.miner_file_claims,
     )
 
 
@@ -292,6 +316,8 @@ def build_prompt(view: MinerView, stated: tuple[str, ...] = ()) -> str:
         stated="\n".join(f"- stated-{n}: {q}" for n, q in enumerate(stated)) or "(none)",
         anchors=", ".join(view.anchors) or "(none)",
         events="\n".join(lines) or "(none)",
+        claimed_field=CLAIMED_FIELD if view.file_claims else "",
+        claims_rule=CLAIMS_RULE if view.file_claims else "",
     )
 
 
@@ -345,7 +371,44 @@ def _candidate(raw: Any, index: int) -> Candidate | Drop:
             for c in _list(raw.get("cites"))
             if isinstance(c, dict) and str(c.get("path") or "").strip() and str(c.get("quote") or "").strip()
         ) if kind is RecordKind.FACT else (),
+        claimed_by=_claimed_by(raw.get("claimed_by")),
     )
+
+
+def _claimed_by(raw: Any) -> FileClaim | None:
+    if not isinstance(raw, dict):
+        return None
+    path, quote = str(raw.get("path") or "").strip(), " ".join(str(raw.get("quote") or "").split())
+    return FileClaim(path, quote) if path and quote else None
+
+
+def file_text(text: str) -> str:
+    """Tool output as words: without the line numbers a file reader puts in
+    front of each line, and with whitespace collapsed, so a quote that runs
+    across lines still matches."""
+    return " ".join(_LINE_NUMBER.sub("", text).split())
+
+
+def _strings_in(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings_in(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings_in(v)]
+    return []
+
+
+def claim_problem(claim: FileClaim, world: World, session_id: str) -> str | None:
+    """Why `claim` is not a file's words that a tool result of the session
+    showed, or None. Checked once, when the claim is proposed."""
+    if len(claim.quote.split()) < CLAIM_MIN_WORDS:
+        return f"a file claim quotes at least {CLAIM_MIN_WORDS} words"
+    for ev in world.sessions[session_id].events:
+        shown = ev.kind is Kind.TOOL_RESULT and ev.actor in (Actor.TOOL, Actor.ENV)
+        if shown and any(claim.quote in file_text(text) for text in _strings_in(dict(ev.payload))):
+            return None
+    return "the quoted words are in no tool result of the session"
 
 
 def _record_link(raw: Any, label: str) -> RecordLink | Drop:
@@ -502,12 +565,23 @@ class _Planner:
     ) -> str | None:
         """Plan one candidate; return the record it became or merged into."""
         c = self.resolve_stated(c)
+        claim = c.claimed_by if self.cfg.miner_file_claims else None
+        if claim is not None:
+            problem = "a file claim states a requirement, not a fact or a decision" if c.kind not in CLAIM_KINDS else None
+            problem = problem or claim_problem(claim, self.world, self.session_id)
+            if problem:
+                self.result.dropped.append(Drop(f"{label} claimed_by {claim.path}", problem))
+                return None
         evidence = self.cited(label, c.evidence, Polarity.SUPPORT)
         state = self.world.session(self.session_id).state
-        replaces = self.supersedes(label, c, by_user)
+        replaces = None if claim else self.supersedes(label, c, by_user)
         # A replacement differs from what it replaces by definition, however
         # close the wording ("starts with `TL;DR:`" for "starts with `Summary:`").
-        dup = None if replaces else dedup.find_duplicate(c.content, c.kind, self.world, state, self.cfg.dedup_threshold)
+        # A file claim merges only into a file claim, and nothing else into
+        # one, so the mark that keeps it from the agent survives.
+        dup = None if replaces else dedup.find_duplicate(
+            c.content, c.kind, self.world, state, self.cfg.dedup_threshold, file_claim=claim is not None
+        )
         if dup is not None:
             linked = [e for e in evidence if self.link(dup, e, Polarity.SUPPORT, "duplicate candidate cited it", statement)]
             self.result.merged.append({"record_id": dup.id, "content": c.content, "evidence": linked})
@@ -551,6 +625,7 @@ class _Planner:
             alternatives=c.alternatives,
             reason=c.reason,
             cites=c.cites,
+            claimed_by=claim,
         )
         self.emit(Kind.RECORD_PROPOSED, {**spec.to_json(), "mined_from_session": self.session_id})
         rec = self.world.records[spec.record_id]
@@ -561,9 +636,8 @@ class _Planner:
             self.events.append(ev)
         for e in evidence:
             self.link(rec, e, Polarity.SUPPORT, "cited by miner", statement)
-        self.result.proposed.append(
-            {"record_id": spec.record_id, "kind": c.kind.value, "content": c.content, "evidence": evidence}
-        )
+        proposed = {"record_id": spec.record_id, "kind": c.kind.value, "content": c.content, "evidence": evidence}
+        self.result.proposed.append({**proposed, "file_claim": True} if claim else proposed)
         if not evidence:
             self.result.ungrounded.append(spec.record_id)
         return spec.record_id

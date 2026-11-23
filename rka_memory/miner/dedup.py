@@ -21,15 +21,18 @@ def similarity(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
-def find_duplicate(content: str, kind: RecordKind, world: World, state: State, threshold: float) -> RecordState | None:
-    """The most similar same-kind record whose scope covers `state`, at any rung.
+def find_duplicate(
+    content: str, kind: RecordKind, world: World, state: State, threshold: float, file_claim: bool = False
+) -> RecordState | None:
+    """The most similar same-kind record whose scope covers `state`, at any
+    rung, and a file claim exactly when `file_claim` (docs/E2C.md, R3).
 
     Retired (L4) records are included on purpose: merging refuted content into
     its retired record is what keeps it from re-entering the ladder at L1.
     """
     best: tuple[float, int, RecordState] | None = None
     for rec in world.records.values():
-        if rec.spec.kind is not kind or not rec.scope.covers(state):
+        if rec.spec.kind is not kind or (rec.spec.claimed_by is not None) != file_claim or not rec.scope.covers(state):
             continue
         score = similarity(content, rec.spec.content)
         if score < threshold:

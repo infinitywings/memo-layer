@@ -1,6 +1,7 @@
-"""Generate the streams of E2 (docs/E2.md Section 4) and E2b (docs/E2B.md Section 4).
+"""Generate the streams of E2 (docs/E2.md Section 4), E2b (docs/E2B.md Section 4)
+and E2c (docs/E2C.md Sections 4 and 5).
 
-Usage: .venv/bin/python scripts/e2_streams.py [--e2b] [out_dir]
+Usage: .venv/bin/python scripts/e2_streams.py [--e2b | --e2c] [out_dir]
 
   default  workload/e2/{calc,textkit,stockbook}.yaml, arms stated, gated and notepad
   --e2b    workload/e2b/<fixture>.yaml, arms gated and notepad, and
@@ -8,6 +9,10 @@ Usage: .venv/bin/python scripts/e2_streams.py [--e2b] [out_dir]
            miner.payload_chars 2000 and trials.entry open). Both are E2's
            stream with one change: the user's check also requires T_A, and a
            T_A failure prints the same generic line as any other failure.
+  --e2c    workload/e2c/<fixture>-{oracle,stamp,gated-r1}.yaml: E2b's streams
+           and check. The review arms list file claims (miner.file_claims,
+           review.per_session 3) and the simulated user reads the list after
+           s1 to s19; gated-r1 is gated v3 with R1 only, the control.
 
 Expected results are written by hand here; each fixture's reference function in
 this file must reproduce them (asserted). Before writing, every task's check
@@ -25,7 +30,9 @@ import codecs
 import copy
 import html
 import itertools
+import json
 import math
+import re
 import shutil
 import statistics
 import subprocess
@@ -916,6 +923,46 @@ E2B_ARMS_SENTENCE = {
 }
 
 
+E2C_ORIGIN = "Experiment E2c (docs/E2C.md; registered in RKA jrn_01M84P9ZSVWTNVKH7A6MJG89J0)"
+E2C_CHANGE = (
+    "It is E2b's stream (docs/E2B.md Section 4): E2's stream with one change, the user's check also requires T_A."
+)
+E2C_ARMS_SENTENCE = {
+    "oracle": (
+        "Arm: review-oracle (docs/E2C.md Section 5), gated v3 with R1 (miner.payload_chars: 2000), R3, file"
+        " claims (miner.file_claims: true), and R4, the review list (review.per_session: 3). After s1 to s19 are"
+        " mined the oracle user reads the list, confirms a line stating T_A, rejects one stating F_A, and leaves"
+        " the rest."
+    ),
+    "stamp": (
+        "Arm: review-stamp (docs/E2C.md Section 5), as review-oracle, but the user confirms every listed line"
+        " without reading it."
+    ),
+    "gated-r1": (
+        "Arm: gated-R1 (docs/E2C.md Section 5), gated v3 with R1 (miner.payload_chars: 2000) and no file claims:"
+        " the concurrent control."
+    ),
+}
+# The oracle's patterns for each fixture's true (T_A) and false (F_A)
+# requirement, applied to a listed claim's wording (docs/E2C.md Section 4).
+# They are the oracle's own, written apart from the analysis's.
+ORACLE_PATTERNS = {
+    "calc": ((r"\bbool(ean)?s?\b",), (r"decimal", r"round\(")),
+    "textkit": ((r"\blocale\b",), (r"\bescap", r"&amp;|&lt;|&gt;")),
+    "stockbook": ((r"\baudit\b",), (r"upper[- ]?case", r"\.upper\(", r"\bupper\b")),
+}
+REVIEW_SESSIONS = 19
+E2C_REVIEW = {"oracle": "review: {per_session: 3}", "stamp": "review: {per_session: 3}"}
+
+
+def e2c_description(key: str, arm: str) -> str:
+    """E2's description of a fixture's stream, told as E2c's."""
+    text = DESCRIPTIONS[key]
+    first = text.index(". ") + 2
+    text = text[:first] + E2C_CHANGE + " " + text[first:]
+    return once(text, (E2_ORIGIN, E2C_ORIGIN), (E2_CHECK_SENTENCE, E2B_CHECK_SENTENCE), (E2_ARMS_SENTENCE, E2C_ARMS_SENTENCE[arm]))
+
+
 def e2b_description(key: str, arms: str) -> str:
     """E2's description of a fixture's stream, told as E2b's."""
     text = DESCRIPTIONS[key]
@@ -935,9 +982,35 @@ class Flavor:
     extra: tuple[str, ...]  # YAML lines under `config:` between packet and checks
     description: str
     e2b: bool  # the check also requires T_A
+    review: str | None = None  # E2c: the simulated user's policy, oracle or stamp
+
+    @property
+    def key(self) -> str:
+        """The fixture's stream: calc, textkit or stockbook."""
+        return self.stem.split("-")[0]
 
 
-def flavors(key: str, e2b: bool) -> list[Flavor]:
+def review_block(key: str, policy: str) -> str:
+    """The user block the review arms run after s1 to s19."""
+    confirm, reject = ORACLE_PATTERNS[key]
+    out = "      - review:\n" f"          policy: {policy}\n"
+    if policy == "oracle":
+        out += f"          confirm: {json.dumps(list(confirm))}\n" f"          reject: {json.dumps(list(reject))}\n"
+    return out
+
+
+def flavors(key: str, e2b: bool, e2c: bool = False) -> list[Flavor]:
+    if e2c:
+        r1 = "miner: {payload_chars: 2000}"
+        claims = "miner: {payload_chars: 2000, file_claims: true}"
+        return [
+            *(
+                Flavor(f"{key}-{policy}", f"e2c-{key}-{policy}", False, ("gated",), (claims, E2C_REVIEW[policy]),
+                       e2c_description(key, policy), True, policy)
+                for policy in ("oracle", "stamp")
+            ),
+            Flavor(f"{key}-gated-r1", f"e2c-{key}-gated-r1", False, ("gated",), (r1,), e2c_description(key, "gated-r1"), True),
+        ]
     if not e2b:
         return [Flavor(key, f"e2-{key}", True, ("stated", "gated", "notepad"), (), DESCRIPTIONS[key], False)]
     return [
@@ -993,6 +1066,8 @@ def emit(flavor: Flavor, project, start, check, message, handoff, sessions) -> s
             else:
                 out.append(f"      - label: {label}\n")
                 out.append("        command_passes: |" + literal(command, 10))
+        if flavor.review and i <= REVIEW_SESSIONS:
+            out.append("    user: &review\n" + review_block(flavor.key, flavor.review) if i == 1 else "    user: *review\n")
         if i < len(sessions):
             out.append("\n")
     return "".join(out)
@@ -1014,7 +1089,7 @@ class Built:
     check: str
 
 
-def build(e2b: bool = False) -> list[Built]:
+def build(e2b: bool = False, e2c: bool = False) -> list[Built]:
     fixtures = {}
     # calc
     sessions = []
@@ -1047,8 +1122,8 @@ def build(e2b: bool = False) -> list[Built]:
     fixtures["stockbook"] = ("2027-11-01T09:00:00+00:00", STOCKBOOK_TX, STOCKBOOK_HANDOFF, sessions)
     out = []
     for key, (start, message, handoff, sessions) in fixtures.items():
-        check = CHECKS[key](e2b)
-        for flavor in flavors(key, e2b):
+        check = CHECKS[key](e2b or e2c)
+        for flavor in flavors(key, e2b, e2c):
             text = emit(flavor, PROJECTS[key], start, check, message, handoff, sessions)
             out.append(Built(key, flavor, text, sessions, message, handoff, check))
     return out
@@ -1072,12 +1147,42 @@ def check_document(b: Built) -> None:
         assert s["prompt"] == p, (s["prompt"], p)
         assert [(o["label"], o["command_passes"]) for o in s["observe"]] == observers
     assert [("drift" in s) for s in doc["sessions"]] == [True] * 3 + [False] * 17
+    reviews = [s.get("user") for s in doc["sessions"]]
+    if b.flavor.review:
+        assert reviews == [[{"review": review_doc(b.key, b.flavor.review)}]] * REVIEW_SESSIONS + [None], reviews
+    else:
+        assert reviews == [None] * 20
     assert all(s["drift"] == [{"write": {"path": "HANDOFF.md", "content": b.handoff}}] for s in doc["sessions"][:3])
     compile(b.check, f"{b.flavor.stem}-check", "exec")
     for s in doc["sessions"]:
         for o in s["observe"][1:]:
             body = o["command_passes"].split("\n", 1)[1].rsplit("EOF\n", 1)[0]
             compile(body, f"{b.flavor.stem}-{o['label']}", "exec")
+
+
+def review_doc(key: str, policy: str) -> dict:
+    confirm, reject = ORACLE_PATTERNS[key]
+    return {"policy": policy, "confirm": list(confirm), "reject": list(reject)} if policy == "oracle" else {"policy": policy}
+
+
+def check_e2c(e2c: list[Built], e2b: list[Built]) -> None:
+    """Each E2c stream is its fixture's E2b stream, check included; the rest
+    of what differs is its name, description, arms, the R1, R3 and R4
+    settings, and the review blocks."""
+    base = {b.key: b for b in e2b if not b.flavor.stem.endswith("-route")}
+    for b in e2c:
+        mine, theirs = yaml.safe_load(b.text), yaml.safe_load(base[b.key].text)
+        assert b.check == base[b.key].check
+        for doc in (mine, theirs):
+            for key in ("name", "description", "per_arm"):
+                del doc[key]
+            for key in ("packet", "miner", "review"):
+                doc["config"].pop(key, None)
+            for session in doc["sessions"]:
+                session.pop("user", None)
+        assert mine == theirs, b.flavor.stem
+    for key, (confirm, reject) in ORACLE_PATTERNS.items():
+        assert all(re.compile(x) for x in (*confirm, *reject)), key
 
 
 def check_one_change(e2b: list[Built], e2: list[Built]) -> None:
@@ -1193,15 +1298,19 @@ def check_verdicts(built: list[Built]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--e2b", action="store_true", help="write E2b's streams (docs/E2B.md) instead of E2's")
-    ap.add_argument("out_dir", nargs="?", type=Path, help="default workload/e2, or workload/e2b with --e2b")
+    which = ap.add_mutually_exclusive_group()
+    which.add_argument("--e2b", action="store_true", help="write E2b's streams (docs/E2B.md) instead of E2's")
+    which.add_argument("--e2c", action="store_true", help="write E2c's streams (docs/E2C.md) instead of E2's")
+    ap.add_argument("out_dir", nargs="?", type=Path, help="default workload/e2, workload/e2b or workload/e2c")
     args = ap.parse_args(argv)
-    out = args.out_dir or REPO / "workload" / ("e2b" if args.e2b else "e2")
-    built = build(args.e2b)
+    out = args.out_dir or REPO / "workload" / ("e2b" if args.e2b else "e2c" if args.e2c else "e2")
+    built = build(args.e2b, args.e2c)
     for b in built:
         check_document(b)
     if args.e2b:
         check_one_change(built, build(False))
+    if args.e2c:
+        check_e2c(built, build(True))
     judged = check_verdicts(built)
     print(f"each check judged {judged} reference solutions as expected")
     out.mkdir(parents=True, exist_ok=True)

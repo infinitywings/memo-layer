@@ -21,7 +21,7 @@ Reply with one JSON object and nothing else. No prose, no Markdown fences.
       "implements": ["<ids of listed decisions this lesson carries out>"],
       "cites": [{"path": "<for a fact about a file: its path relative to the project>", "quote": "<words copied exactly from that file that show the fact>"}],
       "alternatives": ["<for a decision: the options not chosen>"],
-      "reason": "<for a decision: why this option>"
+      "reason": "<for a decision: why this option>"$claimed_field
     }
   ],
   "support_links": [
@@ -50,7 +50,7 @@ Rules:
 9. `support_links`: when an event in this session shows that a record listed below held here (a passing check after doing what it says, the user stating or relying on it), link that record to the event. Cite events by rule 1 and rule 2, exactly as for candidate evidence. Link only when the event bears on what the record says; a passing test unrelated to it is not support. For a record marked `unverified`, rule 12 applies as well.
 10. `task_class`: the class that best describes the session's main work.
 11. `about`: the anchors listed below that the lesson is specifically about, such as the file a fact describes or the command a procedure runs. Leave it empty for a lesson about the whole project. Name only anchors from the list below.
-12. Records marked `unverified` are claims an earlier miner proposed that nothing has shown to hold yet. They may be wrong, and many cannot be checked from one session, such as a claim about a system outside the project. Never take one as a fact about this project: do not propose a candidate that repeats one, assumes one, or gives one as its reason, even when the agent did what it says or the code now matches it. Link one in support_links only with an event that shows it holds whether or not the agent followed it: tests that pass after the agent did what a claim says show that the code works, not that the claim is true. When an event in this session shows one is false whether or not the agent followed it, such as a file the agent read, a command's output (its tool result) or the user's words, link the claim to that event in counter_links. The link is the rebuttal: do not also propose a candidate whose only point is that the claim is false.
+12. Records marked `unverified` are claims an earlier miner proposed that nothing has shown to hold yet. They may be wrong, and many cannot be checked from one session, such as a claim about a system outside the project. Never take one as a fact about this project: do not propose a candidate that repeats one, assumes one, or gives one as its reason, even when the agent did what it says or the code now matches it. Link one in support_links only with an event that shows it holds whether or not the agent followed it: tests that pass after the agent did what a claim says show that the code works, not that the claim is true. When an event in this session shows one is false whether or not the agent followed it, such as a file the agent read, a command's output (its tool result) or the user's words, link the claim to that event in counter_links. The link is the rebuttal: do not also propose a candidate whose only point is that the claim is false.$claims_rule
 
 Session: $session_id
 State: $state
