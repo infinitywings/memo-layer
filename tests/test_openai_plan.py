@@ -211,3 +211,32 @@ def test_a_stream_held_open_on_keepalives_is_ended_unfinished(tmp_path):
     assert "response.completed" not in types
     rows = [json.loads(line) for line in proxy.paths.usage.read_text().splitlines()]
     assert [r["terminal"] for r in rows] == ["stalled", "stalled"]
+
+
+def post_responses(proxy: plan.Proxy) -> httpx.Response:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), plan.handler_for(proxy))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        return httpx.post(f"http://127.0.0.1:{server.server_port}/v1/responses", json={"model": "m1", "input": []},
+                          headers={"Authorization": f"Bearer {proxy.key}"})
+    finally:
+        server.shutdown()
+
+
+def overloaded() -> dict:
+    return {"type": "response.failed", "response": {"error": {"code": "server_is_overloaded", "message": "try later"}}}
+
+
+def test_an_overload_before_any_output_is_answered_with_a_503_the_caller_retries(tmp_path):
+    proxy = proxy_for(record(tmp_path, saved_at=time.time()), Upstream(sse({"type": "response.created"}, overloaded())))
+    resp = post_responses(proxy)
+    assert (resp.status_code, resp.json()["error"]["code"]) == (503, "server_is_overloaded")
+    [row] = [json.loads(line) for line in proxy.paths.usage.read_text().splitlines()]
+    assert (row["status"], row["terminal"], row["code"]) == (503, "response.failed", "server_is_overloaded")
+
+
+def test_a_failure_after_output_has_started_streams_through(tmp_path):
+    stream = sse({"type": "response.created"}, {"type": "response.output_text.delta", "delta": "he"}, overloaded())
+    resp = post_responses(proxy_for(record(tmp_path, saved_at=time.time()), Upstream(stream)))
+    types = [e["type"] for e in plan.sse_events(iter(resp.text.splitlines()))]
+    assert (resp.status_code, types) == (200, ["response.created", "response.output_text.delta", "response.failed"])

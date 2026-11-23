@@ -66,6 +66,10 @@ REFRESH_MARGIN_SECONDS = 300
 # 10.6 s in the first 187 (2026-11-22), so a minute without progress is a
 # stall: the proxy ends the stream unfinished and the caller retries.
 STALL_SECONDS = 60.0
+# Events that come before any output: a stream that fails while only these
+# were sent is answered with a 503 instead (Handler._responses).
+OPENING_EVENTS = {"response.created", "response.in_progress", "keepalive"}
+RETRYABLE_CODES = {"server_is_overloaded", "server_error"}
 
 # preview-limitations: fields the plan route rejects
 UNSUPPORTED = frozenset({
@@ -426,6 +430,10 @@ class Outcome:
             self.terminal = "error"
             self.code = event.get("code") or (event.get("error") or {}).get("code")
 
+    def retryable(self) -> bool:
+        """A failure the caller should retry: the plan was overloaded, or the stream stalled."""
+        return self.terminal == "stalled" or (self.terminal in ("response.failed", "error") and self.code in RETRYABLE_CODES)
+
     def stalled(self, limit: float) -> bool:
         return self.terminal is None and time.monotonic() - self.started - self.last_progress > limit
 
@@ -560,36 +568,75 @@ def handler_for(proxy: Proxy) -> type[BaseHTTPRequestHandler]:
             started = time.monotonic()
             resp = proxy.open_stream(request)
             outcome = Outcome(resp.status_code, started=started)
-            try:
+            # The stream's opening events are held back until output starts, so
+            # a failure before any output can still reach the caller as a 503,
+            # which dsh retries; inside a 200 stream it ends the session.
+            held: list[str] = [] if resp.status_code == 200 else None
+            replaced = False
+
+            def start() -> None:
                 self.send_response(resp.status_code)
                 self.send_header("Content-Type", resp.headers.get("content-type", "text/event-stream"))
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "close")
                 self.end_headers()
+
+            def send(line: str) -> None:
+                self.wfile.write((line + "\n").encode())
+                self.wfile.flush()
+
+            try:
+                if held is None:
+                    start()
                 pending: list[str] = []
                 for line in resp.iter_lines():
-                    self.wfile.write((line + "\n").encode())
-                    self.wfile.flush()
+                    if held is None:
+                        send(line)
+                    else:
+                        held.append(line)
                     if line.strip():
                         pending.append(line)
-                    elif pending:
-                        for event in sse_events(iter([*pending, ""])):
-                            outcome.scan(event)
-                        pending = []
-                        if outcome.stalled(proxy.stall_seconds):
-                            # ending the stream unfinished makes the caller retry
-                            outcome.terminal = "stalled"
+                        continue
+                    if not pending:
+                        continue
+                    events = list(sse_events(iter([*pending, ""])))
+                    pending = []
+                    for event in events:
+                        outcome.scan(event)
+                    if held is not None:
+                        if outcome.retryable():
+                            replaced = True
                             break
+                        if any(e.get("type") not in OPENING_EVENTS for e in events):
+                            start()
+                            for kept in held:
+                                send(kept)
+                            held = None
+                    if outcome.stalled(proxy.stall_seconds):
+                        # ending the stream unfinished makes the caller retry
+                        outcome.terminal = "stalled"
+                        replaced = held is not None
+                        break
                 for event in sse_events(iter(pending)):
                     outcome.scan(event)
+                if held is not None and not replaced:
+                    replaced = outcome.retryable()
+                    if not replaced:
+                        start()
+                        for kept in held:
+                            send(kept)
+                if replaced:
+                    self._json(503, {"error": {"message": f"upstream {outcome.code or outcome.terminal} before any output; retry",
+                                               "code": outcome.code or outcome.terminal}})
             except (BrokenPipeError, ConnectionResetError):
                 outcome.terminal = outcome.terminal or "client_gone"
             finally:
                 resp.close()
                 self.close_connection = True
-            proxy.log(route="responses", model=body.get("model"), status=resp.status_code, terminal=outcome.terminal,
-                      code=outcome.code, dropped=dropped, keys=sorted(request), tools=len(request.get("tools") or []),
-                      seconds=round(time.monotonic() - started, 2), **outcome.timing(), **usage_of(outcome.response or {}))
+            proxy.log(route="responses", model=body.get("model"), status=503 if replaced else resp.status_code,
+                      terminal=outcome.terminal, code=outcome.code, dropped=dropped, keys=sorted(request),
+                      tools=len(request.get("tools") or []), seconds=round(time.monotonic() - started, 2),
+                      **outcome.timing(), **usage_of(outcome.response or {}))
 
         def log_message(self, *_: Any) -> None:
             pass
