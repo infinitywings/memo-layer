@@ -11,7 +11,8 @@ notepad kept carrying the handoff, and later sessions applied it as
 E2c tests the route the user owns. A claim found in agent-visible text is
 listed for the user and never shown to the agent. It reaches the agent only
 after the user types `rkm confirm <id>`. This document is the design and its
-predictions. It is registered in RKA before any E2c code, and nothing here
+predictions. It is registered in RKA (jrn_01M84P9ZSVWTNVKH7A6MJG89J0)
+before any E2c code, and nothing here
 has run. A read-only review of the first draft against the code found five
 errors (Section 10). This version corrects them.
 
