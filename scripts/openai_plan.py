@@ -285,7 +285,7 @@ def login(paths: Paths, port: int, open_browser: bool) -> int:
         raise PlanError("this sign-in is a different ChatGPT account than the saved one; run logout first")
     write_private(paths.record, json.dumps(record_from(tokens, claims, client_id, host_id, now), indent=2))
     proxy_key(paths)
-    print(f"signed in as {claims.get('email')}; plan usage granted; record in {paths.record}")
+    print(f"signed in; plan usage granted; record in {paths.record}")
     return 0
 
 
@@ -603,7 +603,7 @@ def handler_for(proxy: Proxy) -> type[BaseHTTPRequestHandler]:
 def status(paths: Paths) -> int:
     r = read_record(paths)
     expires = datetime.fromtimestamp(float(r["saved_at"]) + int(r["expires_in"]), UTC)
-    print(f"account {r.get('email')}; client {r['client_id'][:12]}...; scopes {' '.join(r['scopes'])}")
+    print(f"signed in; client {r['client_id'][:12]}...; scopes {' '.join(r['scopes'])}")
     print(f"access token expires {expires.isoformat(timespec='seconds')}; record {paths.record}")
     return 0
 
@@ -638,7 +638,7 @@ def serve(paths: Paths, host: str, port: int) -> int:
     proxy.tokens.access()
     server = ThreadingHTTPServer((host, port), handler_for(proxy))
     server.daemon_threads = True
-    print(f"plan proxy on http://{host}:{port}/v1 for {proxy.tokens.record.get('email')}; usage log {paths.usage}", flush=True)
+    print(f"plan proxy on http://{host}:{port}/v1; usage log {paths.usage}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

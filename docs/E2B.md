@@ -235,7 +235,7 @@ token.
   routes dsh through its `openai-responses` adapter, and the miner and the
   notepad curator through the proxy's chat route. Both use the same model.
 - `scripts/e2_parallel.py --provider openai --model <slug>` writes to
-  `workload-runs/e2b-openai/`.
+  `workload-runs/e2b-gpt-6.1-terra-off/` (renamed from `e2b-openai/` when runs got a directory per model and reasoning level).
 
 **What it changes in the design.**
 - E2's runs and the E2b pilot ran on DeepSeek. Under another model family
@@ -260,7 +260,7 @@ token.
   subagent in 360 sessions. The runner now disables the subagent,
   subagent_fork and workflow tools as it disables the web tools, and the
   pilot restarts from s1. The aborted run is kept in
-  `workload-runs/e2b-openai/aborted/subagent-s4/`. How the memory layer
+  `workload-runs/e2b-gpt-6.1-terra-off/aborted/subagent-s4/`. How the memory layer
   should treat a subagent's session in real use is open.
 
 ## 12. The OpenAI pilot (2026-11-22)

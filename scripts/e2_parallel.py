@@ -25,8 +25,9 @@ Each job's log and the runner's own copy stay under <out>/.jobs/<job>/.
 
 --provider openai runs live streams on the user's ChatGPT plan through the
 host's token proxy (scripts/openai_plan.py serve) and --model, default
-RKM_OPENAI_MODEL. Its results land in workload-runs/<experiment>-openai/, so
-runs on two model families never share a directory.
+RKM_OPENAI_MODEL, at --reasoning, default RKM_OPENAI_REASONING or medium. Its
+results land in workload-runs/<experiment>-<model>-<reasoning>/, so runs on
+two models or reasoning levels never share a directory.
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+
+from rka_memory.workload.live import REASONING_DEFAULT, REASONING_LEVELS
 
 REPO = Path(__file__).resolve().parent.parent
 E2_FIXTURES = ("calc", "textkit", "stockbook")
@@ -167,7 +170,16 @@ PLAN_DIR = Path(os.environ.get("RKM_OPENAI_PLAN_DIR") or Path.home() / ".config"
 PROXY_HEALTH = "http://127.0.0.1:8790/healthz"
 
 
-def provider_env(provider: str, model: str | None) -> dict[str, str]:
+def run_suffix(provider: str, model: str | None, reasoning: str) -> str:
+    """What a run directory's name carries after the experiment's: the model and its reasoning level."""
+    if provider == "deepseek":
+        return ""
+    if not model:
+        raise SystemExit("--provider openai needs --model or RKM_OPENAI_MODEL (scripts/openai_plan.py models lists them)")
+    return f"-{model}-{reasoning}"
+
+
+def provider_env(provider: str, model: str | None, reasoning: str = REASONING_DEFAULT) -> dict[str, str]:
     """What a live run on `provider` needs in the environment compose reads."""
     if provider == "deepseek":
         if not os.environ.get("DEEPSEEK_API_KEY"):
@@ -185,7 +197,8 @@ def provider_env(provider: str, model: str | None) -> dict[str, str]:
             json.load(resp)
     except OSError as exc:
         raise SystemExit(f"the plan proxy is not answering at {PROXY_HEALTH} ({exc}): run scripts/openai_plan.py serve") from exc
-    return {"RKM_LIVE_PROVIDER": "openai", "RKM_OPENAI_MODEL": model, "RKM_OPENAI_PROXY_KEY": key.read_text().strip()}
+    return {"RKM_LIVE_PROVIDER": "openai", "RKM_OPENAI_MODEL": model, "RKM_OPENAI_REASONING": reasoning,
+            "RKM_OPENAI_PROXY_KEY": key.read_text().strip()}
 
 
 def main(argv: list[str]) -> int:
@@ -202,12 +215,14 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--provider", choices=["deepseek", "openai"], default=os.environ.get("RKM_LIVE_PROVIDER") or "deepseek",
                     help="live model: DeepSeek, or the ChatGPT plan through the host's token proxy")
     ap.add_argument("--model", default=os.environ.get("RKM_OPENAI_MODEL"), help="--provider openai: the model slug")
+    ap.add_argument("--reasoning", choices=[*REASONING_LEVELS, "off"], default=os.environ.get("RKM_OPENAI_REASONING") or REASONING_DEFAULT,
+                    help="--provider openai: the agent's reasoning level")
     ap.add_argument("specs", nargs="*", help="path@stream-name, instead of --seed")
     args = ap.parse_args(argv)
     if (args.seed is None) == (not args.specs):
         raise SystemExit("give --seed N or path@stream-name jobs, not both")
     if args.seed is not None:
-        suffix = "" if args.provider == "deepseek" else f"-{args.provider}"
+        suffix = run_suffix(args.provider, args.model, args.reasoning)
         root = (args.out or REPO / "workload-runs" / f"{args.experiment}{suffix}").resolve()
         arms = tuple(args.arms.split(",")) if args.arms else ARMS[args.experiment]
         fixtures = tuple(args.fixtures.split(","))
@@ -228,7 +243,7 @@ def main(argv: list[str]) -> int:
             print(f"{j.name} ({j.project}) {j.stream} -> {j.out / j.name}", flush=True)
         return 0
     if live(jobs):
-        os.environ.update(provider_env(args.provider, args.model))
+        os.environ.update(provider_env(args.provider, args.model, args.reasoning))
     if not args.no_build:
         subprocess.run(["./scripts/dockerw", "compose", "-p", IMAGE_PROJECT, "--profile", "workload", "build", "workload"],
                        cwd=REPO, env={**os.environ, "RKA_STACK_CORE_PORT": ""}, check=True, capture_output=True)

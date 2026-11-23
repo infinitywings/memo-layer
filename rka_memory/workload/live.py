@@ -7,7 +7,8 @@ RKM_LIVE_PROVIDER picks one:
 - openai: the user's ChatGPT plan through the host's token proxy
   (scripts/openai_plan.py serve). The agent uses dsh's openai-responses
   route and the miner the proxy's chat route, both with the local proxy key
-  in RKM_OPENAI_PROXY_KEY and the model in RKM_OPENAI_MODEL.
+  in RKM_OPENAI_PROXY_KEY and the model in RKM_OPENAI_MODEL. The agent
+  reasons at RKM_OPENAI_REASONING (medium unless set; off sends none).
 """
 
 from __future__ import annotations
@@ -21,6 +22,11 @@ from rka_memory.miner.backends import DEEPSEEK, deepseek_miner
 
 PROXY_URL = "http://host.docker.internal:8790/v1"
 CONTEXT_WINDOW = 200_000
+# The plan's GPT-6 models accept low to max (and ultra, which delegates to
+# subagents; left out). Without a declared level dsh sends no reasoning
+# field, and the gpt-6.1-terra pilot used 0 reasoning tokens in 456 requests.
+REASONING_LEVELS = ("low", "medium", "high", "xhigh", "max")
+REASONING_DEFAULT = "medium"
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,14 @@ class LiveRoute:
 def openai_route(env: Mapping[str, str]) -> LiveRoute:
     model = env.get("RKM_OPENAI_MODEL", "")
     base = env.get("RKM_OPENAI_BASE_URL") or PROXY_URL
+    effort = env.get("RKM_OPENAI_REASONING") or REASONING_DEFAULT
+    if effort not in (*REASONING_LEVELS, "off"):
+        raise ValueError(f"RKM_OPENAI_REASONING must be off or one of {', '.join(REASONING_LEVELS)}, not {effort!r}")
+    entry: dict[str, Any] = {"id": model, "name": model, "contextWindow": int(env.get("RKM_OPENAI_CONTEXT") or CONTEXT_WINDOW)}
+    selection: dict[str, Any] = {"provider": "openai-plan", "model": model}
+    if effort != "off":
+        entry["reasoningEfforts"] = {level: level for level in REASONING_LEVELS}
+        selection["reasoningEffort"] = effort
     dsh = [
         {
             "id": "llm-pi-ai",
@@ -54,15 +68,16 @@ def openai_route(env: Mapping[str, str]) -> LiveRoute:
                         "api": "openai-responses",
                         "baseURL": base,
                         "compat": {"supportsMaxOutputTokens": False},
-                        "models": [{"id": model, "name": model, "contextWindow": int(env.get("RKM_OPENAI_CONTEXT") or CONTEXT_WINDOW)}],
+                        "models": [entry],
                     }
                 }
             },
         },
-        {"id": "agent-default-model", "name": "@deepseek-ai/dsh-agent-default-model", "config": {"provider": "openai-plan", "model": model}},
+        {"id": "agent-default-model", "name": "@deepseek-ai/dsh-agent-default-model", "config": selection},
     ]
     miner = {"backend": "openai_compat", "base_url": base, "model": env.get("RKM_MINER_MODEL") or model, "api_key_env": "RKM_OPENAI_PROXY_KEY"}
-    return LiveRoute("openai", miner, dsh, f"OpenAI {model} on the ChatGPT plan via {base}", ("RKM_OPENAI_PROXY_KEY", "RKM_OPENAI_MODEL"))
+    route = f"OpenAI {model} (reasoning {effort}) on the ChatGPT plan via {base}"
+    return LiveRoute("openai", miner, dsh, route, ("RKM_OPENAI_PROXY_KEY", "RKM_OPENAI_MODEL"))
 
 
 def live_route(env: Mapping[str, str] | None = None) -> LiveRoute:

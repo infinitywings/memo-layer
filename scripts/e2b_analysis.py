@@ -13,7 +13,7 @@ tests in which a tie counts against the prediction.
 
 Usage: .venv/bin/python scripts/e2b_analysis.py [--e2 DIR ...] [--e2b DIR ...] [--promoted]
        On OpenAI runs, compare only concurrent controls:
-       .venv/bin/python scripts/e2b_analysis.py --e2b workload-runs/e2b-openai/seed-* --e2
+       .venv/bin/python scripts/e2b_analysis.py --e2b workload-runs/e2b-gpt-6.2-sol-medium/seed-* --e2
 """
 
 from __future__ import annotations

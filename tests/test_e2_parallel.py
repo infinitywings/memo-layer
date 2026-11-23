@@ -104,3 +104,11 @@ def test_openai_jobs_get_projects_of_their_own(tmp_path):
 def test_an_openai_run_needs_a_model():
     with pytest.raises(SystemExit, match="needs --model"):
         par.provider_env("openai", None)
+
+
+def test_openai_runs_land_in_a_directory_per_model_and_reasoning_level():
+    assert par.run_suffix("deepseek", None, "medium") == ""
+    assert par.run_suffix("openai", "gpt-6.2-sol", "high") == "-gpt-6.2-sol-high"
+    with pytest.raises(SystemExit, match="needs --model"):
+        par.run_suffix("openai", None, "medium")
+
