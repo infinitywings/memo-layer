@@ -201,3 +201,23 @@ def test_a_rerun_after_an_interruption_starts_the_item_from_a_clean_ledger(tmp_p
     ledger = tmp_path / "ledgers" / item.family / item.key / "main" / "rka" / "ledger.jsonl"
     starts = [json.loads(x) for x in ledger.read_text().splitlines() if json.loads(x)["kind"] == "session_start"]
     assert len([s for s in starts if s["session_id"].endswith("-s1")]) == 1
+
+
+def test_a_reused_run_keeps_session_one_and_mining_and_asks_only_the_rerun_arms_again(tmp_path):
+    first = run(tmp_path / "a", Agent()).run_item(conditioning())
+    mined = []
+
+    def no_mining(prompt):
+        mined.append(prompt)
+        return scripted_miner(prompt)
+
+    agent = Agent()
+    again = e3.Run(tmp_path / "b", "agent-model", "medium", "judge", "http://unused", agent, mine_backend=no_mining,
+                   reuse=tmp_path / "a", rerun=("sourced",)).run_item(conditioning())
+    old, new = first["contexts"]["main"], again["contexts"]["main"]
+    assert mined == []
+    assert [r["content"] for r in new["records"]] == [r["content"] for r in old["records"]] == [LESSON]
+    assert [m for m, _, _ in agent.calls] == ["agent-model", "judge"]
+    assert new["arms"]["sourced"]["packet"] == old["arms"]["sourced"]["packet"]
+    assert {a: new["arms"][a] for a in e3.ARMS if a != "sourced"} == {a: old["arms"][a] for a in e3.ARMS if a != "sourced"}
+    assert again["verdicts"] == first["verdicts"]

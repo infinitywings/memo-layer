@@ -525,6 +525,34 @@ class Run:
     complete: Complete
     mine_backend: backends.Backend | None = None  # tests: a scripted miner and curator
     themes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    reuse: Path | None = None  # an earlier run whose session 1, mining and other arms are kept
+    rerun: tuple[str, ...] = ()  # with `reuse`: the arms answered and judged again
+
+    def reused(self, item: Item, context: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        """This item's answers from `reuse`, with only the `rerun` arms asked
+        again: session 1 and its mining are copied from the earlier ledger
+        (its session-2 deliveries dropped), so the records are the same and
+        only the packet can differ."""
+        assert self.reuse is not None
+        prior = json.loads((self.reuse / "items" / item.family / f"{item.key}.json").read_text())
+        got = prior["contexts"][context]
+        src = self.reuse / "ledgers" / item.family / item.key / context / "rka" / "ledger.jsonl"
+        base = self.out / "ledgers" / item.family / item.key / context / "rka"
+        shutil.rmtree(base, ignore_errors=True)
+        base.mkdir(parents=True)
+        kept = [line for line in src.read_text().splitlines() if "-s2-" not in json.loads(line)["session_id"]]
+        (base / "ledger.jsonl").write_text("".join(f"{line}\n" for line in kept))
+        cfg = memory_config(base, model=self.agent_model, base_url=self.base_url, notepad_on=False)
+        learned = Learned(Memory.open(cfg), state_for(item, context, self.agent_model), got["mined"], [])
+        ctx = item.contexts[context]
+        arms, usage = dict(got["arms"]), {}
+        for arm in self.rerun:
+            text, ids = packet_for(learned, item, context, arm)
+            answer = arms["none"]["answer"]
+            if text:
+                answer, usage[f"agent:{arm}"] = self.complete(session2_messages(ctx, text), self.agent_model, self.effort)
+            arms[arm] = {"packet": text, "record_ids": ids, "answer": answer, "reused_none": not text}
+        return {**got, "arms": arms, "records": records_of(learned), "usage": usage}, prior
 
     def item_path(self, item: Item) -> Path:
         return self.out / "items" / item.family / f"{item.key}.json"
@@ -579,6 +607,11 @@ class Run:
                 scores[arm] = priming_judge(theme, item.contexts["experimental"].probe, exp["arms"][arm]["answer"],
                                             ctl["arms"][arm]["answer"], exp_text, ctl_text, self.complete, self.judge_model)
             doc.update({"contexts": {"experimental": exp, "control": ctl}, "scores": scores})
+        elif self.reuse is not None:
+            got, prior = self.reused(item, "main")
+            verdicts = {arm: verdict(item, got["arms"][arm]["answer"], self.complete, self.judge_model)
+                        if arm in self.rerun else prior["verdicts"][arm] for arm in ARMS}
+            doc.update({"contexts": {"main": got}, "verdicts": verdicts})
         else:
             got = self.answers(item, "main")
             doc.update({"contexts": {"main": got}, "verdicts": {arm: verdict(item, got["arms"][arm]["answer"], self.complete, self.judge_model) for arm in ARMS}})
@@ -600,6 +633,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--judge", default="gpt-6.2-astra")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--reuse", type=Path, help="keep session 1, mining and the other arms from this earlier run")
+    ap.add_argument("--rerun", default="sourced,ungated", help="with --reuse: the arms to answer and judge again")
     args = ap.parse_args(argv)
     if args.command == "fetch":
         fetch(args.data)
@@ -630,7 +665,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     meta_path.write_text(json.dumps(meta, indent=1))
     os.environ["RKM_OPENAI_PROXY_KEY"] = plan_key()
     plan = Plan(key=os.environ["RKM_OPENAI_PROXY_KEY"])
-    run = Run(out, args.model, args.reasoning, args.judge, PROXY, plan.complete, themes=theme_map(args.data))
+    rerun = tuple(a for a in args.rerun.split(",") if a) if args.reuse else ()
+    if set(rerun) - set(LEDGER_ARMS):
+        ap.error(f"--rerun takes arms delivered from the ledger: {LEDGER_ARMS}")
+    if args.reuse and "priming" in families:
+        ap.error("--reuse is for the accuracy families")
+    run = Run(out, args.model, args.reasoning, args.judge, PROXY, plan.complete, themes=theme_map(args.data),
+              reuse=args.reuse, rerun=rerun)
     done = failed = 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(run.run_item, i): i for i in items}
