@@ -23,7 +23,7 @@ def _print(obj) -> None:
 def cmd_hook(args) -> int:
     from rka_memory.ledger import hooks
 
-    return hooks.main(args.event, sys.stdin.read())
+    return hooks.main(args.event, sys.stdin.read(), agent=args.agent)
 
 
 def cmd_gate(args) -> int:
@@ -308,8 +308,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="rka-memory", description="Validity-gated memory for Claude Code agents")
     sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("hook", help="Claude Code hook entrypoint (reads hook JSON on stdin)")
+    s = sub.add_parser("hook", help="Claude Code or Codex hook entrypoint (reads hook JSON on stdin)")
     s.add_argument("event")
+    s.add_argument("--agent", choices=["claude_code", "codex"], default="claude_code", help="whose hook payload this is")
     s.set_defaults(fn=cmd_hook)
 
     sub.add_parser("gate", help="run the validity engine and persist rung changes").set_defaults(fn=cmd_gate)

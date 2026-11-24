@@ -566,7 +566,7 @@ def _log_error(log_dir: Path | None, event_name: str, raw_stdin: str) -> None:
         pass
 
 
-def main(event_name: str, raw_stdin: str) -> int:
+def main(event_name: str, raw_stdin: str, agent: str = "claude_code") -> int:
     if os.environ.get(DISABLE_ENV) == "1":
         return 0
     log_dir = None
@@ -576,10 +576,16 @@ def main(event_name: str, raw_stdin: str) -> int:
         payload = json.loads(raw_stdin)
         if not isinstance(payload, dict):
             raise ValueError("hook payload is not a JSON object")
-        handler = HANDLERS.get(event_name)
-        output = handler(memory, payload) if handler else None
-        if output:
-            print(json.dumps(output, ensure_ascii=False), flush=True)
+        calls = [(event_name, payload)]
+        if agent == "codex":
+            from rka_memory.ledger.adapters import codex
+
+            calls = codex.normalize(event_name, payload)
+        for name, body in calls:
+            handler = HANDLERS.get(name)
+            output = handler(memory, body) if handler else None
+            if output:
+                print(json.dumps(output, ensure_ascii=False), flush=True)
     except Exception:
         _log_error(log_dir, event_name, raw_stdin)
     return 0

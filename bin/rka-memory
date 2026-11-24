@@ -1,0 +1,12 @@
+#!/bin/sh
+# Runs this plugin's own copy of rka-memory through uv, so the hooks and the
+# MCP server need nothing installed beyond uv. The environment is built in
+# the plugin directory on first use.
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+for uv in "$(command -v uv 2>/dev/null)" "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" /opt/homebrew/bin/uv /usr/local/bin/uv; do
+  if [ -n "$uv" ] && [ -x "$uv" ]; then
+    exec "$uv" run --quiet --frozen --no-dev --project "$root" -- rka-memory "$@"
+  fi
+done
+echo "rka-memory: uv not found; install it from https://docs.astral.sh/uv/" >&2
+exit 0

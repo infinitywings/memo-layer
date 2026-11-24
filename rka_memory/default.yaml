@@ -36,7 +36,7 @@ weights:                      # grounding weight per event kind (absent kinds ne
 
 packet:
   budget_tokens: 1200
-  arms: [gated, none]         # rotated by calendar day; add `ungated` for the L1-everything baseline
+  arms: [gated]               # rotated by calendar day; experiments use [gated, none], and `ungated` is the L1-everything baseline
 
 scope:
   fields: [project, toolchain]  # the state fields a record's scope may constrain; the others are always open
@@ -51,7 +51,7 @@ signals:
   payload_max_chars: 2000
 
 miner:
-  backend: claude_cli         # claude_cli | codex_cli | openai_compat | none | silent (mines, proposes nothing)
+  backend: auto               # auto (claude_cli if `claude` is installed, else codex_cli, else none) | claude_cli | codex_cli | openai_compat | none | silent
   model: null                 # null: claude_cli uses haiku, codex_cli Codex's own default; openai_compat needs a model id
   timeout_seconds: 240
   events_max_chars: 200000    # events per miner prompt, in characters; a longer session is mined in several prompts, oldest first

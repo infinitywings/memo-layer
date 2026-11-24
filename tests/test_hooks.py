@@ -755,3 +755,44 @@ def test_a_restated_request_with_a_courtesy_word_is_still_a_repeat(memory, proj,
     fire(capsys, "UserPromptSubmit", {**a, "prompt_id": "pa", "prompt": "Always run the parser tests with uv before committing"})
     fire(capsys, "UserPromptSubmit", {**b, "prompt_id": "pb", "prompt": "Always run the parser tests with uv before committing, please"})
     assert len([e for e in memory.ledger.read() if e.kind is Kind.USER_REPEAT]) == 1
+
+
+def fire_codex(capsys, event: str, payload: dict):
+    assert hooks.main(event, json.dumps({**payload, "hook_event_name": event}), agent="codex") == 0
+    out = capsys.readouterr().out.strip()
+    return json.loads(out) if out else None
+
+
+def test_a_codex_session_tracks_patched_files_and_never_logs_an_unknown_outcome_as_a_pass(
+    memory, proj, tmp_path, spawned, capsys
+):
+    a = {"session_id": "cx-a", "transcript_path": str(tmp_path / "rollout.jsonl"), "cwd": str(proj), "model": "gpt-6.2-sol"}
+    fire_codex(capsys, "SessionStart", {**a, "source": "startup"})
+    fire_codex(capsys, "UserPromptSubmit", {**a, "turn_id": "t1", "prompt": "add a parser module"})
+    patch = "*** Begin Patch\n*** Add File: parser.py\n+x = 1\n*** End Patch\n"
+    call = {"turn_id": "t1", "tool_name": "apply_patch", "tool_use_id": "c1", "tool_input": {"command": patch}}
+    fire_codex(capsys, "PreToolUse", {**a, **call})
+    (proj / "parser.py").write_text("x = 1\n")
+    fire_codex(capsys, "PostToolUse", {**a, **call, "tool_response": "Success. Updated the following files:\nA parser.py"})
+    unknown = {"turn_id": "t1", "tool_name": "Bash", "tool_use_id": "c2", "tool_input": {"command": ["make", "lint"]},
+               "tool_response": "lint: 3 errors"}
+    fire_codex(capsys, "PostToolUse", {**a, **unknown})
+    stated = {"turn_id": "t1", "tool_name": "Bash", "tool_use_id": "c3", "tool_input": {"command": "make build"},
+              "tool_response": {"exit_code": 1, "stdout": "", "stderr": "boom"}}
+    fire_codex(capsys, "PostToolUse", {**a, **stated})
+    fire_codex(capsys, "Stop", {**a, "turn_id": "t1", "stop_hook_active": False, "last_assistant_message": "Added parser.py."})
+    fire_codex(capsys, "SessionEnd", {**a, "reason": "other"})
+
+    (proj / "parser.py").write_text("x = 2  # the user's fix\n")
+    fire_codex(capsys, "SessionStart", {**a, "session_id": "cx-b", "source": "startup"})
+
+    events = memory.ledger.read()
+    writes = [(e.payload["tool"], e.payload["path"]) for e in events if e.kind is Kind.FILE_WRITE and e.session_id == "cx-a"]
+    assert writes[0] == ("Edit", str(proj / "parser.py"))
+    calls = [e.payload.get("input") for e in events if e.kind is Kind.TOOL_CALL]
+    assert "make lint" in calls[1] and "make build" in calls[2]
+    assert [e.payload["code"] for e in events if e.kind is Kind.EXIT_CODE] == [1]
+    assert [e.payload["text"] for e in events if e.kind is Kind.ASSISTANT_MSG] == ["Added parser.py."]
+    assert [(e.kind.value, e.payload["path"]) for e in events if e.kind in (Kind.USER_EDIT, Kind.USER_UNDO)] == [
+        ("user_edit", str(proj / "parser.py"))
+    ]

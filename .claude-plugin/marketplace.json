@@ -1,0 +1,17 @@
+{
+  "name": "memo-layer",
+  "owner": {
+    "name": "infinitywings"
+  },
+  "metadata": {
+    "description": "rka-memory, a validity-gated memory layer for coding agents (trial release)."
+  },
+  "plugins": [
+    {
+      "name": "rka-memory",
+      "source": "./",
+      "description": "Validity-gated memory for coding agents: lessons reach the agent only after evidence it did not write (tests, exit codes, your own words) supports them.",
+      "version": "0.1.0"
+    }
+  ]
+}

@@ -262,6 +262,20 @@ BACKENDS: dict[str, Callable[[Config], Backend]] = {
 }
 
 
+def auto(cfg: Config) -> Backend:
+    """The CLI that is installed: Claude Code's first, then Codex's, else none.
+    Each runs under that CLI's own login."""
+    import shutil
+
+    for name in ("claude_cli", "codex_cli"):
+        if shutil.which(name.removesuffix("_cli")):
+            return BACKENDS[name](cfg)
+    return none
+
+
+BACKENDS["auto"] = auto
+
+
 def backend_for(cfg: Config) -> Backend:
     try:
         return BACKENDS[cfg.miner_backend](cfg)

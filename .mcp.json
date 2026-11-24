@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "rka-memory": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/rka-memory",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
