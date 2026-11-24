@@ -70,3 +70,21 @@ def test_a_copied_plugin_runs_even_when_the_source_held_a_broken_environment(tmp
                          env=isolated_env(tmp_path))
     assert out.returncode == 0 and "hook" in out.stdout, out.stderr
     assert not any((copy / ".venv").iterdir())
+
+
+def test_each_skill_is_named_for_its_directory_and_codex_is_told_where_they_are():
+    import yaml
+
+    skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
+    assert [p.parent.name for p in skills] == ["rka-memory-doctor", "rka-memory-review", "rka-memory-rules", "using-rka-memory"]
+    for path in skills:
+        _, front, body = path.read_text().split("---\n", 2)
+        meta = yaml.safe_load(front)
+        assert meta["name"] == path.parent.name and 0 < len(meta["description"]) <= 1024
+        assert body.strip()
+    assert json.loads((ROOT / ".codex-plugin/plugin.json").read_text())["skills"] == "./skills/"
+
+
+def test_the_antigravity_rules_are_generated_from_the_current_skills():
+    out = subprocess.run(["uv", "run", "python", "scripts/antigravity_rules.py", "--check"], cwd=ROOT, timeout=120)
+    assert out.returncode == 0, "run scripts/antigravity_rules.py"
