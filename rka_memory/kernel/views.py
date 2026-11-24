@@ -70,7 +70,9 @@ HEADER = (
 )
 SOURCED_HEADER = (
     "## Notes from earlier sessions (rka-memory)\n"
-    "Each note ends with its source. If one is wrong, tell the user, who can type `rkm reject <id> <reason>`."
+    "Each note is a lesson from an earlier session in this environment and ends with its source; none is confirmed yet. "
+    "When the current request matches the situation a note describes, act on the note and say in one sentence "
+    "which note, by its id, changed what you do. If one is wrong, tell the user, who can type `rkm reject <id> <reason>`."
 )
 AMENDMENTS = "### Amendments to the records above"
 UNVALIDATED = "### Not yet validated"

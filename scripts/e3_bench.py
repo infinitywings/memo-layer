@@ -9,7 +9,7 @@ github.com/qinchonghanzuibang/ImplicitMemBench), copied with attribution.
 
     scripts/e3_bench.py fetch
     scripts/e3_bench.py run --pilot [--out DIR] [--workers N]
-    scripts/e3_bench.py run [--families a,b] [--files N] [--limit N]
+    scripts/e3_bench.py run [--families a,b] [--seeds a,b] [--limit N]
 
 The agent and the miner run on the plan proxy (scripts/openai_plan.py
 serve); the judge is a different model on the same proxy. No ledger, skill
@@ -593,6 +593,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--data", type=Path, default=DATA_DIR)
     ap.add_argument("--pilot", action="store_true")
     ap.add_argument("--families", default=",".join(FAMILIES))
+    ap.add_argument("--seeds", default="", help="only these task seeds, as in item keys (a,b)")
     ap.add_argument("--limit", type=int, default=0, help="at most N items (after --pilot)")
     ap.add_argument("--model", default=os.environ.get("RKM_OPENAI_MODEL") or "gpt-6.2-sol")
     ap.add_argument("--reasoning", default=os.environ.get("RKM_OPENAI_REASONING") or "medium")
@@ -610,6 +611,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     items = load(args.data, families)
     if args.pilot:
         items = pilot(items)
+    if args.seeds:
+        seeds = set(args.seeds.split(","))
+        items = [i for i in items if i.key.rsplit("-", 1)[0] in seeds]
     if args.limit:
         items = items[: args.limit]
     if args.command == "list":
