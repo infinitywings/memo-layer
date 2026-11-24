@@ -191,7 +191,7 @@ def run_one(case: str, arm: str, n: int, plugin: Path, root: Path, model: str) -
     (project / "Makefile").write_text(MAKEFILE)
     env = {**os.environ, **seed(base / "ledger", project.resolve())}
     cmd = ["claude", "-p", "--plugin-dir", str(plugin), "--model", model, "--output-format", "stream-json",
-           "--verbose", "--permission-mode", "default", "--allowedTools", *TOOLS]
+           "--verbose", "--setting-sources", "local", "--permission-mode", "default", "--allowedTools", *TOOLS]
     out = subprocess.run(cmd, input=CASES[case], capture_output=True, text=True, timeout=600, cwd=project, env=env)
     (base / "stream.jsonl").write_text(out.stdout)
     answer, calls = stream(out.stdout)

@@ -1,4 +1,4 @@
-# Installing rka-memory 0.1 (trial)
+# Installing rka-memory 0.1.1 (trial)
 
 This file is written for a coding agent to follow on the user's behalf in
 Claude Code, Codex or Antigravity. Run each step in order, run every
@@ -13,9 +13,14 @@ one ledger.
 
 | Agent | What this release installs | Learns from its sessions | Receives memory |
 |---|---|---|---|
-| Claude Code | plugin: hooks and MCP server | yes | yes, at session start |
-| Codex | plugin: hooks; MCP server added by command | yes (experimental) | yes, at session start |
-| Antigravity | MCP server and a rule file | no | yes, through MCP tools |
+| Claude Code | plugin: hooks, MCP server, 4 skills | yes | yes, at session start |
+| Codex | plugin: hooks, 4 skills; MCP server added by command | yes (experimental) | yes, at session start |
+| Antigravity | MCP server and 4 rule files | no | yes, through MCP tools |
+
+The skills (rule files in Antigravity) teach the agent how to use the
+memory: `using-rka-memory` (acting on notes), `rka-memory-rules` (when the
+user wants something remembered), `rka-memory-review` (showing what was
+learned), `rka-memory-doctor` (when something seems wrong).
 
 ## Rules for the installing agent
 
@@ -104,15 +109,24 @@ load at session start.
 ```bash
 codex plugin marketplace add "$SRC"
 codex plugin add rka-memory@memo-layer
-codex mcp add rka-memory -- "$HOME/.codex/plugins/cache/memo-layer/rka-memory/0.1.0/bin/rka-memory" mcp
+CX=$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/memo-layer/rka-memory/*/ | sort -V | tail -1)
+codex mcp add rka-memory -- "${CX}bin/rka-memory" mcp
 codex plugin list
 codex mcp list
 ```
 
 Check: `codex plugin list` shows `rka-memory@memo-layer` as installed,
-and `codex mcp list` shows `rka-memory`. If `CODEX_HOME` is set, the
-plugin cache is under `$CODEX_HOME/plugins/cache/` instead of
-`~/.codex/plugins/cache/`; use that path in the `codex mcp add` line.
+and `codex mcp list` shows `rka-memory` with a command ending in
+`bin/rka-memory`.
+
+Learned procedures become skills. For Codex to read them too, add this to
+`~/.rka-memory/config.yaml` (create the file if needed; if it already has a
+`skills:` section, add the key there instead of a second section):
+
+```yaml
+skills:
+  codex_dir: ~/.agents/skills
+```
 
 **Stop**: Codex runs a plugin's hooks only after the user reviews them.
 Tell the user to start `codex`, type `/hooks`, and trust the rka-memory
@@ -146,18 +160,23 @@ use the memory learned in Claude Code and Codex sessions.
    }
    ```
 
-2. Create `~/.gemini/config/rules/rka-memory.md` with exactly this content:
+2. Copy the rule files. First check that none of them would replace a rule
+   the user already has:
 
-   ```markdown
-   ---
-   trigger: always_on
-   ---
-   At the start of a task in a project, call the rka-memory `memory_packet`
-   tool once with `state: {"project": "<absolute path of the workspace root>"}`.
-   Treat what it returns as validated lessons from earlier sessions for this
-   project: follow them unless the user's request says otherwise. Never call
-   `memory_confirm` or `memory_reject` on your own judgment; they only ask
-   the user, who decides.
+   ```bash
+   mkdir -p ~/.gemini/config/rules
+   for f in "$SRC"/antigravity/rules/*.md; do
+     t="$HOME/.gemini/config/rules/$(basename "$f")"
+     [ -e "$t" ] && ! cmp -s "$f" "$t" && echo "exists: $t"
+   done
+   ```
+
+   If that prints any line, **Stop** and ask the user whether to replace
+   those files. Otherwise (or once they agree):
+
+   ```bash
+   cp "$SRC"/antigravity/rules/*.md ~/.gemini/config/rules/
+   rm -f ~/.gemini/config/rules/rka-memory.md   # the single rule file of 0.1.0
    ```
 
 Check: run `python3 -m json.tool ~/.gemini/config/mcp_config.json` and
@@ -168,12 +187,14 @@ check that `rka-memory` shows as running.
 ## Step 4. Check the install
 
 ```bash
-"$SRC/bin/rka-memory" status
+"$SRC/bin/rka-memory" doctor
 ```
 
-Check: it exits 0 and prints a count line such as
-`0 events, 0 sessions, 0 records` (a fresh install) or larger numbers if
-the user already has a ledger.
+Check: it exits 0 and prints `rka-memory 0.1.1` on its first line, then
+counts and times only (an agent never needs record text to check the
+install). On a fresh install it shows `events: 0` and `records by rung:
+none`. Do not run `rka-memory status` for the user: it prints records the
+gate has not validated, which the agent must not read.
 
 Then tell the user how to see it work: after a session in Claude Code or
 Codex, `~/.rka-memory/ledger.jsonl` holds that session's events. Records
@@ -203,13 +224,40 @@ the background when a session ends.
   ```
 
   In Antigravity, the user runs `"$SRC/bin/rka-memory" confirm <record-id>`
-  or `reject <record-id> <reason>` in a terminal.
+  or `reject <record-id> <reason>` in a terminal. The CLI's verdict
+  commands refuse to run without a terminal, so an agent cannot run them.
+
+- **What the agent may not do.** Once installed, a hook denies the agent's
+  tools the `~/.rka-memory` directory and every `rka-memory` command except
+  `rka-memory doctor`. The agent uses the MCP tools instead.
 
 - **What the trial does not protect.** Installed as a plugin, rka-memory
   cannot stop the agent's own shell commands from writing to
   `~/.rka-memory`, so a prompt-injected agent could forge ledger events.
   The hardened install (`rka-memory install-hooks --harden`, in the
   README) adds an OS-level sandbox rule against that in Claude Code.
+
+## Upgrade from 0.1.0
+
+Run Step 2 again (it updates the clone in `$SRC`), then for each installed
+agent:
+
+```bash
+claude plugin marketplace update memo-layer
+claude plugin update rka-memory@memo-layer
+```
+
+```bash
+codex plugin remove rka-memory@memo-layer
+codex plugin add rka-memory@memo-layer
+codex mcp remove rka-memory
+CX=$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/memo-layer/rka-memory/*/ | sort -V | tail -1)
+codex mcp add rka-memory -- "${CX}bin/rka-memory" mcp
+```
+
+Then the Codex `codex_dir` setting in 3b, and for Antigravity, step 2 of 3c.
+Tell the user to start new sessions, and in Codex to trust the hooks again
+in `/hooks` (Codex skips hooks that changed until they are re-trusted).
 
 ## Uninstall
 
@@ -222,8 +270,10 @@ codex plugin marketplace remove memo-layer
 ```
 
 For Antigravity, remove the `rka-memory` entry from
-`~/.gemini/config/mcp_config.json` and delete
-`~/.gemini/config/rules/rka-memory.md`. Run only the lines for agents that
+`~/.gemini/config/mcp_config.json` and delete the rule files copied from
+`$SRC/antigravity/rules/` (`using-rka-memory.md`, `rka-memory-*.md`) from
+`~/.gemini/config/rules/`. For Codex, also remove `codex_dir` from
+`~/.rka-memory/config.yaml`. Run only the lines for agents that
 were installed.
 
 The ledger in `~/.rka-memory/` and the environment in
