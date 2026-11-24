@@ -105,6 +105,9 @@ def memory_lines(items: list[dict[str, Any]]) -> list[str]:
         with_rec = sum(bool(c["records"]) for c in ctxs)
         nonempty = {a: sum(bool(c["arms"][a]["packet"]) for c in ctxs) for a in ("gated", "sourced", "ungated", "notepad")}
         reasons = Counter(r["why"] for r in recs if r["rung"] != "L1")
+        unmined = sum(c["mined"].get("status") != "mined" for c in ctxs)
+        uncurated = Counter(s.get("error") or "?" for c in ctxs for s in c["curated"] if not s.get("ok"))
+        out.append(f"  miner calls failed: {unmined}; curator calls without notes: {dict(uncurated) or 0}")
         out.append(f"{SHORT[family]}: {len(ctxs)} sessions mined, {with_rec} with a record; {len(recs)} records "
                    f"{dict(sorted(rungs.items()))}, kinds {dict(sorted(kinds.items()))}")
         out.append(f"  packets not empty: {nonempty}")

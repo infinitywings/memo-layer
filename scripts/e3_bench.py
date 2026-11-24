@@ -313,7 +313,9 @@ class Plan:
                 time.sleep(delay)
                 delay *= 2
                 continue
-            if resp.status_code in (500, 502, 503, 504) and attempt < self.attempts:
+            # A rate limit passes; a used-up plan (subscription_sharing_*) does not.
+            limited = resp.status_code == 429 and "Rate limit exceeded" in resp.text
+            if (resp.status_code in (500, 502, 503, 504) or limited) and attempt < self.attempts:
                 time.sleep(delay)
                 delay *= 2
                 continue
