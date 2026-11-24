@@ -191,3 +191,13 @@ def test_the_analysis_reads_a_scripted_run(tmp_path, capsys):
     assert "Q3 sourced and ungated +15 or more over none in conditioning -> holds" in out
     assert "conditioning: 2 sessions mined, 2 with a record; 2 records {'L1': 2}, kinds {'constraint': 2}" in out
     assert "packets not empty: {'gated': 0, 'sourced': 2, 'ungated': 2, 'notepad': 2}" in out
+
+
+def test_a_rerun_after_an_interruption_starts_the_item_from_a_clean_ledger(tmp_path):
+    r = run(tmp_path, Agent())
+    item = conditioning()
+    r.answers(item, "main")  # interrupted: ledgers written, no result file
+    r.run_item(item)
+    ledger = tmp_path / "ledgers" / item.family / item.key / "main" / "rka" / "ledger.jsonl"
+    starts = [json.loads(x) for x in ledger.read_text().splitlines() if json.loads(x)["kind"] == "session_start"]
+    assert len([s for s in starts if s["session_id"].endswith("-s1")]) == 1

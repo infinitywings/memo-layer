@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import traceback
@@ -532,6 +533,9 @@ class Run:
         (docs/E3.md Section 11)."""
         ctx = item.contexts[context]
         base = self.out / "ledgers" / item.family / item.key / context
+        # An item without a result file never finished: a ledger it left is
+        # partial, and appending session 1 again would repeat its events.
+        shutil.rmtree(base, ignore_errors=True)
         usage: dict[str, Any] = {}
         arms: dict[str, Any] = {}
 
