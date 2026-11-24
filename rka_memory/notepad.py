@@ -20,7 +20,7 @@ from string import Template
 from typing import TYPE_CHECKING, Any
 
 from rka_memory.config import Config
-from rka_memory.domain import SHOWN_KINDS, canonical_json
+from rka_memory.domain import SHOWN_KINDS, Kind, canonical_json
 from rka_memory.kernel.views import estimate_tokens
 from rka_memory.miner import backends
 
@@ -166,7 +166,8 @@ def digest(world: World, session_id: str, cfg: Config, limit: int = DIGEST_MAX_C
     up to `payload_max_chars`, ten times what a miner prompt line holds, so
     a file the agent read or a message the check printed is there whole."""
     sess = world.sessions.get(session_id)
-    events = [e for e in sess.events if e.kind in SHOWN_KINDS] if sess else []
+    shown = SHOWN_KINDS | {Kind.ASSISTANT_MSG} if cfg.notepad.assistant_turns else SHOWN_KINDS
+    events = [e for e in sess.events if e.kind in shown] if sess else []
     lines = []
     for e in events:
         payload = canonical_json(dict(e.payload))

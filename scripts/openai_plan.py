@@ -358,12 +358,20 @@ def sanitize(body: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
 
 def chat_to_responses(body: dict[str, Any]) -> dict[str, Any]:
-    """A text-only chat completion request as a Responses request."""
-    system = [m["content"] for m in body.get("messages", []) if m.get("role") == "system"]
-    items = [{"role": m["role"], "content": m["content"]} for m in body.get("messages", []) if m.get("role") != "system"]
+    """A text-only chat completion request as a Responses request. System
+    messages before the first other message become the instructions; a
+    later one stays in place, as a system item. `reasoning_effort` becomes
+    the Responses reasoning effort."""
+    messages = list(body.get("messages", []))
+    lead = 0
+    while lead < len(messages) and messages[lead].get("role") == "system":
+        lead += 1
+    items = [{"role": m["role"], "content": m["content"]} for m in messages[lead:]]
     out: dict[str, Any] = {"model": body["model"], "input": items}
-    if system:
-        out["instructions"] = "\n\n".join(system)
+    if lead:
+        out["instructions"] = "\n\n".join(m["content"] for m in messages[:lead])
+    if body.get("reasoning_effort"):
+        out["reasoning"] = {"effort": body["reasoning_effort"]}
     return out
 
 

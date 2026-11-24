@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-from fractions import Fraction
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +104,9 @@ class NotepadConfig:
     api_key_env: str | None = None
     timeout_seconds: int = 240
     consolidate_every: int = 5
+    # E3 (docs/E3.md Section 4): the curator also reads what the agent said,
+    # as outside memory systems do. Off keeps E2's curator.
+    assistant_turns: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,6 +260,7 @@ def _notepad(raw: dict[str, Any]) -> NotepadConfig:
         api_key_env=raw.get("api_key_env"),
         timeout_seconds=int(raw.get("timeout_seconds", NotepadConfig.timeout_seconds)),
         consolidate_every=every,
+        assistant_turns=_flag(raw.get("assistant_turns", False), "notepad.assistant_turns"),
     )
 
 
