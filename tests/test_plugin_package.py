@@ -49,8 +49,15 @@ def test_every_manifest_carries_the_package_version_and_points_at_this_plugin():
     assert (mcp["command"], mcp["args"]) == ("${CLAUDE_PLUGIN_ROOT}/bin/rka-memory", ["mcp"])
 
 
-def test_the_launcher_runs_this_checkouts_rka_memory():
-    out = subprocess.run([str(ROOT / "bin/rka-memory"), "--help"], capture_output=True, text=True, timeout=120)
+def isolated_env(home: Path) -> dict[str, str]:
+    """A HOME of its own, so the launcher's environment is built there and not in the user's cache."""
+    uv = Path(subprocess.check_output(["which", "uv"], text=True).strip())
+    return {"HOME": str(home), "PATH": f"/usr/bin:/bin:{uv.parent}"}
+
+
+def test_the_launcher_runs_this_checkouts_rka_memory(tmp_path):
+    out = subprocess.run([str(ROOT / "bin/rka-memory"), "--help"], capture_output=True, text=True, timeout=300,
+                         env=isolated_env(tmp_path))
     assert out.returncode == 0 and "hook" in out.stdout
 
 
@@ -59,7 +66,7 @@ def test_a_copied_plugin_runs_even_when_the_source_held_a_broken_environment(tmp
     subprocess.run(f"git -C {ROOT} ls-files -z | xargs -0 -I{{}} rsync -R {{}} {copy}/", shell=True, check=True,
                    cwd=ROOT, capture_output=True)
     (copy / ".venv").mkdir()  # what a copy of a checkout or a used plugin directory carries
-    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin:" + str(Path(subprocess.check_output(["which", "uv"], text=True).strip()).parent)}
-    out = subprocess.run([str(copy / "bin/rka-memory"), "--help"], capture_output=True, text=True, timeout=300, env=env)
+    out = subprocess.run([str(copy / "bin/rka-memory"), "--help"], capture_output=True, text=True, timeout=300,
+                         env=isolated_env(tmp_path))
     assert out.returncode == 0 and "hook" in out.stdout, out.stderr
     assert not any((copy / ".venv").iterdir())
