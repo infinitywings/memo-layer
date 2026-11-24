@@ -157,8 +157,17 @@ def stream(out: str) -> tuple[str, list[dict]]:
 
 
 def judge(reply: str) -> bool:
-    out = subprocess.run(["claude", "-p", JUDGE.format(reply=reply), "--model", "haiku"],
-                         capture_output=True, text=True, timeout=180, cwd=tempfile.gettempdir())
+    """The majority of three grades: one haiku grade varies on borderline replies."""
+    return sum(_grade_once(reply) for _ in range(3)) >= 2
+
+
+def _grade_once(reply: str) -> bool:
+    """A grader with no tools, no MCP servers and no user settings: it reads the
+    reply and answers, so it cannot wander off and reply in prose."""
+    out = subprocess.run(
+        ["claude", "-p", JUDGE.format(reply=reply), "--model", "haiku", "--tools", "", "--strict-mcp-config",
+         "--setting-sources", "local", "--system-prompt", "You grade replies. Answer with one word: PASS or FAIL."],
+        capture_output=True, text=True, timeout=180, cwd=tempfile.gettempdir())
     return out.stdout.strip().upper().startswith("PASS")
 
 
@@ -205,7 +214,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", default="sonnet")
     ap.add_argument("--cases", default=",".join(CASES))
     ap.add_argument("--out", type=Path, default=Path(tempfile.mkdtemp(prefix="rkm-skill-eval-")))
+    ap.add_argument("--regrade", action="store_true", help="grade the `remember` answers in --out again with the judge")
     args = ap.parse_args(argv)
+    if args.regrade:
+        runs = json.loads((args.out / "results.json").read_text())
+        for r in runs:
+            if r["case"] == "remember":
+                r["passed"] = judge(r["answer"])
+                r["detail"] = f"judge={'PASS' if r['passed'] else 'FAIL'}"
+        (args.out / "results.json").write_text(json.dumps(runs, indent=1, ensure_ascii=False))
+        for case in args.cases.split(","):
+            row = {arm: sum(r["passed"] for r in runs if r["case"] == case and r["arm"] == arm) for arm in ("skills", "noskills")}
+            print(f"{case:10s} skills {row['skills']}/{args.runs}  noskills {row['noskills']}/{args.runs}")
+        return 0
     root = args.out
     plugins = {arm: export(arm, root) for arm in ("skills", "noskills")}
     runs = []
