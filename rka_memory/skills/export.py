@@ -53,6 +53,8 @@ class ExportResult:
 
 
 PROJECT_SKILLS = Path(".claude") / "skills"
+# Where Codex reads a repository's skills; written only when `skills.codex_dir` is set.
+CODEX_PROJECT_SKILLS = Path(".agents") / "skills"
 # Scope fields no skill location can enforce: they vary between sessions of
 # the same project, and Claude Code loads skills before anything checks them.
 SESSION_FIELDS = ("model_id", "task_class", "user_context")
@@ -82,7 +84,7 @@ def placements(rec: RecordState, cfg: Config) -> tuple[list[Placement], list[str
     toolchain = rec.scope.toolchain
     if project.include is None:
         gaps = session_gaps + (["project"] if project.exclude else []) + ([] if _open(toolchain) else ["toolchain"])
-        return [Placement(cfg.skills_dir, None, tuple(gaps))], []
+        return [Placement(root, None, tuple(gaps)) for root in _global_roots(cfg)], []
     out, missing = [], []
     for proj in sorted(project.include):
         path = Path(proj)
@@ -92,8 +94,16 @@ def placements(rec: RecordState, cfg: Config) -> tuple[list[Placement], list[str
         gaps = list(session_gaps)
         if not _open(toolchain) and not toolchain.covers(detect(path, cfg).toolchain):
             gaps.append("toolchain")
-        out.append(Placement(path / PROJECT_SKILLS, proj, tuple(gaps)))
+        out.extend(Placement(path / sub, proj, tuple(gaps)) for sub in _project_subdirs(cfg))
     return out, missing
+
+
+def _global_roots(cfg: Config) -> list[Path]:
+    return [cfg.skills_dir] + ([cfg.skills_codex_dir] if cfg.skills_codex_dir else [])
+
+
+def _project_subdirs(cfg: Config) -> list[Path]:
+    return [PROJECT_SKILLS] + ([CODEX_PROJECT_SKILLS] if cfg.skills_codex_dir else [])
 
 
 def render(rec: RecordState, world: World, labels: Labels, cfg: Config, placement: Placement) -> str:
@@ -111,7 +121,7 @@ def _roots(world: World, cfg: Config) -> list[Path]:
     each project any procedure or session has named."""
     projects = {p for r in world.records.values() if r.spec.kind is RecordKind.PROCEDURE for p in (r.scope.project.include or ())}
     projects |= {s.state.project for s in world.sessions.values() if s.state.project}
-    roots = [cfg.skills_dir] + [Path(p) / PROJECT_SKILLS for p in sorted(projects) if Path(p).is_absolute()]
+    roots = _global_roots(cfg) + [Path(p) / sub for p in sorted(projects) if Path(p).is_absolute() for sub in _project_subdirs(cfg)]
     return list(dict.fromkeys(roots))
 
 

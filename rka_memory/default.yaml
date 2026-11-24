@@ -101,7 +101,9 @@ graph:
 
 hooks:
   background: spawn           # spawn: mine and sync in a detached process; inline: before SessionEnd returns; off
+  guard: true                 # deny the agent's tools the ledger directory and the rka-memory CLI (except doctor)
 
 skills:
   dir: ~/.claude/skills
   export_files: true          # write SKILL.md files; off where skills come through a plugin (dsh)
+  codex_dir: null             # also write them where Codex reads skills (~/.agents/skills, and <project>/.agents/skills)

@@ -136,8 +136,10 @@ class Config:
     miner_extract_rules: bool
     graph_anchors: bool
     hooks_background: str
+    hooks_guard: bool
     skills_dir: Path
     skills_export_files: bool
+    skills_codex_dir: Path | None
     trials: TrialConfig = field(default_factory=TrialConfig)
     # Test files: changing or removing existing content in one makes a
     # session's test results weak; adding tests does not (8.1, rule 2).
@@ -341,8 +343,10 @@ def from_dict(raw: dict[str, Any]) -> Config:
         miner_extract_rules=_flag(raw["miner"].get("extract_rules", True), "miner.extract_rules"),
         graph_anchors=_flag(raw.get("graph", {}).get("anchors", True), "graph.anchors"),
         hooks_background=_choice(raw.get("hooks", {}).get("background", "spawn"), BACKGROUND, "hooks.background"),
+        hooks_guard=_flag(raw.get("hooks", {}).get("guard", True), "hooks.guard"),
         skills_dir=Path(raw["skills"]["dir"]).expanduser(),
         skills_export_files=_flag(raw["skills"].get("export_files", True), "skills.export_files"),
+        skills_codex_dir=Path(raw["skills"]["codex_dir"]).expanduser() if raw["skills"].get("codex_dir") else None,
         trials=_trials(raw.get("trials", {})),
         check_test_globs=tuple(str(g) for g in raw.get("checks", {}).get("test_globs") or ()),
         check_config_globs=tuple(str(g) for g in raw.get("checks", {}).get("config_globs") or ()),

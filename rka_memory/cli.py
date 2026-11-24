@@ -297,6 +297,13 @@ def cmd_workload_run(args) -> int:
         return 2
 
 
+def cmd_doctor(args) -> int:
+    from rka_memory import doctor
+
+    print("\n".join(doctor.report(_memory())))
+    return 0
+
+
 def cmd_mcp(args) -> int:
     from rka_memory.mcp import server
 
@@ -403,6 +410,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_jobs)
 
     sub.add_parser("mcp", help="run the MCP server (stdio)").set_defaults(fn=cmd_mcp)
+    sub.add_parser("doctor", help="whether the memory is working, in counts and times; no record or session content").set_defaults(
+        fn=cmd_doctor
+    )
 
     s = sub.add_parser("workload", help="task streams through dsh with a scripted model (docs/WORKLOAD.md)")
     wsub = s.add_subparsers(dest="workload_command", required=True)

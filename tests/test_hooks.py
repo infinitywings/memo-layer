@@ -796,3 +796,64 @@ def test_a_codex_session_tracks_patched_files_and_never_logs_an_unknown_outcome_
     assert [(e.kind.value, e.payload["path"]) for e in events if e.kind in (Kind.USER_EDIT, Kind.USER_UNDO)] == [
         ("user_edit", str(proj / "parser.py"))
     ]
+
+
+def denial(out):
+    return out["hookSpecificOutput"]["permissionDecisionReason"] if out else None
+
+
+def test_the_guard_keeps_the_agents_tools_out_of_the_ledger_and_off_the_cli(memory, proj, tmp_path, spawned, capsys):
+    a = base("sess-g", proj, tmp_path)
+    fire(capsys, "SessionStart", {**a, "source": "startup"})
+    led = memory.cfg.ledger_dir
+
+    def pre(tool, **tool_input):
+        return denial(fire(capsys, "PreToolUse", {**a, "tool_name": tool, "tool_use_id": "g", "tool_input": tool_input}))
+
+    denied = [
+        pre("Bash", command=f"tail -5 {led}/ledger.jsonl"),
+        pre("Bash", command=f"echo '{{}}' >> {led}/ledger.jsonl"),
+        pre("Read", file_path=f"{led}/ledger.jsonl"),
+        pre("Grep", pattern="record_proposed", path=str(led)),
+        pre("Write", file_path=f"{led}/config.yaml", content="hooks: {guard: false}"),
+        pre("Bash", command="rka-memory confirm r_1"),
+        pre("Bash", command="cd /tmp && ~/.local/share/rka-memory/memo-layer/bin/rka-memory status"),
+        pre("Bash", command="uv run rka-memory rkm reject r_1 wrong"),
+        pre("Bash", command="python -m rka_memory.cli review"),
+    ]
+    assert all(denied), denied
+    assert "ledger" in denied[0] and "`rka-memory confirm`" in denied[5] and "`rka-memory status`" in denied[6]
+    allowed = [
+        pre("Bash", command="rka-memory doctor"),
+        pre("Bash", command="ls ~/.cache/rka-memory && pip install rka-memory"),
+        pre("Bash", command="cd rka-memory && make test"),
+        pre("Read", file_path=f"{led}-backup/notes.md"),
+        pre("Bash", command="uv run pytest -q"),
+    ]
+    assert allowed == [None] * 5
+
+
+def test_with_the_guard_off_the_agent_may_run_the_cli(memory, proj, tmp_path, spawned, capsys):
+    import dataclasses
+
+    memory.cfg = dataclasses.replace(memory.cfg, hooks_guard=False)
+    from rka_memory.ledger import guard
+
+    assert guard.blocked("Bash", {"command": "rka-memory status"}, memory.cfg) is None
+
+
+def test_the_guard_denies_a_codex_patch_into_the_ledger_with_one_reply(memory, proj, tmp_path, spawned, capsys):
+    a = {"session_id": "cx-g", "cwd": str(proj)}
+    fire_codex(capsys, "SessionStart", {**a, "source": "startup"})
+    patch = f"*** Begin Patch\n*** Add File: ok.py\n+x\n*** Update File: {memory.cfg.ledger_dir}/ledger.jsonl\n+y\n*** End Patch\n"
+    out = fire_codex(capsys, "PreToolUse", {**a, "turn_id": "t", "tool_name": "apply_patch", "tool_use_id": "p",
+                                            "tool_input": {"command": patch}})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_the_guard_knows_every_cli_subcommand():
+    from rka_memory.cli import build_parser
+    from rka_memory.ledger import guard
+
+    sub = next(a for a in build_parser()._actions if a.dest == "command")
+    assert set(guard.SUBCOMMANDS) == set(sub.choices) - guard.ALLOWED

@@ -26,7 +26,7 @@ def test_install_is_idempotent_and_uninstall_restores_other_hooks(tmp_path):
         "hooks": {
             "PreToolUse": [
                 {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo guard"}]},
-                {"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit", "hooks": [ours("PreToolUse")]},
+                {"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob|NotebookRead", "hooks": [ours("PreToolUse")]},
             ],
             "Stop": [{"hooks": [{"type": "command", "command": "say done"}]}, {"hooks": [ours("Stop")]}],
             "SessionStart": [{"hooks": [ours("SessionStart")]}],

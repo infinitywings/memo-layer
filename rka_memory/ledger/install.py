@@ -10,13 +10,16 @@ from pathlib import Path
 from typing import Any
 
 FILE_TOOLS = "Write|Edit|MultiEdit|NotebookEdit"
+# Tools that read files: PreToolUse sees them only so the guard can keep the
+# ledger directory out of their reach (rka_memory/ledger/guard.py).
+READ_TOOLS = "Read|Grep|Glob|NotebookRead"
 
 # Hook event -> matcher (None for events that take no matcher).
 HOOK_EVENTS: dict[str, str | None] = {
     "SessionStart": None,
     "UserPromptSubmit": None,
     # Bash too: its start is when the files it changes are looked for (DESIGN_V3 3.2).
-    "PreToolUse": f"Bash|{FILE_TOOLS}",
+    "PreToolUse": f"Bash|{FILE_TOOLS}|{READ_TOOLS}",
     "PostToolUse": "*",
     "PostToolUseFailure": "*",
     "SessionEnd": None,

@@ -43,7 +43,7 @@ from rka_memory.domain import (
     parse_ts,
 )
 from rka_memory.ledger import checks as runner_checks
-from rka_memory.ledger import signals
+from rka_memory.ledger import guard, signals
 from rka_memory.ledger import state as state_mod
 from rka_memory.ledger.adapters import claude_code as adapter
 from rka_memory.miner.miner import could_apply
@@ -306,6 +306,10 @@ def on_user_prompt_submit(memory: Memory, payload: Mapping[str, Any]) -> Output:
 
 def on_pre_tool_use(memory: Memory, payload: Mapping[str, Any]) -> Output:
     use = adapter.ToolUse.parse(payload, failed=False)
+    reason = guard.blocked(use.tool, use.tool_input, memory.cfg)
+    if reason:
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": reason}}
     if use.tool == "Bash" and use.tool_use_id:
         # When the command starts: the files it leaves changed are snapshot
         # after it, for taint (DESIGN_V3 3.2).
@@ -581,11 +585,12 @@ def main(event_name: str, raw_stdin: str, agent: str = "claude_code") -> int:
             from rka_memory.ledger.adapters import codex
 
             calls = codex.normalize(event_name, payload)
-        for name, body in calls:
-            handler = HANDLERS.get(name)
-            output = handler(memory, body) if handler else None
-            if output:
-                print(json.dumps(output, ensure_ascii=False), flush=True)
+        # One reply per hook call: an apply_patch that maps to several edits
+        # answers with the first that has something to say (a denial).
+        replies = [handler(memory, body) for name, body in calls if (handler := HANDLERS.get(name))]
+        output = next((r for r in replies if r), None)
+        if output:
+            print(json.dumps(output, ensure_ascii=False), flush=True)
     except Exception:
         _log_error(log_dir, event_name, raw_stdin)
     return 0

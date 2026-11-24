@@ -218,3 +218,23 @@ def test_with_file_export_off_no_skill_file_is_written_and_earlier_ones_are_remo
     assert export_skills(memory).to_json() == {"written": [], "removed": [str(target)], "unchanged": [], "skipped": []}
     assert not target.exists()
     assert export_skills(memory).to_json() == {"written": [], "removed": [], "unchanged": [], "skipped": []}
+
+
+def test_with_a_codex_dir_a_skill_is_written_where_codex_reads_it_too_and_removed_from_both(memory, proj, tmp_path):
+    import dataclasses
+
+    memory.cfg = dataclasses.replace(memory.cfg, skills_codex_dir=tmp_path / "agents-skills")
+    st = state(proj)
+    lg = Ledger()
+    procedure(lg, st)
+    assert gate(memory, lg) == "L2"
+    claude, codex = proj / ".claude" / "skills" / "rka-r-proc", proj / ".agents" / "skills" / "rka-r-proc"
+    assert sorted(export_skills(memory).written) == sorted([str(claude), str(codex)])
+    assert (codex / "SKILL.md").read_text() == (claude / "SKILL.md").read_text()
+    assert (codex / ".gitignore").read_text() == "*\n"
+    follow(lg, "s3", st)
+    follow(lg, "s4", st)
+    follow(lg, "s5", st, passed=False, skill=True)
+    assert gate(memory, lg) == "L4"
+    assert sorted(export_skills(memory).removed) == sorted([str(claude), str(codex)])
+    assert not (tmp_path / "agents-skills").exists()
