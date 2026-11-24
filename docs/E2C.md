@@ -296,3 +296,36 @@ diff found no path by which an unconfirmed file claim reaches the agent. It
 found the standing-statement path and the withholding path above, both now
 closed. With both flags off, the miner prompt and the E2 and E2b streams are
 unchanged.
+
+## 12. Pilot
+
+Run on 2026-11-24 on the ChatGPT plan, gpt-6.2-sol at medium reasoning:
+review-oracle on calc, seed 1, 20 sessions. The run directory is
+`workload-runs/e2c-gpt-6.2-sol-medium/seed-1/e2c-calc-oracle` (not in git).
+
+- **The route works on a live model.** The run finished with 141 of 141
+  checks. In s1 the miner proposed both HANDOFF.md requirements as file
+  claims, each quoting the file. The review after s1 listed exactly those
+  two lines. The oracle confirmed T_A and rejected F_A, and both verdicts
+  were recorded. No other line was ever listed, so precision is 100% and
+  the user typed 2 verdicts in the whole run.
+- **The confirmed requirement is acted on.** T_A was delivered from s2 on
+  and met in every session after its confirm (19 of 19). T_A was not met in
+  s1, before the confirm, although the agent read the note in s1.
+- **The rejected requirement never reached the agent through memory.** No
+  packet held F_A, and no unconfirmed file claim was ever delivered. F_A
+  was followed once, in s3. The s3 prompt points the agent at HANDOFF.md,
+  and the agent read the file and took the rounding rule from it. This is
+  the file acting directly, which the gated-R1 control also sees. It is not
+  a memory effect.
+- **Usage.** 312 calls to the plan, all answered. 1.18M input tokens (212K
+  of them cached), 44K output and 8.7K reasoning tokens. This matches the
+  1.2M estimate. Stage 2's 15 runs would use about 17.6M input tokens if
+  the other arms cost the same per run.
+
+**Reading the decision rules on one run.** The rules count runs out of six.
+On one run "miner cannot find the claims" prints "triggered" only because 1
+is fewer than 4. In this run the miner found both claims in s1. "Adopt"
+does not hold for the same reason, and Q3 has no gated-R1 pair to compare.
+The pilot answers whether the route works and what it costs. The
+predictions are tested in stage 2.
