@@ -828,6 +828,9 @@ def test_the_guard_keeps_the_agents_tools_out_of_the_ledger_and_off_the_cli(memo
         pre("Bash", command="bash -c 'rka-memory review'"),
         pre("Bash", command="python -m rka_memory.cli review"),
         pre("Bash", command='python3 -c "import rka_memory"'),
+        pre("Bash", command="B=$(command -v rka-memory); $B confirm r_1"),
+        pre("Bash", command="script -q /dev/null rka-memory confirm r_1"),
+        pre("Bash", command="pip install rka-memory"),
         pre("Bash", command="RKA_MEMORY_DIR=/tmp/x rka-memory doctor"),
     ]
     assert all("directory or config" in r for r in ledger), ledger
@@ -835,8 +838,8 @@ def test_the_guard_keeps_the_agents_tools_out_of_the_ledger_and_off_the_cli(memo
     allowed = [
         pre("Bash", command="rka-memory doctor"),
         pre("Bash", command="~/.local/share/rka-memory/memo-layer/bin/rka-memory doctor 2>/dev/null || true"),
-        pre("Bash", command="ls ~/.cache/rka-memory && pip install rka-memory"),
-        pre("Bash", command="cd rka-memory && make test"),
+        pre("Bash", command="ls ~/.local/share/rka-memory/memo-layer"),
+        pre("Bash", command="rka-memory --help"),
         pre("Read", file_path=f"{led}-backup/notes.md"),
         pre("Bash", command="uv run pytest -q"),
     ]

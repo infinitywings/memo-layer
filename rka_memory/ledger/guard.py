@@ -93,11 +93,12 @@ def _next_word(rest: str) -> str | None:
 
 
 def _cli_use(command: str) -> bool:
-    """The command runs the rka-memory CLI with anything but `doctor` or help."""
+    """The command names the rka-memory CLI anywhere other than directly
+    before `doctor` or a help flag. A bare name is denied too: it can be
+    captured (`B=$(command -v rka-memory)`) and run later as `$B confirm`."""
     for match in _INVOCATION.finditer(command):
         rest = re.split(r"[;&|)`\n]", command[match.end():], maxsplit=1)[0]
-        word = _next_word(rest)
-        if word is not None and word not in ALLOWED:
+        if _next_word(rest) not in ALLOWED:
             return True
     return bool(_MODULE.search(command) or _ENV.search(command))
 

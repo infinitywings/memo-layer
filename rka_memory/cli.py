@@ -102,9 +102,13 @@ NO_TERMINAL = (
 )
 
 
-def _typed_by_a_person() -> bool:
+def _has_a_terminal() -> bool:
     """A verdict counts as the user's. Agents run their shell tools without a
-    terminal, so a verdict read from one that has none is refused."""
+    terminal, so a verdict from a process that has none is refused. This
+    raises the bar and is no proof that a person typed it: a process can
+    open a pseudo-terminal (`script`, `expect`). The guard denies the agent
+    any command that names the CLI, and the hardened install's sandbox keeps
+    the agent's commands from writing the ledger at all."""
     if sys.stdin.isatty():
         return True
     print(NO_TERMINAL, file=sys.stderr)
@@ -112,7 +116,7 @@ def _typed_by_a_person() -> bool:
 
 
 def cmd_verdict(args) -> int:
-    if not _typed_by_a_person():
+    if not _has_a_terminal():
         return 2
     mem = _memory()
     ev = mem.verdict(args.record_id, confirm=args.command == "confirm", reason=getattr(args, "reason", ""))
@@ -126,7 +130,7 @@ def cmd_rkm(args) -> int:
     from rka_memory.commands import CommandError, run
     from rka_memory.service import CLI_SESSION
 
-    if not _typed_by_a_person():
+    if not _has_a_terminal():
         return 2
 
     try:
