@@ -96,7 +96,24 @@ def cmd_graph(args) -> int:
     return 0
 
 
+NO_TERMINAL = (
+    "rka-memory: verdicts are typed by the user in a terminal; this command has none on stdin, as when an agent's "
+    "tool runs it. Type it yourself in a terminal, or as `rkm ...` for your whole prompt in Claude Code or Codex."
+)
+
+
+def _typed_by_a_person() -> bool:
+    """A verdict counts as the user's. Agents run their shell tools without a
+    terminal, so a verdict read from one that has none is refused."""
+    if sys.stdin.isatty():
+        return True
+    print(NO_TERMINAL, file=sys.stderr)
+    return False
+
+
 def cmd_verdict(args) -> int:
+    if not _typed_by_a_person():
+        return 2
     mem = _memory()
     ev = mem.verdict(args.record_id, confirm=args.command == "confirm", reason=getattr(args, "reason", ""))
     moves = mem.gate()
@@ -108,6 +125,9 @@ def cmd_rkm(args) -> int:
     """A typed rkm command from the user's own shell (rka_memory/commands.py)."""
     from rka_memory.commands import CommandError, run
     from rka_memory.service import CLI_SESSION
+
+    if not _typed_by_a_person():
+        return 2
 
     try:
         print(run(_memory(), "rkm " + " ".join(args.words), CLI_SESSION))

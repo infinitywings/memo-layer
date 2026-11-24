@@ -810,27 +810,46 @@ def test_the_guard_keeps_the_agents_tools_out_of_the_ledger_and_off_the_cli(memo
     def pre(tool, **tool_input):
         return denial(fire(capsys, "PreToolUse", {**a, "tool_name": tool, "tool_use_id": "g", "tool_input": tool_input}))
 
-    denied = [
+    ledger = [
         pre("Bash", command=f"tail -5 {led}/ledger.jsonl"),
         pre("Bash", command=f"echo '{{}}' >> {led}/ledger.jsonl"),
         pre("Read", file_path=f"{led}/ledger.jsonl"),
         pre("Grep", pattern="record_proposed", path=str(led)),
         pre("Write", file_path=f"{led}/config.yaml", content="hooks: {guard: false}"),
+        pre("Bash", command="cat ../../.rka-memory/ledger.jsonl"),
+        pre("Bash", command="cat ~/.rka-memory/config.yaml"),
+    ]
+    cli = [
         pre("Bash", command="rka-memory confirm r_1"),
+        pre("Bash", command='rka-memory "confirm" r_1'),
+        pre("Bash", command="rka-memory $(printf confirm) r_1"),
         pre("Bash", command="cd /tmp && ~/.local/share/rka-memory/memo-layer/bin/rka-memory status"),
         pre("Bash", command="uv run rka-memory rkm reject r_1 wrong"),
+        pre("Bash", command="bash -c 'rka-memory review'"),
         pre("Bash", command="python -m rka_memory.cli review"),
+        pre("Bash", command='python3 -c "import rka_memory"'),
+        pre("Bash", command="RKA_MEMORY_DIR=/tmp/x rka-memory doctor"),
     ]
-    assert all(denied), denied
-    assert "ledger" in denied[0] and "`rka-memory confirm`" in denied[5] and "`rka-memory status`" in denied[6]
+    assert all("directory or config" in r for r in ledger), ledger
+    assert all(r and "only `rka-memory doctor`" in r for r in cli), cli
     allowed = [
         pre("Bash", command="rka-memory doctor"),
+        pre("Bash", command="~/.local/share/rka-memory/memo-layer/bin/rka-memory doctor 2>/dev/null || true"),
         pre("Bash", command="ls ~/.cache/rka-memory && pip install rka-memory"),
         pre("Bash", command="cd rka-memory && make test"),
         pre("Read", file_path=f"{led}-backup/notes.md"),
         pre("Bash", command="uv run pytest -q"),
     ]
-    assert allowed == [None] * 5
+    assert allowed == [None] * 6
+
+
+def test_cli_verdicts_refuse_to_run_without_a_terminal(memory, capsys):
+    from rka_memory import cli
+
+    assert cli.main(["confirm", "r_1"]) == 2
+    assert cli.main(["rkm", "reject", "r_1", "wrong"]) == 2
+    assert "verdicts are typed by the user in a terminal" in capsys.readouterr().err
+    assert memory.ledger.read() == []
 
 
 def test_with_the_guard_off_the_agent_may_run_the_cli(memory, proj, tmp_path, spawned, capsys):
@@ -849,11 +868,3 @@ def test_the_guard_denies_a_codex_patch_into_the_ledger_with_one_reply(memory, p
     out = fire_codex(capsys, "PreToolUse", {**a, "turn_id": "t", "tool_name": "apply_patch", "tool_use_id": "p",
                                             "tool_input": {"command": patch}})
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-
-def test_the_guard_knows_every_cli_subcommand():
-    from rka_memory.cli import build_parser
-    from rka_memory.ledger import guard
-
-    sub = next(a for a in build_parser()._actions if a.dest == "command")
-    assert set(guard.SUBCOMMANDS) == set(sub.choices) - guard.ALLOWED
