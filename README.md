@@ -19,6 +19,9 @@ The spec is [docs/SPEC.md](docs/SPEC.md). The event schema is [docs/LEDGER.md](d
 
 ## Install
 
+**Trial release (plugin).** On branch `release/0.1`, [INSTALL.md](INSTALL.md) installs rka-memory as a plugin for Claude Code and Codex, and as an MCP server for Antigravity. It is written so the agent can follow it: ask it to "install rka-memory by following INSTALL.md". The steps below are the hardened install from a checkout.
+
+
 Requires Python 3.12, [uv](https://docs.astral.sh/uv/), and a running RKA Core 3.0 (for sync only; the hooks work without it).
 
 ```bash
