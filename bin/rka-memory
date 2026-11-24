@@ -1,8 +1,13 @@
 #!/bin/sh
 # Runs this plugin's own copy of rka-memory through uv, so the hooks and the
-# MCP server need nothing installed beyond uv. The environment is built in
-# the plugin directory on first use.
+# MCP server need nothing installed beyond uv. The environment lives in the
+# user's cache, keyed by the plugin's path, and never in the plugin
+# directory: an agent installs a plugin by copying that directory, and a
+# copied environment does not run.
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+key=$(printf '%s' "$root" | cksum | cut -d ' ' -f 1)
+UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/rka-memory/env-$key"
+export UV_PROJECT_ENVIRONMENT
 for uv in "$(command -v uv 2>/dev/null)" "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" /opt/homebrew/bin/uv /usr/local/bin/uv; do
   if [ -n "$uv" ] && [ -x "$uv" ]; then
     exec "$uv" run --quiet --frozen --no-dev --project "$root" -- rka-memory "$@"

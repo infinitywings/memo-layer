@@ -52,3 +52,14 @@ def test_every_manifest_carries_the_package_version_and_points_at_this_plugin():
 def test_the_launcher_runs_this_checkouts_rka_memory():
     out = subprocess.run([str(ROOT / "bin/rka-memory"), "--help"], capture_output=True, text=True, timeout=120)
     assert out.returncode == 0 and "hook" in out.stdout
+
+
+def test_a_copied_plugin_runs_even_when_the_source_held_a_broken_environment(tmp_path):
+    copy = tmp_path / "plugin"
+    subprocess.run(f"git -C {ROOT} ls-files -z | xargs -0 -I{{}} rsync -R {{}} {copy}/", shell=True, check=True,
+                   cwd=ROOT, capture_output=True)
+    (copy / ".venv").mkdir()  # what a copy of a checkout or a used plugin directory carries
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin:" + str(Path(subprocess.check_output(["which", "uv"], text=True).strip()).parent)}
+    out = subprocess.run([str(copy / "bin/rka-memory"), "--help"], capture_output=True, text=True, timeout=300, env=env)
+    assert out.returncode == 0 and "hook" in out.stdout, out.stderr
+    assert not any((copy / ".venv").iterdir())
