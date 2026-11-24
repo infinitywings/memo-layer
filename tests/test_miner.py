@@ -73,6 +73,25 @@ def session_one(memory, lg):
     return call, ok, reply
 
 
+def test_an_error_in_a_tool_result_grounds_a_lesson_that_the_action_fails_but_a_failing_test_does_not(memory):
+    lg = Ledger()
+    lg.start("s1", **STATE)
+    lg.user_msg("s1", "I need a detailed analysis of the server logs")
+    lg.tool_call("s1", "action", "DeepAnalyzer detailed")
+    timeout = lg.tool_result("s1", ok=False)
+    failed = lg.test("s1", False)
+    lg.end("s1")
+    sync(memory, lg)
+    reply = {"candidates": [
+        {"content": "DeepAnalyzer times out on detailed analysis requests", "kind": "constraint", "evidence": [timeout.id]},
+        {"content": "The test suite fails", "kind": "fact", "evidence": [failed.id]},
+    ]}
+    result = mine_session(memory, "s1", backend=FakeBackend(reply))
+    world = memory.world()
+    assert [world.records[p["record_id"]].rung.value for p in result.proposed] == ["L1", "L0D"]
+    assert [d.reason for d in result.dropped] == ["test_result cannot carry support"]
+
+
 def test_week2_grounded_candidates_reach_l1_model_cited_ones_l0d_and_duplicates_promote(memory):
     lg = Ledger()
     call, ok1, reply = session_one(memory, lg)
